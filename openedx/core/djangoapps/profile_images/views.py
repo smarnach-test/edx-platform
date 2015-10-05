@@ -17,9 +17,12 @@ from openedx.core.lib.api.authentication import (
     OAuth2AuthenticationAllowInactiveUser,
     SessionAuthenticationAllowInactiveUser,
 )
+from openedx.core.lib.api.parsers import TypedFileUploadParser
 from openedx.core.lib.api.permissions import IsUserInUrl, IsUserInUrlOrStaff
 from openedx.core.djangoapps.user_api.accounts.image_helpers import get_profile_image_names, set_has_profile_image
-from .images import validate_uploaded_image, create_profile_images, remove_profile_images, ImageValidationError
+from .images import (
+    IMAGE_TYPES, validate_uploaded_image, create_profile_images, remove_profile_images, ImageValidationError
+)
 
 log = logging.getLogger(__name__)
 
@@ -105,9 +108,24 @@ class ProfileImageView(APIView):
           the user exists or not.
     """
 
-    parser_classes = (MultiPartParser, FormParser)
+    parser_classes = (MultiPartParser, FormParser, TypedFileUploadParser)
     authentication_classes = (OAuth2AuthenticationAllowInactiveUser, SessionAuthenticationAllowInactiveUser)
     permission_classes = (permissions.IsAuthenticated, IsUserInUrl)
+    _supported_media_types = None
+
+    @property
+    def supported_media_types(self):
+        """
+        Dictionary that lists the supported mimetypes and maps them to allowed
+        file extensions.  Required by `TypedFileUploadParser`.
+        """
+        if not self._supported_media_types:
+            self._supported_media_types = {}
+            for type_ in IMAGE_TYPES.values():
+                self._supported_media_types.update(
+                    {mimetype: type_['extension'] for mimetype in type_['mimetypes']}
+                )
+        return self._supported_media_types
 
     def post(self, request, username):
         """

@@ -1,0 +1,79 @@
+"""
+TestCases verifying proper behavior of custom DRF request parsers.
+"""
+
+from collections import namedtuple
+from io import BytesIO
+
+from rest_framework import exceptions
+from rest_framework.test import APITestCase, APIRequestFactory
+
+from openedx.core.lib.api import parsers
+
+
+class TestTypedFileUploadParser(APITestCase):
+    """
+    Tests that verify the behavior of TypedFileUploadParser
+    """
+    def setUp(self):
+        super(TestTypedFileUploadParser, self).setUp()
+        self.parser = parsers.TypedFileUploadParser()
+        self.factory = APIRequestFactory()
+        supported_media_types = {
+            'image/png': ['.png'],
+            'image/jpeg': ['.jpg'],
+        }
+        self.view = namedtuple('view', ('supported_media_types',))(supported_media_types)
+
+    def test_parse_supported_image(self):
+        """
+        Test that TypedFileUploadParser returns empty data and content stored in
+        files['file'].
+        """
+        request = self.factory.post(
+            '/',
+            content_type='image/png',
+            HTTP_CONTENT_DISPOSITION='attachment; filename="file.png"',
+        )
+        context = {'view': self.view, 'request': request}
+        result = self.parser.parse(
+            stream=BytesIO('abcdefgh'), media_type='image/png', parser_context=context
+        )
+        self.assertEqual(result.data, {})
+        self.assertIn('file', result.files)
+        self.assertEqual(result.files['file'].read(), 'abcdefgh')
+
+    def test_parse_unsupported_image(self):
+        """
+        Test that TypedFileUploadParser raises an exception when parsing an
+        unsupported image format.
+        """
+        request = self.factory.post(
+            '/',
+            content_type='image/tiff',
+            HTTP_CONTENT_DISPOSITION='attachment; filename="file.tiff"',
+        )
+        context = {'view': self.view, 'request': request}
+        with self.assertRaises(exceptions.UnsupportedMediaType):
+            self.parser.parse(
+                stream=BytesIO('abcdefgh'), media_type='image/tiff', parser_context=context
+            )
+
+    def test_parse_mismatched_filename_and_mimetype(self):
+        """
+        Test that TypedFileUploadParser raises an exception when the specified
+        content-type doesn't match the filename extension in the
+        content-disposition header.
+
+        TODO: This should probably raise a 400 (BadRequest).
+        """
+        request = self.factory.post(
+            '/',
+            content_type='image/png',
+            HTTP_CONTENT_DISPOSITION='attachment; filename="file.jpg"',
+        )
+        context = {'view': self.view, 'request': request}
+        with self.assertRaises(exceptions.ParseError):
+            self.parser.parse(
+                stream=BytesIO('abcdefgh'), media_type='image/png', parser_context=context
+            )
