@@ -348,7 +348,7 @@
                     editable: this.editable,
                     title: this.options.title,
                     screenReaderTitle: this.options.screenReaderTitle || this.options.title,
-                    titleVisible: this.options.titleVisible || true,
+                    titleVisible: this.options.titleVisible !== undefined ? this.options.titleVisible : true,
                     iconName: this.options.iconName,
                     showBlankOption: (!this.options.required || !this.modelValueIsSet()),
                     selectOptions: this.options.options,
