@@ -9,6 +9,7 @@ arguments.
 import hashlib
 
 from celery.states import READY_STATES
+from django.db import transaction
 
 from xmodule.modulestore.django import modulestore
 
@@ -38,6 +39,7 @@ from instructor_task.api_helper import (
     submit_task,
 )
 from bulk_email.models import CourseEmail
+from util.db import commit_on_success
 
 
 def get_running_instructor_tasks(course_id):
@@ -82,6 +84,8 @@ def get_entrance_exam_instructor_task_history(course_id, usage_key=None, student
 
 
 # Disabling invalid-name because this fn name is longer than 30 chars.
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_rescore_problem_for_student(request, usage_key, student):  # pylint: disable=invalid-name
     """
     Request a problem to be rescored as a background task.
@@ -95,12 +99,10 @@ def submit_rescore_problem_for_student(request, usage_key, student):  # pylint: 
     the problem doesn't support rescoring.
 
     This method makes sure the InstructorTask entry is committed.
-    When called from any view that is wrapped by TransactionMiddleware,
-    and thus in a "commit-on-success" transaction, an autocommit buried within here
-    will cause any pending transaction to be committed by a successful
-    save here.  Any future database operations will take place in a
-    separate transaction.
-
+    When called from any function that is wrapped in a transaction, an
+    autocommit buried within here will cause any pending transaction to
+    be committed by a successful save here. Any future database operations
+    will take place in a separate transaction.
     """
     # check arguments:  let exceptions return up to the caller.
     check_arguments_for_rescoring(usage_key)
@@ -111,6 +113,8 @@ def submit_rescore_problem_for_student(request, usage_key, student):  # pylint: 
     return submit_task(request, task_type, task_class, usage_key.course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_rescore_problem_for_all_students(request, usage_key):  # pylint: disable=invalid-name
     """
     Request a problem to be rescored as a background task.
@@ -125,11 +129,10 @@ def submit_rescore_problem_for_all_students(request, usage_key):  # pylint: disa
     support rescoring.
 
     This method makes sure the InstructorTask entry is committed.
-    When called from any view that is wrapped by TransactionMiddleware,
-    and thus in a "commit-on-success" transaction, an autocommit buried within here
-    will cause any pending transaction to be committed by a successful
-    save here.  Any future database operations will take place in a
-    separate transaction.
+    When called from any function that is wrapped in a transaction, an
+    autocommit buried within here will cause any pending transaction to
+    be committed by a successful save here. Any future database operations
+    will take place in a separate transaction.
     """
     # check arguments:  let exceptions return up to the caller.
     check_arguments_for_rescoring(usage_key)
@@ -141,6 +144,8 @@ def submit_rescore_problem_for_all_students(request, usage_key):  # pylint: disa
     return submit_task(request, task_type, task_class, usage_key.course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_rescore_entrance_exam_for_student(request, usage_key, student=None):  # pylint: disable=invalid-name
     """
     Request entrance exam problems to be re-scored as a background task.
@@ -157,11 +162,10 @@ def submit_rescore_entrance_exam_for_student(request, usage_key, student=None): 
     support rescoring.
 
     This method makes sure the InstructorTask entry is committed.
-    When called from any view that is wrapped by TransactionMiddleware,
-    and thus in a "commit-on-success" transaction, an autocommit buried within here
-    will cause any pending transaction to be committed by a successful
-    save here.  Any future database operations will take place in a
-    separate transaction.
+    When called from any function that is wrapped in a transaction, an
+    autocommit buried within here will cause any pending transaction to
+    be committed by a successful save here. Any future database operations
+    will take place in a separate transaction.
     """
     # check problems for rescoring:  let exceptions return up to the caller.
     check_entrance_exam_problems_for_rescoring(usage_key)
@@ -173,6 +177,8 @@ def submit_rescore_entrance_exam_for_student(request, usage_key, student=None): 
     return submit_task(request, task_type, task_class, usage_key.course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_reset_problem_attempts_for_all_students(request, usage_key):  # pylint: disable=invalid-name
     """
     Request to have attempts reset for a problem as a background task.
@@ -185,11 +191,10 @@ def submit_reset_problem_attempts_for_all_students(request, usage_key):  # pylin
     if the problem is already being reset.
 
     This method makes sure the InstructorTask entry is committed.
-    When called from any view that is wrapped by TransactionMiddleware,
-    and thus in a "commit-on-success" transaction, an autocommit buried within here
-    will cause any pending transaction to be committed by a successful
-    save here.  Any future database operations will take place in a
-    separate transaction.
+    When called from any function that is wrapped in a transaction, an
+    autocommit buried within here will cause any pending transaction to
+    be committed by a successful save here. Any future database operations
+    will take place in a separate transaction.
     """
     # check arguments:  make sure that the usage_key is defined
     # (since that's currently typed in).  If the corresponding module descriptor doesn't exist,
@@ -202,6 +207,8 @@ def submit_reset_problem_attempts_for_all_students(request, usage_key):  # pylin
     return submit_task(request, task_type, task_class, usage_key.course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_reset_problem_attempts_in_entrance_exam(request, usage_key, student):  # pylint: disable=invalid-name
     """
     Request to have attempts reset for a entrance exam as a background task.
@@ -218,11 +225,10 @@ def submit_reset_problem_attempts_in_entrance_exam(request, usage_key, student):
     is already being reset.
 
     This method makes sure the InstructorTask entry is committed.
-    When called from any view that is wrapped by TransactionMiddleware,
-    and thus in a "commit-on-success" transaction, an autocommit buried within here
-    will cause any pending transaction to be committed by a successful
-    save here.  Any future database operations will take place in a
-    separate transaction.
+    When called from any function that is wrapped in a transaction, an
+    autocommit buried within here will cause any pending transaction to
+    be committed by a successful save here. Any future database operations
+    will take place in a separate transaction.
     """
     # check arguments:  make sure entrance exam(section) exists for given usage_key
     modulestore().get_item(usage_key)
@@ -233,6 +239,8 @@ def submit_reset_problem_attempts_in_entrance_exam(request, usage_key, student):
     return submit_task(request, task_type, task_class, usage_key.course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_delete_problem_state_for_all_students(request, usage_key):  # pylint: disable=invalid-name
     """
     Request to have state deleted for a problem as a background task.
@@ -245,11 +253,10 @@ def submit_delete_problem_state_for_all_students(request, usage_key):  # pylint:
     if the particular problem's state is already being deleted.
 
     This method makes sure the InstructorTask entry is committed.
-    When called from any view that is wrapped by TransactionMiddleware,
-    and thus in a "commit-on-success" transaction, an autocommit buried within here
-    will cause any pending transaction to be committed by a successful
-    save here.  Any future database operations will take place in a
-    separate transaction.
+    When called from any function that is wrapped in a transaction, an
+    autocommit buried within here will cause any pending transaction to
+    be committed by a successful save here. Any future database operations
+    will take place in a separate transaction.
     """
     # check arguments:  make sure that the usage_key is defined
     # (since that's currently typed in).  If the corresponding module descriptor doesn't exist,
@@ -262,6 +269,8 @@ def submit_delete_problem_state_for_all_students(request, usage_key):  # pylint:
     return submit_task(request, task_type, task_class, usage_key.course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_delete_entrance_exam_state_for_student(request, usage_key, student):  # pylint: disable=invalid-name
     """
     Requests reset of state for entrance exam as a background task.
@@ -277,11 +286,10 @@ def submit_delete_entrance_exam_state_for_student(request, usage_key, student): 
     is already being reset.
 
     This method makes sure the InstructorTask entry is committed.
-    When called from any view that is wrapped by TransactionMiddleware,
-    and thus in a "commit-on-success" transaction, an autocommit buried within here
-    will cause any pending transaction to be committed by a successful
-    save here.  Any future database operations will take place in a
-    separate transaction.
+    When called from any function that is wrapped in a transaction, an
+    autocommit buried within here will cause any pending transaction to
+    be committed by a successful save here. Any future database operations
+    will take place in a separate transaction.
     """
     # check arguments:  make sure entrance exam(section) exists for given usage_key
     modulestore().get_item(usage_key)
@@ -292,6 +300,8 @@ def submit_delete_entrance_exam_state_for_student(request, usage_key, student): 
     return submit_task(request, task_type, task_class, usage_key.course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_bulk_course_email(request, course_key, email_id):
     """
     Request to have bulk email sent as a background task.
@@ -303,11 +313,10 @@ def submit_bulk_course_email(request, course_key, email_id):
     CourseEmail object.
 
     This method makes sure the InstructorTask entry is committed.
-    When called from any view that is wrapped by TransactionMiddleware,
-    and thus in a "commit-on-success" transaction, an autocommit buried within here
-    will cause any pending transaction to be committed by a successful
-    save here.  Any future database operations will take place in a
-    separate transaction.
+    When called from any function that is wrapped in a transaction, an
+    autocommit buried within here will cause any pending transaction to
+    be committed by a successful save here. Any future database operations
+    will take place in a separate transaction.
     """
     # Assume that the course is defined, and that the user has already been verified to have
     # appropriate access to the course. But make sure that the email exists.
@@ -329,6 +338,8 @@ def submit_bulk_course_email(request, course_key, email_id):
     return submit_task(request, task_type, task_class, course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_calculate_problem_responses_csv(request, course_key, problem_location):  # pylint: disable=invalid-name
     """
     Submits a task to generate a CSV file containing all student
@@ -344,6 +355,8 @@ def submit_calculate_problem_responses_csv(request, course_key, problem_location
     return submit_task(request, task_type, task_class, course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_calculate_grades_csv(request, course_key):
     """
     AlreadyRunningError is raised if the course's grades are already being updated.
@@ -356,6 +369,8 @@ def submit_calculate_grades_csv(request, course_key):
     return submit_task(request, task_type, task_class, course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_problem_grade_report(request, course_key):
     """
     Submits a task to generate a CSV grade report containing problem
@@ -368,6 +383,8 @@ def submit_problem_grade_report(request, course_key):
     return submit_task(request, task_type, task_class, course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_calculate_students_features_csv(request, course_key, features):
     """
     Submits a task to generate a CSV containing student profile info.
@@ -382,6 +399,8 @@ def submit_calculate_students_features_csv(request, course_key, features):
     return submit_task(request, task_type, task_class, course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_detailed_enrollment_features_csv(request, course_key):  # pylint: disable=invalid-name
     """
     Submits a task to generate a CSV containing detailed enrollment info.
@@ -396,6 +415,8 @@ def submit_detailed_enrollment_features_csv(request, course_key):  # pylint: dis
     return submit_task(request, task_type, task_class, course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_calculate_may_enroll_csv(request, course_key, features):
     """
     Submits a task to generate a CSV file containing information about
@@ -411,6 +432,8 @@ def submit_calculate_may_enroll_csv(request, course_key, features):
     return submit_task(request, task_type, task_class, course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_executive_summary_report(request, course_key):  # pylint: disable=invalid-name
     """
     Submits a task to generate a HTML File containing the executive summary report.
@@ -425,6 +448,8 @@ def submit_executive_summary_report(request, course_key):  # pylint: disable=inv
     return submit_task(request, task_type, task_class, course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_proctored_exam_results_report(request, course_key, features):  # pylint: disable=invalid-name
     """
     Submits a task to generate a HTML File containing the executive summary report.
@@ -439,6 +464,8 @@ def submit_proctored_exam_results_report(request, course_key, features):  # pyli
     return submit_task(request, task_type, task_class, course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def submit_cohort_students(request, course_key, file_name):
     """
     Request to have students cohorted in bulk.
@@ -453,6 +480,8 @@ def submit_cohort_students(request, course_key, file_name):
     return submit_task(request, task_type, task_class, course_key, task_input, task_key)
 
 
+@transaction.non_atomic_requests
+@commit_on_success
 def generate_certificates_for_all_students(request, course_key):   # pylint: disable=invalid-name
     """
     Submits a task to generate certificates for all students enrolled in the course.

@@ -49,11 +49,10 @@ def _reserve_task(course_id, task_type, task_key, task_input, requester):
     submitted with the task call to celery.
 
     The InstructorTask.create method makes sure the InstructorTask entry is committed.
-    When called from any view that is wrapped by TransactionMiddleware,
-    and thus in a "commit-on-success" transaction, an autocommit buried within here
-    will cause any pending transaction to be committed by a successful
-    save here.  Any future database operations will take place in a
-    separate transaction.
+    When called from any function that is wrapped in a transaction, an
+    autocommit buried within here will cause any pending transaction to
+    be committed by a successful save here. Any future database operations
+    will take place in a separate transaction.
 
     Note that there is a chance of a race condition here, when two users
     try to run the same task at almost exactly the same time.  One user
@@ -330,11 +329,10 @@ def submit_task(request, task_type, task_class, course_key, task_input, task_key
     `AlreadyRunningError` is raised if the task is already running.
 
     The _reserve_task method makes sure the InstructorTask entry is committed.
-    When called from any view that is wrapped by TransactionMiddleware,
-    and thus in a "commit-on-success" transaction, an autocommit buried within here
-    will cause any pending transaction to be committed by a successful
-    save here.  Any future database operations will take place in a
-    separate transaction.
+    When called from any function that is wrapped in a transaction, an
+    autocommit buried within here will cause any pending transaction to
+    be committed by a successful save here. Any future database operations
+    will take place in a separate transaction.
 
     """
     # check to see if task is already running, and reserve it otherwise:

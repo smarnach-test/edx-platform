@@ -6,6 +6,7 @@ import decimal
 from ipware.ip import get_ip
 
 from django.core.urlresolvers import reverse
+from django.db import transaction
 from django.http import HttpResponse, HttpResponseBadRequest
 from django.shortcuts import redirect
 from django.views.generic.base import View
@@ -135,6 +136,7 @@ class ChooseModeView(View):
 
         return render_to_response("course_modes/choose.html", context)
 
+    @method_decorator(transaction.non_atomic_requests)
     @method_decorator(login_required)
     @method_decorator(commit_on_success_with_read_committed)
     def post(self, request, course_id):

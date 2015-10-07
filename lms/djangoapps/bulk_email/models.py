@@ -14,12 +14,13 @@ file and check it in at the same time as your model changes. To do that,
 import logging
 from django.conf import settings
 from django.contrib.auth.models import User
-from django.db import models, transaction
+from django.db import models
 
 from openedx.core.lib.html_to_text import html_to_text
 from openedx.core.lib.mail_utils import wrap_message
 
 from xmodule_django.models import CourseKeyField
+from util.db import commit_on_success
 from util.keyword_substitution import substitute_keywords_with_data
 
 log = logging.getLogger(__name__)
@@ -80,11 +81,10 @@ class CourseEmail(Email):
         Create an instance of CourseEmail.
 
         The CourseEmail.save_now method makes sure the CourseEmail entry is committed.
-        When called from any view that is wrapped by TransactionMiddleware,
-        and thus in a "commit-on-success" transaction, an autocommit buried within here
-        will cause any pending transaction to be committed by a successful
-        save here.  Any future database operations will take place in a
-        separate transaction.
+        When called from any function that is wrapped in a transaction, an
+        autocommit buried within here will cause any pending transaction to
+        be committed by a successful save here. Any future database operations
+        will take place in a separate transaction.
         """
         # automatically generate the stripped version of the text from the HTML markup:
         if text_message is None:
@@ -111,17 +111,16 @@ class CourseEmail(Email):
 
         return course_email
 
-    @transaction.autocommit
+    @commit_on_success
     def save_now(self):
         """
         Writes CourseEmail immediately, ensuring the transaction is committed.
 
         Autocommit annotation makes sure the database entry is committed.
-        When called from any view that is wrapped by TransactionMiddleware,
-        and thus in a "commit-on-success" transaction, this autocommit here
-        will cause any pending transaction to be committed by a successful
-        save here.  Any future database operations will take place in a
-        separate transaction.
+        When called from any function that is wrapped in a transaction, an
+        autocommit buried within here will cause any pending transaction to
+        be committed by a successful save here. Any future database operations
+        will take place in a separate transaction.
         """
         self.save()
 
