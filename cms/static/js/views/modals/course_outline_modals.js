@@ -263,7 +263,6 @@ define(['jquery', 'backbone', 'underscore', 'gettext', 'js/views/baseview',
     TimedExaminationPreferenceEditor = AbstractEditor.extend({
         templateName: 'timed-examination-preference-editor',
         className: 'edit-settings-timed-examination',
-
         events : {
             'change #id_not_timed': 'notTimedExam',
             'change #id_timed_exam': 'timedExam',
@@ -272,31 +271,33 @@ define(['jquery', 'backbone', 'underscore', 'gettext', 'js/views/baseview',
 
             'focusout #id_time_limit': 'timeLimitFocusout',
         },
-
         notTimedExam: function (event) {
+            event.preventDefault();
             this.$('#id_time_limit_div').hide();
             this.$('#id_time_limit').val('00:00');
         },
         timedExam: function (event) {
+            event.preventDefault();
             this.$('#id_time_limit_div').show();
             this.$('#id_time_limit').val("00:30");
         },
         practiceExam: function (event) {
+            event.preventDefault();
             this.$('#id_time_limit_div').show();
             this.$('#id_time_limit').val("00:30");           
         },
-
         proctoredExam: function (event) {
+            event.preventDefault();
             this.$('#id_time_limit_div').show();
             this.$('#id_time_limit').val("00:30");
         },
         timeLimitFocusout: function(event) {
+            event.preventDefault();
             var selectedTimeLimit = $(event.currentTarget).val();
             if (!this.isValidTimeLimit(selectedTimeLimit)) {
                 $(event.currentTarget).val("00:30");
             }
         },
-
         afterRender: function () {
             AbstractEditor.prototype.afterRender.call(this);
             this.$('input.time').timepicker({
@@ -310,30 +311,30 @@ define(['jquery', 'backbone', 'underscore', 'gettext', 'js/views/baseview',
                             this.model.get('is_practice_exam'));
             this.setExamTime(this.model.get('default_time_limit_minutes'));
         },
-
         setExamType: function(is_time_limited, is_proctored_enabled, is_practice_exam) {
-            
             if (!is_time_limited) {
                 this.$("#id_not_timed").prop('checked', true);
                 return;
             }
 
-            if (!is_proctored_enabled && !is_practice_exam ) {
-                 this.$("#id_timed_exam").prop('checked', true);
-                 this.$('#id_time_limit_div').show();
-                 return;
-            }
-
             if (this.options.enable_proctored_exams) {
                 this.$('#id_time_limit_div').show();
 
-                if (is_proctored_enabled && !is_practice_exam)
-                    this.$('#id_proctored_exam').prop('checked', true);
-                else if (is_proctored_enabled && is_practice_exam)
-                    this.$('#id_practice_exam').prop('checked', true);
+                if (is_proctored_enabled) {
+                    if (is_practice_exam) {
+                        this.$('#id_practice_exam').prop('checked', true);
+                    } else {
+                        this.$('#id_proctored_exam').prop('checked', true);
+                    }
+                
+                } else {
+                    this.$("#id_timed_exam").prop('checked', true);
+                }
+            } else  {
+                this.$("#id_timed_exam").prop('checked', true);
+                this.$('#id_time_limit_div').show();
             }
         },
-        
         setExamTime: function(value) {
             var time = this.convertTimeLimitMinutesToString(value);
             this.$('#id_time_limit').val(time);
@@ -358,7 +359,6 @@ define(['jquery', 'backbone', 'underscore', 'gettext', 'js/views/baseview',
             return total_time;
         },
         getRequestData: function () {
-
             var is_time_limited;
             var is_practice_exam;
             var is_proctored_enabled;
