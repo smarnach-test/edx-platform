@@ -268,8 +268,7 @@ define(['jquery', 'backbone', 'underscore', 'gettext', 'js/views/baseview',
             'change #id_timed_exam': 'timedExam',
             'change #id_practice_exam': 'practiceExam',
             'change #id_proctored_exam': 'proctoredExam',
-
-            'focusout #id_time_limit': 'timeLimitFocusout',
+            'focusout #id_time_limit': 'timeLimitFocusout'
         },
         notTimedExam: function (event) {
             event.preventDefault();
