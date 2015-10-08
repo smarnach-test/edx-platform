@@ -113,7 +113,7 @@ class ProfileImageView(APIView):
     authentication_classes = (OAuth2AuthenticationAllowInactiveUser, SessionAuthenticationAllowInactiveUser)
     permission_classes = (permissions.IsAuthenticated, IsUserInUrl)
 
-    upload_media_types = set(itertools.chain(*(image_type['mimetypes'] for image_type in IMAGE_TYPES.values())))
+    upload_media_types = set(itertools.chain(*(image_type.mimetypes for image_type in IMAGE_TYPES.values())))
 
     def post(self, request, username):
         """
