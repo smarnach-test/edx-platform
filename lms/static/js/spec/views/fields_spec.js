@@ -92,7 +92,7 @@ define(['backbone', 'jquery', 'underscore', 'common/js/spec_helpers/ajax_helpers
                 });
                 var view = new FieldViews.ReadonlyFieldView(fieldData).render();
 
-                FieldViewsSpecHelpers.expectTitleAndMessageToContain(view, fieldData.title, fieldData.helpMessage, false);
+                FieldViewsSpecHelpers.expectTitleAndMessageToContain(view, fieldData.title, fieldData.helpMessage);
                 expect(view.fieldValue()).toBe(USERNAME);
 
                 view.model.set({'username': 'bookworm'});
@@ -138,7 +138,8 @@ define(['backbone', 'jquery', 'underscore', 'common/js/spec_helpers/ajax_helpers
                 var view = new FieldViews.DropdownFieldView(fieldData).render();
                 var readOnlyDisplayClass = '.u-field-value-readonly';
 
-                FieldViewsSpecHelpers.expectTitleAndMessageToContain(view, fieldData.title, fieldData.helpMessage, false);
+                FieldViewsSpecHelpers.expectDropdownSrTitleToContain(view, fieldData.title);
+                FieldViewsSpecHelpers.expectMessageContains(view, fieldData.helpMessage);
                 expect(view.el).toHaveClass('mode-hidden');
                 // Note that "name" will be retrieved from the model, but the options specified are
                 // the languages options. Therefore initially the placeholder message will be shown because
@@ -259,7 +260,7 @@ define(['backbone', 'jquery', 'underscore', 'common/js/spec_helpers/ajax_helpers
                 // set bio to empty to see the placeholder.
                 fieldData.model.set({bio: ''});
                 var view = new FieldViews.TextareaFieldView(fieldData).render();
-                FieldViewsSpecHelpers.expectTitleAndMessageToContain(view, fieldData.title, fieldData.helpMessage, false);
+                FieldViewsSpecHelpers.expectTitleAndMessageToContain(view, fieldData.title, fieldData.helpMessage);
                 expect(view.el).toHaveClass('mode-hidden');
                 expect(view.fieldValue()).toBe(fieldData.placeholderValue);
                 expect(view.$(textareaLinkClass).length).toBe(0);
@@ -326,7 +327,7 @@ define(['backbone', 'jquery', 'underscore', 'common/js/spec_helpers/ajax_helpers
                 });
                 var view = new FieldViews.LinkFieldView(fieldData).render();
 
-                FieldViewsSpecHelpers.expectTitleAndMessageToContain(view, fieldData.title, fieldData.helpMessage, false);
+                FieldViewsSpecHelpers.expectTitleAndMessageToContain(view, fieldData.title, fieldData.helpMessage);
                 expect(view.$('.u-field-value > a .u-field-link-title-' + view.options.valueAttribute).text().trim()).toBe(fieldData.linkTitle);
             });
 
@@ -339,7 +340,7 @@ define(['backbone', 'jquery', 'underscore', 'common/js/spec_helpers/ajax_helpers
                 });
                 var view = new FieldViews.LinkFieldView(fieldData).render();
 
-                FieldViewsSpecHelpers.expectTitleAndMessageToContain(view, fieldData.title, fieldData.helpMessage, false);
+                FieldViewsSpecHelpers.expectTitleAndMessageToContain(view, fieldData.title, fieldData.helpMessage);
                 expect(view.$('.u-field-value > a .u-field-link-title-' + view.options.valueAttribute).text().trim()).toBe(fieldData.linkTitle);
             });
 
