@@ -198,12 +198,15 @@ class ProfileImageViewPostTestCase(ProfileImageEndpointMixin, APITestCase):
         self.check_anonymous_request_rejected('post')
         self.assertFalse(mock_log.info.called)
 
-    @patch('openedx.core.djangoapps.profile_images.views._make_upload_dt', side_effect=[TEST_UPLOAD_DT, TEST_UPLOAD_DT2])
-    def test_upload_self(self, _mock_make_image_version, mock_log):
+    @ddt.data('.jpg', '.jpeg', '.jpg', '.jpeg', '.png', '.gif', '.GIF')
+    @patch(
+        'openedx.core.djangoapps.profile_images.views._make_upload_dt', side_effect=[TEST_UPLOAD_DT, TEST_UPLOAD_DT2]
+    )
+    def test_upload_self(self, extension, _mock_make_image_version, mock_log):
         """
         Test that an authenticated user can POST to their own upload endpoint.
         """
-        with make_image_file() as image_file:
+        with make_image_file(extension=extension) as image_file:
             response = self.client.post(self.url, {'file': image_file}, format='multipart')
             self.check_response(response, 204)
             self.check_images()
