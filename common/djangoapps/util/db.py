@@ -4,7 +4,7 @@ Utility functions related to databases.
 from functools import wraps
 import random
 
-from django.db import DEFAULT_DB_ALIAS, DatabaseError, transaction
+from django.db import DEFAULT_DB_ALIAS, DatabaseError, Error, transaction
 
 
 MYSQL_MAX_INT = (2 ** 31) - 1
@@ -12,12 +12,17 @@ MYSQL_MAX_INT = (2 ** 31) - 1
 
 class CommitOnSuccessManager(object):
 
+    ENABLED = True
+
     def __init__(self, using, read_committed=False):
         self.using = using
         self.read_committed = read_committed
 
     def __enter__(self):
-        return
+
+        if not self.ENABLED:
+            return
+
         connection = transaction.get_connection(self.using)
 
         if connection.in_atomic_block:
@@ -47,7 +52,10 @@ class CommitOnSuccessManager(object):
             connection.commit_on_success_block_level += 1
 
     def __exit__(self, exc_type, exc_value, traceback):
-        return
+
+        if not self.ENABLED:
+            return
+
         connection = transaction.get_connection(self.using)
 
         try:

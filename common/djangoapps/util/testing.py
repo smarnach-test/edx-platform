@@ -4,6 +4,9 @@ from mock import patch
 
 from django.conf import settings
 from django.core.urlresolvers import clear_url_caches, resolve
+from django.test import TestCase
+
+from util.db import CommitOnSuccessManager
 
 
 class UrlResetMixin(object):
@@ -90,3 +93,23 @@ class EventTestMixin(object):
         Reset the mock tracker in order to forget about old events.
         """
         self.mock_tracker.reset_mock()
+
+
+def patch_testcase():
+    """
+    Disable commit_on_success decorators for tests in TestCase subclasses.
+
+    Since tests in TestCase classes are wrapped in an atomic block, we
+    cannot use transaction.commit() or transaction.rollback().
+    https://docs.djangoproject.com/en/1.8/topics/testing/tools/#django.test.TransactionTestCase
+    """
+
+    def atomics_wrapper(wrapped_func, enable_transactions):
+        wrapped_func = wrapped_func.__func__
+        def _w(*args, **kwargs):
+            CommitOnSuccessManager.ENABLED = enable_transactions
+            return wrapped_func(*args, **kwargs)
+        return classmethod(_w)
+
+    TestCase._enter_atomics = atomics_wrapper(TestCase._enter_atomics, False)
+    TestCase._rollback_atomics = atomics_wrapper(TestCase._rollback_atomics, True)
