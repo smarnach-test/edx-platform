@@ -621,9 +621,6 @@ define(["jquery", "common/js/spec_helpers/ajax_helpers", "common/js/components/u
                         $("#id_time_limit").val(time_limit);
                         this.$('#id_time_limit_div').show();
                     }
-                    //$("#id_time_limit").val(time_limit);
-                    //$("#id_exam_proctoring").prop('checked', is_exam_proctoring_enabled);
-                    //$("#id_timed_exam").prop('checked', id_timed_exam);
                 };
 
                 // Contains hard-coded dates because dates are presented in different formats.
