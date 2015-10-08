@@ -17,12 +17,12 @@ from rest_framework.test import APITestCase, APIClient
 
 from student.tests.factories import UserFactory
 from student.tests.tests import UserSettingsEventTestMixin
-
-from ...user_api.accounts.image_helpers import (
+from openedx.core.djangoapps.user_api.accounts.image_helpers import (
     set_has_profile_image,
     get_profile_image_names,
     get_profile_image_storage,
 )
+
 from ..images import create_profile_images, ImageValidationError
 from ..views import LOG_MESSAGE_CREATE, LOG_MESSAGE_DELETE
 from .helpers import make_image_file

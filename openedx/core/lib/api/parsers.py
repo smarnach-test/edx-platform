@@ -7,11 +7,11 @@ desired parsers.  See http://www.django-rest-framework.org/api-guide/parsers/
 for details.
 """
 
-from rest_framework import exceptions
-from rest_framework import parsers
+from rest_framework.exceptions import ParseError, UnsupportedMediaType
+from rest_framework.parsers import FileUploadParser, JSONParser
 
 
-class TypedFileUploadParser(parsers.FileUploadParser):
+class TypedFileUploadParser(FileUploadParser):
     """
     Handles upload of files, ensuring that the media type is supported, and
     that the uploaded filename matches the Content-type.
@@ -32,15 +32,27 @@ class TypedFileUploadParser(parsers.FileUploadParser):
 
               Content-type: image/jpeg
 
-        * Content-disposition must include a filename with a valid extensions
+        * Content-disposition must include a filename with a valid extension
           for the specified Content-type.
 
-          Example
+          Example:
 
               Content-disposition: attachment; filename="profile.jpg"
     """
 
     media_type = '*/*'
+
+    # TODO: Consider getting file extensions from an authoritative source.
+    # http://www.stdicon.com/mimetypes is one option, but it assumes one
+    # mimetype per extension, and image/pjpeg (for example) is not listed.
+
+    file_extensions = {
+        'image/gif': ['.gif'],
+        'image/jpeg': ['.jpeg', '.jpg'],
+        'image/pjpeg': ['.jpeg', '.jpg'],
+        'image/png': ['.png'],
+        'image/svg': ['.svg'],
+    }
 
     def parse(self, stream, media_type=None, parser_context=None):
         """
@@ -48,19 +60,20 @@ class TypedFileUploadParser(parsers.FileUploadParser):
         left empty, and the body of the request placed in files['file'].
         """
 
-        supported_media_types = getattr(parser_context['view'], 'supported_media_types', {})
-        if media_type not in supported_media_types:
-            raise exceptions.UnsupportedMediaType(media_type)
-        filename = self.get_filename(stream, media_type, parser_context)
+        supported_media_types = getattr(parser_context['view'], 'upload_media_types', None)
+        if supported_media_types is not None and media_type not in supported_media_types:
+            raise UnsupportedMediaType(media_type)
 
-        ext = '.{}'.format(filename.rsplit('.', 1)[1])
-        if ext not in supported_media_types[media_type]:
-            msg = "Filename does not match requested content-type. Filename: {}, Content-type: {}"
-            raise exceptions.ParseError(msg.format(filename, media_type))
+        filename = self.get_filename(stream, media_type, parser_context)
+        if media_type in self.file_extensions:
+            ext = '.{}'.format(filename.rsplit('.', 1)[1])
+            if ext.lower() not in self.file_extensions[media_type]:
+                msg = "Filename does not match requested content-type. Filename: {}, Content-type: {}"
+                raise ParseError(msg.format(filename, media_type))
         return super(TypedFileUploadParser, self).parse(stream, media_type, parser_context)
 
 
-class MergePatchParser(parsers.JSONParser):
+class MergePatchParser(JSONParser):
     """
     Custom parser to be used with the "merge patch" implementation (https://tools.ietf.org/html/rfc7396).
     """

@@ -3,6 +3,7 @@ This module implements the upload and remove endpoints of the profile image api.
 """
 from contextlib import closing
 import datetime
+import itertools
 import logging
 
 from django.utils.translation import ugettext as _
@@ -111,21 +112,8 @@ class ProfileImageView(APIView):
     parser_classes = (MultiPartParser, FormParser, TypedFileUploadParser)
     authentication_classes = (OAuth2AuthenticationAllowInactiveUser, SessionAuthenticationAllowInactiveUser)
     permission_classes = (permissions.IsAuthenticated, IsUserInUrl)
-    _supported_media_types = None
 
-    @property
-    def supported_media_types(self):
-        """
-        Dictionary that lists the supported mimetypes and maps them to allowed
-        file extensions.  Required by `TypedFileUploadParser`.
-        """
-        if not self._supported_media_types:
-            self._supported_media_types = {}
-            for type_ in IMAGE_TYPES.values():
-                self._supported_media_types.update(
-                    {mimetype: type_['extension'] for mimetype in type_['mimetypes']}
-                )
-        return self._supported_media_types
+    upload_media_types = set(itertools.chain(*(image_type['mimetypes'] for image_type in IMAGE_TYPES.values())))
 
     def post(self, request, username):
         """
