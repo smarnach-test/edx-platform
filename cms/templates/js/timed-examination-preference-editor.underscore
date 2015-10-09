@@ -22,7 +22,7 @@
                       <%- gettext('Timed') %>
                     </label>
                 </li>
-                <p class='field-message'> <%- gettext("Use a timed exam to limit the time learners can spend on problems in this subsection. Learners must submit answers before the time expires. You can allow additional time on per student basis through the Instructor Dashboard.") %> </p>
+                <p class='field-message'> <%- gettext('Use a timed exam to limit the time learners can spend on problems in this subsection. Learners must submit answers before the time expires. You can allow additional time on per student basis through the Instructor Dashboard.') %> </p>
 
             </ul>
         </div>
@@ -46,7 +46,7 @@
                           <%- gettext('Practice Proctored') %>
                         </label>
                     </li>
-                    <p class='field-message'> <%- gettext('Use a practice proctored exam to introduce learners to the proctoring tools and processes. Results of the practice exam do not count towards the learner's grade.') %> </p>
+                    <p class='field-message'> <%- gettext("Use a practice proctored exam to introduce learners to the proctoring tools and processes. Results of the practice exam do not count towards the learner's grade.") %> </p>
                 </ul>
             </div>
         <% } %>
