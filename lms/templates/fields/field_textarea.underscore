@@ -14,9 +14,12 @@
     </div>
 
     <div class="u-field-value" id="u-field-value-<%- id %>"
-        <% if (mode === 'edit') {
-            var textareaDescribedBy = (message ? 'u-field-message-help-' : 'u-field-placeholder-value-') + id; %>
-            aria-labelledby="u-field-title-<%- id %>"><textarea id="u-field-textarea-<%- id %>" rows="4" aria-describedby="<%- textareaDescribedBy %>"><%- value %></textarea>
+        <% if (mode === 'edit') { %>
+            aria-labelledby="u-field-title-<%- id %>"><textarea id="u-field-textarea-<%- id %>" rows="4"
+            <% if (message) { %>
+                aria-describedby="u-field-message-help-<%- id %>"
+            <% } %>
+            ><%- value %></textarea>
         <% } else if (editable === 'never') { %>
             ><p class="sr"><%- screenReaderTitle %></p><span class="u-field-value-readonly" aria-hidden="false"
             <% if (message) { %>
