@@ -10,40 +10,6 @@ from django.db import DEFAULT_DB_ALIAS, DatabaseError, Error, transaction
 MYSQL_MAX_INT = (2 ** 31) - 1
 
 
-class OuterAtomic(transaction.Atomic):
-    """
-    Atomic which must not be nested in another atomic.
-
-    This is useful if you want to ensure that a commit happens at
-    the end of the wrapped block.
-    """
-    ALLOW_NESTED = False
-
-    def __enter__(self):
-
-        connection = transaction.get_connection(self.using)
-
-        if not self.ALLOW_NESTED and connection.in_atomic_block:
-            raise transaction.TransactionManagementError('Cannot be inside an atomic block.')
-
-        super(OuterAtomic, self).__enter__()
-
-
-def outer_atomic(using=None, read_committed=False):
-    """
-    """
-    if callable(using):
-        return OuterAtomic(DEFAULT_DB_ALIAS, read_committed)(using)
-    # Decorator: @outer_atomic(...) or context manager: with outer_atomic(...): ...
-    else:
-        return OuterAtomic(using, read_committed)
-
-
-def outer_atomic_with_read_committed(using):
-    return outer_atomic(using, True)
-
-
-
 class CommitOnSuccessManager(object):
 
     ENABLED = True
@@ -151,6 +117,39 @@ def commit_on_success(using=None, read_committed=False):
 
 def commit_on_success_with_read_committed(using):
     return commit_on_success(using, True)
+
+
+class OuterAtomic(transaction.Atomic):
+    """
+    Atomic which must not be nested in another atomic.
+
+    This is useful if you want to ensure that a commit happens at
+    the end of the wrapped block.
+    """
+    ALLOW_NESTED = False
+
+    def __enter__(self):
+
+        connection = transaction.get_connection(self.using)
+
+        if not self.ALLOW_NESTED and connection.in_atomic_block:
+            raise transaction.TransactionManagementError('Cannot be inside an atomic block.')
+
+        super(OuterAtomic, self).__enter__()
+
+
+def outer_atomic(using=None, read_committed=False):
+    """
+    """
+    if callable(using):
+        return OuterAtomic(DEFAULT_DB_ALIAS, read_committed)(using)
+    # Decorator: @outer_atomic(...) or context manager: with outer_atomic(...): ...
+    else:
+        return OuterAtomic(using, read_committed)
+
+
+def outer_atomic_with_read_committed(using):
+    return outer_atomic(using, True)
 
 
 def generate_int_id(minimum=0, maximum=MYSQL_MAX_INT, used_ids=None):
