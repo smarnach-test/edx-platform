@@ -446,3 +446,18 @@ class AccountSettingsPageTest(AccountSettingsTestMixin, WebAppTest):
         for field_id, title, link_title in providers:
             self.assertEqual(self.account_settings_page.title_for_field(field_id), title)
             self.assertEqual(self.account_settings_page.link_title_for_link_field(field_id), link_title)
+
+
+@attr('a11y')
+class AccountSettingsAxsTest(AccountSettingsTestMixin, WebAppTest):
+    """
+    Class to test account settings accessibility.
+    """
+
+    def test_account_settings_axs(self):
+        """
+        Test the accessibility of the account settings page.
+        """
+        self.log_in_as_unique_user()
+        self.visit_account_settings_page()
+        self.account_settings_page.a11y_audit.check_for_accessibility_errors()
