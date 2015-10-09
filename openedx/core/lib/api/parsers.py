@@ -72,16 +72,14 @@ class TypedFileUploadParser(FileUploadParser):
                 ext = '.{}'.format(fileparts[1])
             if ext.lower() not in self.file_extensions[media_type]:
                 errmsg = (
-                    u"Filename does not match requested Content-type. "
+                    u"File extension does not match requested Content-type. "
                     u"Filename: {filename}, Content-type: {contenttype}"
                 )
-                usermsg = _(
-                    u"Filename does not match requested Content-type. "
-                    u"Filename: {filename}, Content-type: {contenttype}"
-                )
-                raise ParseError({
-                    'developer_error': errmsg.format(filename=filename, contenttype=media_type),
-                    'user_error': usermsg.format(filename=filename, contenttype=media_type),
+                usermsg = _(u"Unable to parse file {filename}.  A problem occurred with the file extension or type.")
+                raise ParseError(detail={
+                    'error_code': 'invalid_file_extension',
+                    'developer_message': errmsg.format(filename=filename, contenttype=media_type),
+                    'user_message': usermsg.format(filename=filename),
                 })
         return super(TypedFileUploadParser, self).parse(stream, media_type, parser_context)
 

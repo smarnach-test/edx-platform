@@ -75,8 +75,6 @@ class TestTypedFileUploadParser(APITestCase):
         Test that TypedFileUploadParser raises an exception when the specified
         content-type doesn't match the filename extension in the
         content-disposition header.
-
-        TODO: This should probably raise a 400 (BadRequest).
         """
         request = self.request_factory.post(
             '/',
@@ -84,8 +82,10 @@ class TestTypedFileUploadParser(APITestCase):
             HTTP_CONTENT_DISPOSITION='attachment; filename="file.jpg"',
         )
         context = {'view': self.view, 'request': request}
-        with self.assertRaises(exceptions.ParseError):
+        with self.assertRaises(exceptions.ParseError) as err:
             self.parser.parse(stream=BytesIO('abcdefgh'), media_type='image/png', parser_context=context)
+            self.assertIn('user_message', err.detail)
+            self.assertIn('developer_message', err.detail)
 
     def test_parse_any_type(self):
         """
