@@ -15,6 +15,7 @@ from django.db import transaction, DatabaseError
 from django.core.cache import cache
 
 from instructor_task.models import InstructorTask, PROGRESS, QUEUING
+from util.db import outer_atomic
 
 TASK_LOG = logging.getLogger('edx.celery.task')
 
@@ -317,7 +318,8 @@ def queue_subtasks_for_query(
         total_num_subtasks,
         total_num_items,
     )
-    progress = initialize_subtask_info(entry, action_name, total_num_items, subtask_id_list)
+    with outer_atomic():
+        progress = initialize_subtask_info(entry, action_name, total_num_items, subtask_id_list)
 
     # Construct a generator that will return the recipients to use for each subtask.
     # Pass in the desired fields to fetch for each recipient.

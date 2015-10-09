@@ -29,7 +29,6 @@ from django.contrib.auth.models import User
 from django.db import models, transaction
 
 from xmodule_django.models import CourseKeyField
-from util.db import commit_on_success
 
 
 # define custom states used by InstructorTask
@@ -120,16 +119,10 @@ class InstructorTask(models.Model):
 
         return instructor_task
 
-    @commit_on_success
+    @transaction.atomic
     def save_now(self):
         """
         Writes InstructorTask immediately, ensuring the transaction is committed.
-
-        Autocommit annotation makes sure the database entry is committed.
-        When called from any function that is wrapped in a transaction, an
-        autocommit buried within here will cause any pending transaction to
-        be committed by a successful save here. Any future database operations
-        will take place in a separate transaction.
         """
         self.save()
 

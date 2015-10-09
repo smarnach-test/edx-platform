@@ -6,7 +6,7 @@ from django.conf import settings
 from django.core.urlresolvers import clear_url_caches, resolve
 from django.test import TestCase
 
-from util.db import CommitOnSuccessManager
+from util.db import OuterAtomic, CommitOnSuccessManager
 
 
 class UrlResetMixin(object):
@@ -108,6 +108,7 @@ def patch_testcase():
         wrapped_func = wrapped_func.__func__
         def _w(*args, **kwargs):
             CommitOnSuccessManager.ENABLED = enable_transactions
+            OuterAtomic.ALLOW_NESTED = not enable_transactions
             return wrapped_func(*args, **kwargs)
         return classmethod(_w)
 

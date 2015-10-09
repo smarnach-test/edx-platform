@@ -14,7 +14,7 @@ file and check it in at the same time as your model changes. To do that,
 import logging
 from django.conf import settings
 from django.contrib.auth.models import User
-from django.db import models
+from django.db import models, transaction
 
 from openedx.core.lib.html_to_text import html_to_text
 from openedx.core.lib.mail_utils import wrap_message
@@ -79,12 +79,6 @@ class CourseEmail(Email):
     def create(cls, course_id, sender, to_option, subject, html_message, text_message=None, template_name=None, from_addr=None):
         """
         Create an instance of CourseEmail.
-
-        The CourseEmail.save_now method makes sure the CourseEmail entry is committed.
-        When called from any function that is wrapped in a transaction, an
-        autocommit buried within here will cause any pending transaction to
-        be committed by a successful save here. Any future database operations
-        will take place in a separate transaction.
         """
         # automatically generate the stripped version of the text from the HTML markup:
         if text_message is None:
@@ -111,7 +105,7 @@ class CourseEmail(Email):
 
         return course_email
 
-    @commit_on_success
+    @transaction.atomic
     def save_now(self):
         """
         Writes CourseEmail immediately, ensuring the transaction is committed.
