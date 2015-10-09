@@ -7,8 +7,6 @@ desired parsers.  See http://www.django-rest-framework.org/api-guide/parsers/
 for details.
 """
 
-from django.utils.translation import ugettext as _
-
 from rest_framework.exceptions import ParseError, UnsupportedMediaType
 from rest_framework.parsers import FileUploadParser, JSONParser
 
@@ -72,15 +70,10 @@ class TypedFileUploadParser(FileUploadParser):
                 ext = '.{}'.format(fileparts[1])
             if ext.lower() not in self.file_extensions[media_type]:
                 errmsg = (
-                    u"File extension does not match requested Content-type. "
-                    u"Filename: {filename}, Content-type: {contenttype}"
+                    u'File extension does not match requested Content-type. '
+                    u'Filename: "{filename}", Content-type: "{contenttype}"'
                 )
-                usermsg = _(u"Unable to parse file {filename}.  A problem occurred with the file extension or type.")
-                raise ParseError(detail={
-                    'error_code': 'invalid_file_extension',
-                    'developer_message': errmsg.format(filename=filename, contenttype=media_type),
-                    'user_message': usermsg.format(filename=filename),
-                })
+                raise ParseError(errmsg.format(filename=filename, contenttype=media_type))
         return super(TypedFileUploadParser, self).parse(stream, media_type, parser_context)
 
 

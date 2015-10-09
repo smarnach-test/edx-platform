@@ -20,6 +20,7 @@ from openedx.core.lib.api.authentication import (
 )
 from openedx.core.lib.api.parsers import TypedFileUploadParser
 from openedx.core.lib.api.permissions import IsUserInUrl, IsUserInUrlOrStaff
+from openedx.core.lib.api.view_utils import DeveloperErrorViewMixin
 from openedx.core.djangoapps.user_api.accounts.image_helpers import get_profile_image_names, set_has_profile_image
 from .images import (
     IMAGE_TYPES, validate_uploaded_image, create_profile_images, remove_profile_images, ImageValidationError
@@ -39,7 +40,7 @@ def _make_upload_dt():
     return datetime.datetime.utcnow().replace(tzinfo=utc)
 
 
-class ProfileImageView(APIView):
+class ProfileImageView(DeveloperErrorViewMixin, APIView):
     """
     **Use Cases**
 

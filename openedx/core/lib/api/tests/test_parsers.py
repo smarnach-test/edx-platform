@@ -84,8 +84,8 @@ class TestTypedFileUploadParser(APITestCase):
         context = {'view': self.view, 'request': request}
         with self.assertRaises(exceptions.ParseError) as err:
             self.parser.parse(stream=BytesIO('abcdefgh'), media_type='image/png', parser_context=context)
-            self.assertIn('user_message', err.detail)
             self.assertIn('developer_message', err.detail)
+            self.assertNotIn('user_message', err.detail)
 
     def test_parse_any_type(self):
         """
@@ -124,7 +124,8 @@ class TestTypedFileUploadParser(APITestCase):
 
     def test_parse_all_types_with_unknown_type(self):
         """
-        No match checking is done if
+        If the view doesn't specify the set of supported types,
+        and the content-type is unknown, accept any file extension.
         """
         view = object()
         self.assertFalse(hasattr(view, 'upload_media_types'))
