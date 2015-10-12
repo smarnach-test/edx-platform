@@ -64,6 +64,7 @@ from openedx.core.djangoapps.course_groups.cohorts import add_user_to_cohort, is
 from student.models import CourseEnrollment, CourseAccessRole
 from teams.models import CourseTeamMembership
 from verify_student.models import SoftwareSecurePhotoVerification
+from util import milestones_helpers
 
 # define different loggers for use within tasks and on client side
 TASK_LOG = logging.getLogger('edx.celery.task')
@@ -588,6 +589,10 @@ def delete_problem_module_state(xmodule_instance_args, _module_descriptor, stude
     Always returns UPDATE_STATUS_SUCCEEDED, indicating success, if it doesn't raise an exception due to database error.
     """
     student_module.delete()
+
+    # Remove milestones that user has completed
+    milestones_helpers.remove_course_milestone(student_module.course_id, student_module.student)
+
     # get request-related tracking information from args passthrough,
     # and supplement with task-specific information:
     track_function = _get_track_function_for_task(student_module.student, xmodule_instance_args)

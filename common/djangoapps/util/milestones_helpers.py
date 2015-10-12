@@ -175,6 +175,19 @@ def fulfill_course_milestone(course_key, user):
         milestones_api.add_user_milestone({'id': user.id}, milestone)
 
 
+def remove_course_milestone(course_key, user):
+    """
+    Marks the course specified by the given course_key as in-complete for the given user.
+    If any other courses require this course as a prerequisite, their milestones will be appropriately updated.
+    """
+    if not settings.FEATURES.get('MILESTONES_APP', False):
+        return None
+    from milestones import api as milestones_api
+    course_milestones = milestones_api.get_course_milestones(course_key=course_key, relationship="requires")
+    for milestone in course_milestones:
+        milestones_api.remove_user_milestone({'id': user.id}, milestone)
+
+
 def get_required_content(course, user):
     """
     Queries milestones subsystem to see if the specified course is gated on one or more milestones,
