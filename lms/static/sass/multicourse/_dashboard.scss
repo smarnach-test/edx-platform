@@ -686,7 +686,7 @@
 
           .action-upgrade-container{
             display: inline-block;
-            float: right;
+            @include float(right);
             margin-top: ($baseline/2);
           }
           .action-upgrade {
@@ -699,11 +699,11 @@
             .action-upgrade-icon{
               background: url('#{$static-path}/images/icon-sm-verified.png') no-repeat;
               background-position: -($baseline*0.3);
-              float: left;
+              @include float(left);
               display: inline;
               background-color: white;
               margin-top: ($baseline/4);
-              margin-right: ($baseline*0.4);
+              @include margin-right($baseline*0.4);
               width: ($baseline*0.8);
               height: ($baseline*0.7);
             }
