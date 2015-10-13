@@ -546,6 +546,42 @@ class CourseOutlinePage(CoursePage, CourseOutlineContainer):
         self.q(css=".action-save").first.click()
         self.wait_for_ajax()
 
+    def select_none_exam(self):
+        """
+        Choose "none" exam but do not press enter
+        """
+        self.q(css="#id_not_timed").first.click()
+
+    def select_timed_exam(self):
+        """
+        Choose a timed exam but do not press enter
+        """
+        self.q(css="#id_timed_exam").first.click()
+
+    def select_proctored_exam(self):
+        """
+        Choose a proctored exam but do not press enter
+        """
+        self.q(css="#id_proctored_exam").first.click()
+
+    def select_practice_exam(self):
+        """
+        Choose a practice exam but do not press enter
+        """
+        self.q(css="#id_practice_exam").first.click()
+
+    def time_allotted_field_present(self):
+        """
+        returns whether the time allotted field is present
+        """
+        return self.q(css="#id_time_limit_div").present
+
+    def time_allotted_field_visible(self):
+        """
+        returns whether the time allotted field is visible
+        """
+        return self.q(css="#id_time_limit_div").visible
+
     def proctoring_items_are_displayed(self):
         """
         Returns True if all the items are found.
