@@ -57,8 +57,8 @@ class TypedFileUploadParser(FileUploadParser):
         left empty, and the body of the request placed in files['file'].
         """
 
-        upload_media_types = getattr(parser_context['view'], 'upload_media_types', None)
-        if upload_media_types is not None and media_type not in upload_media_types:
+        upload_media_types = getattr(parser_context['view'], 'upload_media_types', set())
+        if media_type not in upload_media_types:
             raise UnsupportedMediaType(media_type)
 
         filename = self.get_filename(stream, media_type, parser_context)

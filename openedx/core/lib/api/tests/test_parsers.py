@@ -87,9 +87,10 @@ class TestTypedFileUploadParser(APITestCase):
             self.assertIn('developer_message', err.detail)
             self.assertNotIn('user_message', err.detail)
 
-    def test_parse_any_type(self):
+    def test_no_acceptable_types(self):
         """
-        The view does not have to specify supported types.
+        If the view doesn't specify supported types, the parser rejects
+        everything.
         """
         view = object()
         self.assertFalse(hasattr(view, 'upload_media_types'))
@@ -100,43 +101,7 @@ class TestTypedFileUploadParser(APITestCase):
             HTTP_CONTENT_DISPOSITION='attachment; filename="file.png"',
         )
         context = {'view': view, 'request': request}
-        result = self.parser.parse(stream=BytesIO('abcdefgh'), media_type='image/png', parser_context=context)
-        self.assertEqual(result.data, {})
-        self.assertIn('file', result.files)
-        self.assertEqual(result.files['file'].read(), 'abcdefgh')
-
-    def test_parse_any_type_with_mismatched_extension(self):
-        """
-        When the view doesn't specify a set of supported types, the
-        TypedFileUploadParser will still check that the extension
-        and content-type match.
-        """
-        view = object()
-        self.assertFalse(hasattr(view, 'upload_media_types'))
-        request = self.request_factory.post(
-            '/',
-            content_type='image/png',
-            HTTP_CONTENT_DISPOSITION='attachment; filename="file.jpg"',
-        )
-        context = {'view': view, 'request': request}
-        with self.assertRaises(exceptions.ParseError):
+        with self.assertRaises(exceptions.UnsupportedMediaType) as err:
             self.parser.parse(stream=BytesIO('abcdefgh'), media_type='image/png', parser_context=context)
-
-    def test_parse_all_types_with_unknown_type(self):
-        """
-        If the view doesn't specify the set of supported types,
-        and the content-type is unknown, accept any file extension.
-        """
-        view = object()
-        self.assertFalse(hasattr(view, 'upload_media_types'))
-        request = self.request_factory.post(
-            '/',
-            content_type='application/json',
-            HTTP_CONTENT_DISPOSITION='attachment; filename="file.xyz"',
-        )
-        context = {'view': view, 'request': request}
-        result = self.parser.parse(stream=BytesIO('abcdefgh'), media_type='application/json', parser_context=context)
-        self.assertNotIn('application/json', self.parser.file_extensions)
-        self.assertEqual(result.data, {})
-        self.assertIn('file', result.files)
-        self.assertEqual(result.files['file'].read(), 'abcdefgh')
+            self.assertIn('developer_message', err.detail)
+            self.assertIn('user_message', err.detail)
