@@ -5,6 +5,7 @@ forums, and to the cohort admin views.
 
 import logging
 import random
+import time
 
 from django.db import transaction
 from django.db.models.signals import post_save, m2m_changed
@@ -348,6 +349,7 @@ def add_user_to_cohort(cohort, username_or_email):
         users__id=user.id,
         group_type=CourseUserGroup.COHORT
     )
+    time.sleep(20)
     if course_cohorts.exists():
         if course_cohorts[0] == cohort:
             raise ValueError("User {user_name} already present in cohort {cohort_name}".format(
