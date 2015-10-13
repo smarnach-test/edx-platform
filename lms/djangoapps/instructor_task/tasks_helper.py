@@ -465,7 +465,7 @@ def _get_module_instance_for_task(course_id, student, module_descriptor, xmodule
     )
 
 
-@transaction.atomic
+@outer_atomic
 def rescore_problem_module_state(xmodule_instance_args, module_descriptor, student_module):
     '''
     Takes an XModule descriptor and a corresponding StudentModule object, and
@@ -554,7 +554,7 @@ def rescore_problem_module_state(xmodule_instance_args, module_descriptor, stude
             return UPDATE_STATUS_SUCCEEDED
 
 
-@transaction.atomic
+@outer_atomic
 def reset_attempts_module_state(xmodule_instance_args, _module_descriptor, student_module):
     """
     Resets problem attempts to zero for specified `student_module`.
@@ -581,7 +581,7 @@ def reset_attempts_module_state(xmodule_instance_args, _module_descriptor, stude
     return update_status
 
 
-@transaction.atomic
+@outer_atomic
 def delete_problem_module_state(xmodule_instance_args, _module_descriptor, student_module):
     """
     Delete the StudentModule entry.
@@ -1418,7 +1418,7 @@ def cohort_students_and_upload(_xmodule_instance_args, _entry_id, course_id, tas
                 continue
 
             try:
-                with transaction.atomic():
+                with outer_atomic():
                     add_user_to_cohort(cohorts_status[cohort_name]['cohort'], username_or_email)
                 cohorts_status[cohort_name]['Students Added'] += 1
                 task_progress.succeeded += 1

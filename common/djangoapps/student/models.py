@@ -894,27 +894,16 @@ class CourseEnrollment(models.Model):
         if user.id is None:
             user.save()
 
-        try:
-            enrollment, created = CourseEnrollment.objects.get_or_create(
-                user=user,
-                course_id=course_key,
-            )
+        enrollment, created = CourseEnrollment.objects.get_or_create(
+            user=user,
+            course_id=course_key,
+        )
 
-            # If we *did* just create a new enrollment, set some defaults
-            if created:
-                enrollment.mode = "honor"
-                enrollment.is_active = False
-                enrollment.save()
-        except IntegrityError:
-            log.info(
-                (
-                    "An integrity error occurred while getting-or-creating the enrollment"
-                    "for course key %s and student %s. This can occur if two processes try to get-or-create "
-                    "the enrollment at the same time and the database is set to REPEATABLE READ."
-                ),
-                course_key, user
-            )
-            raise
+        # If we *did* just create a new enrollment, set some defaults
+        if created:
+            enrollment.mode = "honor"
+            enrollment.is_active = False
+            enrollment.save()
 
         return enrollment
 

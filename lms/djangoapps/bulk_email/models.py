@@ -100,22 +100,9 @@ class CourseEmail(Email):
             template_name=template_name,
             from_addr=from_addr,
         )
-        course_email.save_now()
+        course_email.save()
 
         return course_email
-
-    @transaction.atomic
-    def save_now(self):
-        """
-        Writes CourseEmail immediately, ensuring the transaction is committed.
-
-        Autocommit annotation makes sure the database entry is committed.
-        When called from any function that is wrapped in a transaction, an
-        autocommit buried within here will cause any pending transaction to
-        be committed by a successful save here. Any future database operations
-        will take place in a separate transaction.
-        """
-        self.save()
 
     def get_template(self):
         """
