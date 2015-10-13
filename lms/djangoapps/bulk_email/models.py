@@ -20,7 +20,6 @@ from openedx.core.lib.html_to_text import html_to_text
 from openedx.core.lib.mail_utils import wrap_message
 
 from xmodule_django.models import CourseKeyField
-from util.db import commit_on_success
 from util.keyword_substitution import substitute_keywords_with_data
 
 log = logging.getLogger(__name__)

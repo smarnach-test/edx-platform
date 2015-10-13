@@ -21,7 +21,7 @@ from courseware.access import has_access
 from student.models import CourseEnrollment
 from opaque_keys.edx.locations import SlashSeparatedCourseKey
 from opaque_keys.edx.keys import CourseKey
-from util.db import commit_on_success_with_read_committed
+from util.db import outer_atomic
 from xmodule.modulestore.django import modulestore
 
 from embargo import api as embargo_api
@@ -138,7 +138,7 @@ class ChooseModeView(View):
 
     @method_decorator(transaction.non_atomic_requests)
     @method_decorator(login_required)
-    @method_decorator(commit_on_success_with_read_committed)
+    @method_decorator(outer_atomic(read_committed=True))
     def post(self, request, course_id):
         """Takes the form submission from the page and parses it.
 

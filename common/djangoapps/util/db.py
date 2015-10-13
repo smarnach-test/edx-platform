@@ -11,7 +11,22 @@ MYSQL_MAX_INT = (2 ** 31) - 1
 
 
 class CommitOnSuccessManager(object):
+    """
+    This class implements the commit_on_success() API that was available till Django 1.5.
 
+    An instance can be used either as a decorator or as a context manager. However, it
+    cannot be nested inside an atomic block.
+
+    It is mostly taken from https://github.com/django/django/blob/1.8.5/django/db/transaction.py#L110-L277
+    but instead of using save points commits all pending queries at the end of a block.
+
+    The goal is to behave as close as possible to:
+    https://github.com/django/django/blob/1.4.22/django/db/transaction.py#L263-L289
+    """
+
+    # Tests in TestCase subclasses are wrapped in an atomic block to speed up database restoration.
+    # So we must disabled this manager.
+    # https://github.com/django/django/blob/1.8.5/django/core/handlers/base.py#L129-L132
     ENABLED = True
 
     def __init__(self, using, read_committed=False):
@@ -25,8 +40,8 @@ class CommitOnSuccessManager(object):
 
         connection = transaction.get_connection(self.using)
 
-        # if connection.in_atomic_block:
-        #     raise transaction.TransactionManagementError('Cannot be inside an atomic block.')
+        if connection.in_atomic_block:
+            raise transaction.TransactionManagementError('Cannot be inside an atomic block.')
 
         if getattr(connection, 'commit_on_success_block_level', 0) == 0:
             connection.commit_on_success_block_level = 1
@@ -100,14 +115,20 @@ class CommitOnSuccessManager(object):
 
 def commit_on_success(using=None, read_committed=False):
     """
-    Decorator which executes the decorated function inside a transaction with isolation level set to READ COMMITTED.
+    This function implements the commit_on_success() API that was available till Django 1.5.
 
-    If the function returns a response the transaction is committed and if the function raises an exception the
-    transaction is rolled back.
+    It can be used either as a decorator or as a context manager. However, it
+    cannot be nested inside an atomic block.
 
-    Raises TransactionManagementError if there is already a transaction open.
+    If the wrapped function or block returns a response the transaction is committed
+    and if it raises an exception the transaction is rolled back.
 
-    Note: This only works on MySQL.
+    Arguments:
+        using (str): the name of the database.
+        read_committed (bool): Whether to use read committed isolation level.
+
+    Raises:
+        TransactionManagementError: if already inside an atomic block.
     """
     if callable(using):
         return CommitOnSuccessManager(DEFAULT_DB_ALIAS, read_committed)(using)
@@ -115,18 +136,19 @@ def commit_on_success(using=None, read_committed=False):
     else:
         return CommitOnSuccessManager(using, read_committed)
 
-def commit_on_success_with_read_committed(using):
-    return commit_on_success(using, True)
-
 
 class OuterAtomic(transaction.Atomic):
     """
-    Atomic which must not be nested in another atomic.
+    Atomic which cannot be nested in another atomic.
 
     This is useful if you want to ensure that a commit happens at
     the end of the wrapped block.
     """
     ALLOW_NESTED = False
+
+    def __init__(self, using, savepoint, read_committed=False):
+        self.read_committed = read_committed
+        super(OuterAtomic, self).__init__(using, savepoint)
 
     def __enter__(self):
 
@@ -135,21 +157,34 @@ class OuterAtomic(transaction.Atomic):
         if not self.ALLOW_NESTED and connection.in_atomic_block:
             raise transaction.TransactionManagementError('Cannot be inside an atomic block.')
 
+        # This will set the transaction isolation level to READ COMMITTED for the next transaction.
+        if self.read_committed is True:
+            if connection.vendor == 'mysql':
+                cursor = connection.cursor()
+                cursor.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+
         super(OuterAtomic, self).__enter__()
 
 
 def outer_atomic(using=None, read_committed=False):
     """
+    A variant of Django's atomic() which cannot be nested inside another atomic.
+
+    This is useful if you want to ensure that a commit happens at
+    the end of the wrapped block.
+
+    Arguments:
+        using (str): the name of the database.
+        read_committed (bool): Whether to use read committed isolation level.
+
+    Raises:
+        TransactionManagementError: if already inside an atomic block.
     """
     if callable(using):
         return OuterAtomic(DEFAULT_DB_ALIAS, read_committed)(using)
     # Decorator: @outer_atomic(...) or context manager: with outer_atomic(...): ...
     else:
         return OuterAtomic(using, read_committed)
-
-
-def outer_atomic_with_read_committed(using):
-    return outer_atomic(using, True)
 
 
 def generate_int_id(minimum=0, maximum=MYSQL_MAX_INT, used_ids=None):

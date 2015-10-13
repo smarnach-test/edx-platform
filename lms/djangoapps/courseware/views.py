@@ -63,7 +63,7 @@ from student.models import UserTestGroup, CourseEnrollment
 from student.views import is_course_blocked
 from util.cache import cache, cache_if_anonymous
 from util.date_utils import strftime_localized
-from util.db import commit_on_success
+from util.db import outer_atomic, commit_on_success
 from xblock.fragment import Fragment
 from xmodule.modulestore.django import modulestore
 from xmodule.modulestore.exceptions import ItemNotFoundError, NoPathToItem
@@ -79,8 +79,6 @@ from microsite_configuration import microsite
 from opaque_keys.edx.locations import SlashSeparatedCourseKey
 from opaque_keys.edx.keys import CourseKey, UsageKey
 from instructor.enrollment import uses_shib
-
-from util.db import commit_on_success_with_read_committed
 
 import survey.utils
 import survey.views
@@ -319,7 +317,7 @@ def chat_settings(course, user):
 @ensure_csrf_cookie
 @cache_control(no_cache=True, no_store=True, must_revalidate=True)
 @ensure_valid_course_key
-@commit_on_success_with_read_committed
+@outer_atomic(read_committed=True)
 def index(request, course_id, chapter=None, section=None,
           position=None):
     """

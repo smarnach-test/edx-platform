@@ -89,7 +89,7 @@ import track.views
 
 import dogstats_wrapper as dog_stats_api
 
-from util.db import commit_on_success_with_read_committed
+from util.db import outer_atomic
 from util.json_request import JsonResponse
 from util.bad_request_rate_limiter import BadRequestRateLimiter
 from util.milestones_helpers import (
@@ -907,7 +907,7 @@ def _credit_statuses(user, course_enrollments):
 
 @transaction.non_atomic_requests
 @require_POST
-@commit_on_success_with_read_committed
+@outer_atomic(read_committed=True)
 def change_enrollment(request, check_access=True):
     """
     Modify the enrollment status for the logged-in user.
