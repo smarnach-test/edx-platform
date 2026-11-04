@@ -2,22 +2,29 @@
 // ====================
 
 // home - layout
-.container .view-discussion-home {
-  padding: ($baseline*2) ($baseline*2) ($baseline/2);
+.view-discussion-home {
+  @include padding-left(var(--baseline));
+
+  display: none;
+
+  // Only show this component for large sizes
+  @include media-breakpoint-up(lg) {
+    display: block;
+  }
 
   section {
-    border-bottom: 1px solid $gray-l3;
+    border-bottom: 1px solid var(--forum-color-border);
   }
 
   .label {
     @extend %t-copy-sub2;
+
     display: block;
   }
 
   .label-settings {
-    padding-top: $baseline;
-    padding-bottom: ($baseline/2);
-    text-transform: uppercase;
+    padding-top: var(--baseline);
+    padding-bottom: calc(var(--baseline) / 2);
   }
 
   .home-header {
@@ -25,20 +32,23 @@
   }
 
   .home-title {
-    @extend %t-title5;
-    color: $black;
-    margin-bottom: ($baseline/4);
+    font-size: var(--forum-large-font-size);
+    color: var(--black);
+    margin-bottom: calc(var(--baseline) / 4);
   }
+
   .home-description {
     @extend %t-copy-sub2;
-    margin-bottom: ($baseline/2);
+
+    margin-bottom: calc(var(--baseline) / 2);
   }
+
   .home-stats {
-    padding: $baseline 0;
+    padding: var(--baseline) 0;
 
     .label-area {
       display: inline-block;
-      min-width: ($baseline*5);
+      min-width: calc(var(--baseline) * 5);
       width: 25%;
       vertical-align: middle;
 
@@ -48,24 +58,26 @@
     }
 
     .stats-grouping {
-      @include padding-left($baseline);
+      @include padding-left(var(--baseline));
+
       display: inline-block;
       width: 70%;
 
       .profile-stat {
         @extend %t-copy-sub2;
+
         display: inline-block;
         width: 32.5%;
         vertical-align: middle;
 
         .count {
-          @extend %t-title4;
+          font-size: var(--forum-x-large-font-size);
           display: inline-block;
-          padding: 0 ($baseline/2);
+          padding: 0 calc(var(--baseline) / 2);
           vertical-align: middle;
         }
 
-        .profile-stat-label{
+        .profile-stat-label {
           vertical-align: middle;
         }
       }
@@ -74,57 +86,63 @@
 
   .home-helpgrid {
     border-bottom: none;
-    border-radius: 3px;
-    border: 1px solid $gray-l2;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, .15);
+    border-radius: var(--forum-border-radius);
+    border: 1px solid var(--forum-color-border);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
   }
 
   .helpgrid-row {
-    border-bottom: 1px solid $gray-l2;
+    border-bottom: 1px solid var(--forum-color-border);
 
     .row-title {
-      padding: ($baseline*1.5) $baseline;
+      padding: calc(var(--baseline) * 1.5) var(--baseline);
       background-color: #dedede;
-      font-size: 12px;
+      font-size: var(--forum-small-font-size);
     }
 
-    .row-item-full, .row-item {
-      font-size: 12px;
-      padding: 0px $baseline/2;
+    .row-item-full,
+    .row-item {
+      font-size: var(--forum-small-font-size);
+      padding: 0 calc(var(--baseline) / 2);
       width: 26%;
       vertical-align: middle;
 
       .icon {
-        padding: 0 ($baseline/2);
+        padding: 0 calc(var(--baseline) / 2);
         font-size: 24px;
         vertical-align: middle;
+        // TODO: don't use table-cell for layout purposes as it switches the screenreader mode
         display: table-cell;
       }
 
       .fa-stack .icon {
-        padding: 0 ($baseline/2);
+        padding: 0 calc(var(--baseline) / 2);
       }
 
       .row-description {
         vertical-align: middle;
+        // TODO: don't use table-cell for layout purposes as it switches the screenreader mode
         display: table-cell;
       }
     }
 
     .row-item-full {
-
       .notification-checkbox {
+        @include margin-right(calc(var(--baseline) / 2));
+
         display: inline-block;
-        @include padding($baseline/4, 0, $baseline/2, 0);
-        @include margin-right($baseline/2);
-        border-radius: 5px;
+
+        @include padding(calc(var(--baseline)/4), 0, calc(var(--baseline)/2), 0);
+
+        border-radius: var(--forum-border-radius);
         border: 1px solid gray;
 
         .email-setting {
           display: inline-block;
           text-align: center;
           vertical-align: middle;
-          @include margin-left($baseline/2);
+
+          @include margin-left(calc(var(--baseline) / 2));
         }
 
         .icon {
@@ -132,31 +150,52 @@
         }
 
         .email-setting:checked ~ .icon {
-          color: $green;
+          color: var(--green);
         }
       }
 
       .row-description {
         display: inline-block;
-        width:80%;
+        width: 80%;
       }
     }
   }
 
   .helpgrid-row-navigation {
-    .fa-bars {color: $light-gray;}
-    .fa-search {color: $light-gray;}
-    .fa-sort {color: $light-gray;}
+    .fa-bars {
+      color: theme-color("light");
+    }
+
+    .fa-search {
+      color: var(--gray-300);
+    }
+
+    .fa-sort {
+      color: var(--gray-300);
+    }
   }
 
   .helpgrid-row-participation {
-    .fa-plus {color: $green;}
-    .fa-flag {color: $pink;}
-    .fa-star {color: $blue;}
+    .fa-plus {
+      color: var(--green);
+    }
+
+    .fa-flag {
+      color: var(--pink);
+    }
+
+    .fa-star {
+      color: var(--blue);
+    }
   }
 
   .helpgrid-row-notification {
-    .fa-square {color: $green;}
-    .fa-envelope {color: $light-gray;}
+    .fa-square {
+      color: var(--green);
+    }
+
+    .fa-envelope {
+      color: var(--gray-300);
+    }
   }
 }

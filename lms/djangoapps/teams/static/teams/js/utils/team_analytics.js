@@ -2,18 +2,18 @@
  * Utility methods for emitting teams events. See the event spec:
  * https://openedx.atlassian.net/wiki/display/AN/Teams+Feature+Event+Design
  */
-;(function (define) {
+(function(define) {
     'use strict';
 
     define([
         'logger'
-    ], function (Logger) {
+    ], function(Logger) {
         var TeamAnalytics = {
-            emitPageViewed: function (page_name, topic_id, team_id) {
+            emitPageViewed: function(pageName, topicId, teamId) {
                 Logger.log('edx.team.page_viewed', {
-                    page_name: page_name,
-                    topic_id: topic_id,
-                    team_id: team_id
+                    page_name: pageName,
+                    topic_id: topicId,
+                    team_id: teamId
                 });
             }
         };

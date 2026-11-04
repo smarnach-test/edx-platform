@@ -3,20 +3,19 @@ This module defines tests for courseware.access that are specific to group
 access control rules.
 """
 
+
 import ddt
-from nose.plugins.attrib import attr
 from stevedore.extension import Extension, ExtensionManager
 
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory
-from xmodule.partitions.partitions import Group, UserPartition, USER_PARTITION_SCHEME_NAMESPACE
+import lms.djangoapps.courseware.access as access
+from common.djangoapps.student.tests.factories import StaffFactory, UserFactory
 from xmodule.modulestore.django import modulestore
+from xmodule.modulestore.tests.django_utils import TEST_DATA_SPLIT_MODULESTORE, ModuleStoreTestCase
+from xmodule.modulestore.tests.factories import BlockFactory, CourseFactory
+from xmodule.partitions.partitions import USER_PARTITION_SCHEME_NAMESPACE, Group, UserPartition
 
-import courseware.access as access
-from courseware.tests.factories import StaffFactory, UserFactory
 
-
-class MemoryUserPartitionScheme(object):
+class MemoryUserPartitionScheme:
     """
     In-memory partition scheme for testing.
     """
@@ -31,7 +30,7 @@ class MemoryUserPartitionScheme(object):
         """
         self.current_group.setdefault(user.id, {})[user_partition.id] = group
 
-    def get_group_for_user(self, course_id, user, user_partition, track_function=None):  # pylint: disable=unused-argument
+    def get_group_for_user(self, course_id, user, user_partition):  # pylint: disable=unused-argument
         """
         Fetch the group to which this user is linked in this partition, or None.
         """
@@ -45,19 +44,20 @@ def resolve_attrs(test_method):
     replaces them with the resolved values of those attributes in the method
     call.
     """
-    def _wrapper(self, *args):  # pylint: disable=missing-docstring
+    def _wrapper(self, *args):
         new_args = [getattr(self, arg) for arg in args]
         return test_method(self, *new_args)
     return _wrapper
 
 
-@attr('shard_1')
 @ddt.ddt
 class GroupAccessTestCase(ModuleStoreTestCase):
     """
     Tests to ensure that has_access() correctly enforces the visibility
     restrictions specified in the `group_access` field of XBlocks.
     """
+    MODULESTORE = TEST_DATA_SPLIT_MODULESTORE
+
     def set_user_group(self, user, partition, group):
         """
         Internal DRY / shorthand.
@@ -81,7 +81,7 @@ class GroupAccessTestCase(ModuleStoreTestCase):
         modulestore().update_item(block, 1)
 
     def setUp(self):
-        super(GroupAccessTestCase, self).setUp()
+        super().setUp()
 
         UserPartition.scheme_extensions = ExtensionManager.make_test_instance(
             [
@@ -127,10 +127,10 @@ class GroupAccessTestCase(ModuleStoreTestCase):
             user_partitions=[self.animal_partition, self.color_partition],
         )
         with self.store.bulk_operations(self.course.id, emit_signals=False):
-            chapter = ItemFactory.create(category='chapter', parent=self.course)
-            section = ItemFactory.create(category='sequential', parent=chapter)
-            vertical = ItemFactory.create(category='vertical', parent=section)
-            component = ItemFactory.create(category='problem', parent=vertical)
+            chapter = BlockFactory.create(category='chapter', parent=self.course)
+            section = BlockFactory.create(category='sequential', parent=chapter)
+            vertical = BlockFactory.create(category='vertical', parent=section)
+            component = BlockFactory.create(category='problem', parent=vertical)
 
             self.chapter_location = chapter.location
             self.section_location = section.location
@@ -177,23 +177,21 @@ class GroupAccessTestCase(ModuleStoreTestCase):
         side-effects in other tests.
         """
         UserPartition.scheme_extensions = None
-        super(GroupAccessTestCase, self).tearDown()
+        super().tearDown()
 
     def check_access(self, user, block_location, is_accessible):
         """
         DRY helper.
         """
-        self.assertIs(
-            bool(access.has_access(user, 'load', modulestore().get_item(block_location), self.course.id)),
-            is_accessible
-        )
+        assert bool(access.has_access(user, 'load', modulestore().get_item(block_location), self.course.id))\
+               is is_accessible
 
     def ensure_staff_access(self, block_location):
         """
         Another DRY helper.
         """
         block = modulestore().get_item(block_location)
-        self.assertTrue(access.has_access(self.staff, 'load', block, self.course.id))
+        assert access.has_access(self.staff, 'load', block, self.course.id)
 
     # NOTE: in all the tests that follow, `block_specified` and
     # `block_accessed` designate the place where group_access rules are
@@ -406,31 +404,3 @@ class GroupAccessTestCase(ModuleStoreTestCase):
         self.check_access(self.blue_dog, block_accessed, False)
         self.check_access(self.gray_worm, block_accessed, False)
         self.ensure_staff_access(block_accessed)
-
-    def test_group_access_short_circuits(self):
-        """
-        Test that the group_access check short-circuits if there are no user_partitions defined
-        except user_partitions in use by the split_test module.
-        """
-        # Initially, "red_cat" user can't view the vertical.
-        self.set_group_access(self.chapter_location, {self.animal_partition.id: [self.dog_group.id]})
-        self.check_access(self.red_cat, self.vertical_location, False)
-
-        # Change the vertical's user_partitions value to the empty list. Now red_cat can view the vertical.
-        self.set_user_partitions(self.vertical_location, [])
-        self.check_access(self.red_cat, self.vertical_location, True)
-
-        # Change the vertical's user_partitions value to include only "split_test" partitions.
-        split_test_partition = UserPartition(
-            199,
-            'split_test partition',
-            'nothing to look at here',
-            [Group(2, 'random group')],
-            scheme=UserPartition.get_scheme("random"),
-        )
-        self.set_user_partitions(self.vertical_location, [split_test_partition])
-        self.check_access(self.red_cat, self.vertical_location, True)
-
-        # Finally, add back in a cohort user_partition
-        self.set_user_partitions(self.vertical_location, [split_test_partition, self.animal_partition])
-        self.check_access(self.red_cat, self.vertical_location, False)

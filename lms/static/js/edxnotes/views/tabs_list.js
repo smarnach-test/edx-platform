@@ -1,41 +1,43 @@
-;(function (define, undefined) {
-'use strict';
-define([
-    'underscore', 'backbone', 'js/edxnotes/views/tab_item'
-], function (_, Backbone, TabItemView) {
-    var TabsListView = Backbone.View.extend({
-        tagName: 'ul',
-        className: 'tabs',
+// eslint-disable-next-line no-shadow-restricted-names
+(function(define, undefined) {
+    'use strict';
 
-        initialize: function (options) {
-            this.options = options;
-            this.listenTo(this.collection, {
-                'add': this.createTab,
-                'destroy': function (model, collection) {
-                    if (model.isActive() && collection.length) {
-                        collection.at(0).activate();
+    define([
+        'underscore', 'backbone', 'js/edxnotes/views/tab_item'
+    ], function(_, Backbone, TabItemView) {
+        var TabsListView = Backbone.View.extend({
+            tagName: 'ul',
+            className: 'tabs',
+
+            initialize: function(options) {
+                this.options = options;
+                this.listenTo(this.collection, {
+                    add: this.createTab,
+                    destroy: function(model, collection) {
+                        if (model.isActive() && collection.length) {
+                            collection.at(0).activate();
+                        }
                     }
+                });
+            },
+
+            render: function() {
+                this.collection.each(this.createTab, this);
+                if (this.collection.length) {
+                    this.collection.at(0).activate();
                 }
-            });
-        },
+                return this;
+            },
 
-        render: function () {
-            this.collection.each(this.createTab, this);
-            if (this.collection.length) {
-                this.collection.at(0).activate();
+            createTab: function(model) {
+                var tab = new TabItemView({
+                    model: model
+                });
+                tab.render().$el.appendTo(this.$el);
+                return tab;
             }
-            return this;
-        },
+        });
 
-        createTab: function (model) {
-            var tab = new TabItemView({
-                model: model
-            });
-            tab.render().$el.appendTo(this.$el);
-            return tab;
-        }
+        return TabsListView;
     });
-
-    return TabsListView;
-});
 }).call(this, define || RequireJS.define);

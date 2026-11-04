@@ -1,13 +1,13 @@
-;(function (define) {
+(function(define) {
     'use strict';
-    define([
-            'jquery',
-            'underscore',
-            'common/js/spec_helpers/template_helpers',
-            'js/student_account/views/InstitutionLoginView'
-        ],
-        function($, _, TemplateHelpers, InstitutionLoginView) {
 
+    define([
+        'jquery',
+        'underscore',
+        'common/js/spec_helpers/template_helpers',
+        'js/student_account/views/InstitutionLoginView'
+    ],
+    function($, _, TemplateHelpers, InstitutionLoginView) {
         describe('edx.student.account.InstitutionLoginView', function() {
             var view = null,
                 PLATFORM_NAME = 'edX',
@@ -52,7 +52,7 @@
                 var $google, $facebook;
 
                 createInstLoginView('login');
-                expect($('#institution_login-form').html()).not.toBe("");
+                expect($('#institution_login-form').html()).not.toBe('');
                 $google = $('li a:contains("Google")');
                 expect($google).toBeVisible();
                 expect($google).toHaveAttr(
@@ -69,7 +69,7 @@
                 var $google, $facebook;
 
                 createInstLoginView('register');
-                expect($('#institution_login-form').html()).not.toBe("");
+                expect($('#institution_login-form').html()).not.toBe('');
                 $google = $('li a:contains("Google")');
                 expect($google).toBeVisible();
                 expect($google).toHaveAttr(
@@ -81,7 +81,6 @@
                     'href', '/auth/login/facebook/?auth_entry=account_register'
                 );
             });
-
         });
     });
 }).call(this, define || RequireJS.define);

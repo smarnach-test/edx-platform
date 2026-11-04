@@ -1,16 +1,19 @@
-from django.conf.urls import patterns, url
+"""URLs for course_mode API"""
+
+
 from django.conf import settings
+from django.urls import re_path
 
-from course_modes import views
+from common.djangoapps.course_modes import views
 
-urlpatterns = patterns(
-    '',
-    # pylint seems to dislike as_view() calls because it's a `classonlymethod` instead of `classmethod`, so we disable the warning
-    url(r'^choose/{}/$'.format(settings.COURSE_ID_PATTERN), views.ChooseModeView.as_view(), name='course_modes_choose'),
-)
+urlpatterns = [
+    re_path(fr'^choose/{settings.COURSE_ID_PATTERN}/$', views.ChooseModeView.as_view(), name='course_modes_choose'),
+]
 
 # Enable verified mode creation
-if settings.FEATURES.get('MODE_CREATION_FOR_TESTING'):
-    urlpatterns += (
-        url(r'^create_mode/{}/$'.format(settings.COURSE_ID_PATTERN), 'course_modes.views.create_mode', name='create_mode'),
+if getattr(settings, 'MODE_CREATION_FOR_TESTING', False):
+    urlpatterns.append(
+        re_path(fr'^create_mode/{settings.COURSE_ID_PATTERN}/$',
+                views.create_mode,
+                name='create_mode'),
     )

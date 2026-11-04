@@ -1,62 +1,73 @@
-# Factories are self documenting
-# pylint: disable=missing-docstring
-import factory
-from django.core.files.base import ContentFile
-from factory.django import DjangoModelFactory, ImageField
+"""
+Certificates factories
+"""
 
-from student.models import LinkedInAddToProfileConfiguration
 
-from certificates.models import (
-    GeneratedCertificate, CertificateStatuses, CertificateHtmlViewConfiguration, CertificateWhitelist, BadgeAssertion,
-    BadgeImageConfiguration,
+import datetime
+from uuid import uuid4
+
+from factory import Sequence
+from factory.django import DjangoModelFactory
+
+from common.djangoapps.student.models import LinkedInAddToProfileConfiguration
+from lms.djangoapps.certificates.models import (
+    CertificateAllowlist,
+    CertificateDateOverride,
+    CertificateHtmlViewConfiguration,
+    CertificateInvalidation,
+    CertificateStatuses,
+    CertificateTemplate,
+    GeneratedCertificate,
 )
 
 
 class GeneratedCertificateFactory(DjangoModelFactory):
+    """
+    GeneratedCertificate factory
+    """
 
-    class Meta(object):
+    class Meta:
         model = GeneratedCertificate
 
     course_id = None
     status = CertificateStatuses.unavailable
     mode = GeneratedCertificate.MODES.honor
-    name = ''
+    name = ""
+    verify_uuid = uuid4().hex
+    grade = ""
 
 
-class CertificateWhitelistFactory(DjangoModelFactory):
+class CertificateAllowlistFactory(DjangoModelFactory):
+    """
+    Certificate allowlist factory
+    """
 
-    class Meta(object):
-        model = CertificateWhitelist
+    class Meta:
+        model = CertificateAllowlist
 
     course_id = None
-    whitelist = True
+    allowlist = True
+    notes = "Test Notes"
 
 
-class BadgeAssertionFactory(DjangoModelFactory):
-    class Meta(object):
-        model = BadgeAssertion
+class CertificateInvalidationFactory(DjangoModelFactory):
+    """
+    CertificateInvalidation factory
+    """
 
-    mode = 'honor'
+    class Meta:
+        model = CertificateInvalidation
 
-
-class BadgeImageConfigurationFactory(DjangoModelFactory):
-
-    class Meta(object):
-        model = BadgeImageConfiguration
-
-    mode = 'honor'
-    icon = factory.LazyAttribute(
-        lambda _: ContentFile(
-            ImageField()._make_data(  # pylint: disable=protected-access
-                {'color': 'blue', 'width': 50, 'height': 50, 'format': 'PNG'}
-            ), 'test.png'
-        )
-    )
+    notes = "Test Notes"
+    active = True
 
 
 class CertificateHtmlViewConfigurationFactory(DjangoModelFactory):
+    """
+    CertificateHtmlViewConfiguration factory
+    """
 
-    class Meta(object):
+    class Meta:
         model = CertificateHtmlViewConfiguration
 
     enabled = True
@@ -64,17 +75,18 @@ class CertificateHtmlViewConfigurationFactory(DjangoModelFactory):
             "default": {
                 "accomplishment_class_append": "accomplishment-certificate",
                 "platform_name": "edX",
-                "company_about_url": "http://www.edx.org/about-us",
-                "company_privacy_url": "http://www.edx.org/edx-privacy-policy",
-                "company_tos_url": "http://www.edx.org/edx-terms-service",
-                "company_verified_certificate_url": "http://www.edx.org/verified-certificate",
+                "company_about_url": "https://www.edx.org/about-us",
+                "company_privacy_url": "https://www.edx.org/edx-privacy-policy",
+                "company_tos_url": "https://www.edx.org/edx-terms-service",
+                "company_verified_certificate_url": "https://www.edx.org/verified-certificate",
                 "document_stylesheet_url_application": "/static/certificates/sass/main-ltr.css",
                 "logo_src": "/static/certificates/images/logo-edx.png",
-                "logo_url": "http://www.edx.org"
+                "logo_url": "https://www.edx.org"
             },
             "honor": {
                 "certificate_type": "Honor Code",
-                "certificate_title": "Certificate of Achievement"
+                "certificate_title": "Certificate of Achievement",
+                "logo_url": "https://www.edx.org/honor_logo.png"
             },
             "verified": {
                 "certificate_type": "Verified",
@@ -88,10 +100,36 @@ class CertificateHtmlViewConfigurationFactory(DjangoModelFactory):
 
 
 class LinkedInAddToProfileConfigurationFactory(DjangoModelFactory):
+    """
+    LinkedInAddToProfileConfiguration factory
+    """
 
-    class Meta(object):
+    class Meta:
         model = LinkedInAddToProfileConfiguration
 
     enabled = True
-    company_identifier = "0_0dPSPyS070e0HsE9HNz_13_d11_"
-    trk_partner_name = 'unittest'
+    company_identifier = "1337"
+
+
+class CertificateDateOverrideFactory(DjangoModelFactory):
+    """
+    CertificateDateOverride factory
+    """
+
+    class Meta:
+        model = CertificateDateOverride
+
+    date = datetime.datetime(2021, 5, 11, 0, 0, tzinfo=datetime.timezone.utc)  # noqa: UP017
+    reason = "Learner really wanted this on their birthday"
+
+
+class CertificateTemplateFactory(DjangoModelFactory):
+    """CertificateTemplate factory"""
+
+    class Meta:
+        model = CertificateTemplate
+
+    name = Sequence("template{}".format)
+    description = Sequence("description for template{}".format)
+    template = ""
+    is_active = True

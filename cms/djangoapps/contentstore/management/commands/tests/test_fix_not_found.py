@@ -2,27 +2,30 @@
 Tests for the fix_not_found management command
 """
 
-from django.core.management import call_command
+
+from django.core.management import CommandError, call_command
+
 from xmodule.modulestore import ModuleStoreEnum
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory
+from xmodule.modulestore.tests.factories import BlockFactory, CourseFactory
 
 
 class TestFixNotFound(ModuleStoreTestCase):
     """
     Tests for the fix_not_found management command
     """
-    def test_fix_not_found_non_split(self):
+    def test_no_args(self):
         """
-        The management command doesn't work on non split courses
+        Test fix_not_found command with no arguments
         """
-        course = CourseFactory.create(default_store=ModuleStoreEnum.Type.mongo)
-        with self.assertRaises(SystemExit):
-            call_command("fix_not_found", unicode(course.id))
+        msg = "Error: the following arguments are required: course_id"
+
+        with self.assertRaisesRegex(CommandError, msg):  # noqa: PT027
+            call_command('fix_not_found')
 
     def test_fix_not_found(self):
         course = CourseFactory.create(default_store=ModuleStoreEnum.Type.split)
-        ItemFactory.create(category='chapter', parent_location=course.location)
+        BlockFactory.create(category='chapter', parent_location=course.location)
 
         # get course again in order to update its children list
         course = self.store.get_course(course.id)
@@ -35,13 +38,13 @@ class TestFixNotFound(ModuleStoreTestCase):
 
         # the course block should now point to two children, one of which
         # doesn't actually exist
-        self.assertEqual(len(course.children), 2)
-        self.assertIn(dangling_pointer, course.children)
+        self.assertEqual(len(course.children), 2)  # noqa: PT009
+        self.assertIn(dangling_pointer, course.children)  # noqa: PT009
 
-        call_command("fix_not_found", unicode(course.id))
+        call_command("fix_not_found", str(course.id))
 
         # make sure the dangling pointer was removed from
         # the course block's children
         course = self.store.get_course(course.id)
-        self.assertEqual(len(course.children), 1)
-        self.assertNotIn(dangling_pointer, course.children)
+        self.assertEqual(len(course.children), 1)  # noqa: PT009
+        self.assertNotIn(dangling_pointer, course.children)  # noqa: PT009

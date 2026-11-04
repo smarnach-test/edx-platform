@@ -1,45 +1,75 @@
 """
 Namespace that defines fields common to all blocks used in the LMS
 """
+
+#from django.utils.translation import gettext_noop as _
+
+
 from lazy import lazy
-
-from xblock.fields import Boolean, Scope, String, XBlockMixin, Dict
+from xblock.core import XBlock, XBlockMixin
+from xblock.exceptions import JsonHandlerError
+from xblock.fields import Boolean, Dict, Scope, String
 from xblock.validation import ValidationMessage
-from xmodule.modulestore.inheritance import UserPartitionList
-from xmodule.partitions.partitions import NoSuchUserPartitionError, NoSuchUserPartitionGroupError
 
-# Make '_' a no-op so we can scrape strings
+from lms.lib.utils import is_unit
+from xmodule.modulestore.inheritance import UserPartitionList  # pylint: disable=wrong-import-order
+from xmodule.partitions.partitions import (  # pylint: disable=wrong-import-order
+    NoSuchUserPartitionError,
+    NoSuchUserPartitionGroupError,
+)
+
+# Please do not remove, this is a workaround for Django 1.8.
+# more information can be found here: https://openedx.atlassian.net/browse/PLAT-902
 _ = lambda text: text
+
+INVALID_USER_PARTITION_VALIDATION_COMPONENT = _(
+    "This component's access settings refer to deleted or invalid group configurations."
+)
+INVALID_USER_PARTITION_VALIDATION_UNIT = _(
+    "This unit's access settings refer to deleted or invalid group configurations."
+)
+INVALID_USER_PARTITION_GROUP_VALIDATION_COMPONENT = _(
+    "This component's access settings refer to deleted or invalid groups."
+)
+INVALID_USER_PARTITION_GROUP_VALIDATION_UNIT = _("This unit's access settings refer to deleted or invalid groups.")
+NONSENSICAL_ACCESS_RESTRICTION = _("This component's access settings contradict its parent's access settings.")
 
 
 class GroupAccessDict(Dict):
-    """Special Dict class for serializing the group_access field"""
-    def from_json(self, access_dict):
-        if access_dict is not None:
-            return {int(k): access_dict[k] for k in access_dict}
+    """
+    Special Dict class for serializing the group_access field.
+    """
+    def from_json(self, value):
+        if value is not None:
+            return {int(k): value[k] for k in value}
 
-    def to_json(self, access_dict):
-        if access_dict is not None:
-            return {unicode(k): access_dict[k] for k in access_dict}
+    def to_json(self, value):
+        if value is not None:
+            return {str(k): value[k] for k in value}
 
 
+@XBlock.needs('partitions')
+@XBlock.needs('i18n')
+@XBlock.wants('completion')
 class LmsBlockMixin(XBlockMixin):
     """
     Mixin that defines fields common to all blocks used in the LMS
     """
     hide_from_toc = Boolean(
-        help=_("Whether to display this module in the table of contents"),
+        help=_("Whether to display this block in the table of contents"),
         default=False,
         scope=Scope.settings
     )
     format = String(
         # Translators: "TOC" stands for "Table of Contents"
-        help=_("What format this module is in (used for deciding which "
+        help=_("What format this block is in (used for deciding which "
                "grader to apply, and what to show in the TOC)"),
         scope=Scope.settings,
     )
     chrome = String(
-        display_name=_("Courseware Chrome"),
+        display_name=_("Course Chrome"),
+        # Translators: DO NOT translate the words in quotes here, they are
+        # specific words for the acceptable values.
         help=_("Enter the chrome, or navigation tools, to use for the XBlock in the LMS. Valid values are: \n"
                "\"chromeless\" -- to not use tabs or the accordion; \n"
                "\"tabs\" -- to use tabs only; \n"
@@ -50,7 +80,7 @@ class LmsBlockMixin(XBlockMixin):
     )
     default_tab = String(
         display_name=_("Default Tab"),
-        help=_("Enter the tab that is selected in the XBlock. If not set, the Courseware tab is selected."),
+        help=_("Enter the tab that is selected in the XBlock. If not set, the Course tab is selected."),
         scope=Scope.settings,
         default=None,
     )
@@ -59,11 +89,6 @@ class LmsBlockMixin(XBlockMixin):
         help=_("Enter the source file name for LaTeX."),
         scope=Scope.settings,
         deprecated=True
-    )
-    ispublic = Boolean(
-        display_name=_("Course Is Public"),
-        help=_("Enter true or false. If true, the course is open to the public. If false, the course is open only to admins."),
-        scope=Scope.settings
     )
     visible_to_staff_only = Boolean(
         help=_("If true, can be seen only by course staff, regardless of start date."),
@@ -102,7 +127,7 @@ class LmsBlockMixin(XBlockMixin):
 
         merged_access = parent.merged_group_access.copy()
         if self.group_access is not None:
-            for partition_id, group_ids in self.group_access.items():
+            for partition_id, group_ids in self.group_access.items():  # pylint: disable=no-member
                 if group_ids:  # skip if the "local" group_access for this partition is None or empty.
                     if partition_id in merged_access:
                         if merged_access[partition_id] is False:
@@ -128,24 +153,59 @@ class LmsBlockMixin(XBlockMixin):
 
     def _get_user_partition(self, user_partition_id):
         """
-        Returns the user partition with the specified id.  Raises
-        `NoSuchUserPartitionError` if the lookup fails.
+        Returns the user partition with the specified id. Note that this method can return
+        an inactive user partition. Raises `NoSuchUserPartitionError` if the lookup fails.
         """
-        for user_partition in self.user_partitions:
+        for user_partition in self.runtime.service(self, 'partitions').course_partitions:
             if user_partition.id == user_partition_id:
                 return user_partition
 
-        raise NoSuchUserPartitionError("could not find a UserPartition with ID [{}]".format(user_partition_id))
+        raise NoSuchUserPartitionError(f"could not find a UserPartition with ID [{user_partition_id}]")
+
+    def _has_nonsensical_access_settings(self):
+        """
+        Checks if a block's group access settings do not make sense.
+
+        By nonsensical access settings, we mean a component's access
+        settings which contradict its parent's access in that they
+        restrict access to the component to a group that already
+        will not be able to see that content.
+        Note:  This contradiction can occur when a component
+        restricts access to the same partition but a different group
+        than its parent, or when there is a parent access
+        restriction but the component attempts to allow access to
+        all learners.
+
+        Returns:
+            bool: True if the block's access settings contradict its
+            parent's access settings.
+        """
+        parent = self.get_parent()
+        if not parent:
+            return False
+
+        parent_group_access = parent.group_access
+        component_group_access = self.group_access
+
+        for user_partition_id, parent_group_ids in parent_group_access.items():
+            component_group_ids = component_group_access.get(user_partition_id)  # pylint: disable=no-member
+            if component_group_ids:
+                return parent_group_ids and not set(component_group_ids).issubset(set(parent_group_ids))
+            else:
+                return not component_group_access
+        return False
 
     def validate(self):
         """
         Validates the state of this xblock instance.
         """
-        _ = self.runtime.service(self, "i18n").ugettext  # pylint: disable=redefined-outer-name
-        validation = super(LmsBlockMixin, self).validate()
+        _ = self.runtime.service(self, "i18n").gettext
+        validation = super().validate()
         has_invalid_user_partitions = False
         has_invalid_groups = False
-        for user_partition_id, group_ids in self.group_access.iteritems():
+        block_is_unit = is_unit(self)
+
+        for user_partition_id, group_ids in self.group_access.items():  # pylint:disable=no-member
             try:
                 user_partition = self._get_user_partition(user_partition_id)
             except NoSuchUserPartitionError:
@@ -163,14 +223,43 @@ class LmsBlockMixin(XBlockMixin):
             validation.add(
                 ValidationMessage(
                     ValidationMessage.ERROR,
-                    _(u"This component refers to deleted or invalid content group configurations.")
+                    (INVALID_USER_PARTITION_VALIDATION_UNIT
+                     if block_is_unit
+                     else INVALID_USER_PARTITION_VALIDATION_COMPONENT)
                 )
             )
+
         if has_invalid_groups:
             validation.add(
                 ValidationMessage(
                     ValidationMessage.ERROR,
-                    _(u"This component refers to deleted or invalid content groups.")
+                    (INVALID_USER_PARTITION_GROUP_VALIDATION_UNIT
+                     if block_is_unit
+                     else INVALID_USER_PARTITION_GROUP_VALIDATION_COMPONENT)
                 )
             )
+
+        if self._has_nonsensical_access_settings():
+            validation.add(
+                ValidationMessage(
+                    ValidationMessage.ERROR,
+                    NONSENSICAL_ACCESS_RESTRICTION
+                )
+            )
+
         return validation
+
+    @XBlock.json_handler
+    def publish_completion(self, data, suffix=''):  # pylint: disable=unused-argument
+        """
+        Publish completion data from the front end.
+        """
+        completion_service = self.runtime.service(self, 'completion')
+        if completion_service is None:  # pylint: disable=no-else-raise
+            raise JsonHandlerError(500, "No completion service found")
+        elif not completion_service.completion_tracking_enabled():
+            raise JsonHandlerError(404, "Completion tracking is not enabled and API calls are unexpected")
+        if not completion_service.can_mark_block_complete_on_view(self):
+            raise JsonHandlerError(400, "Block not configured for completion on view.")
+        self.runtime.publish(self, "completion", data)
+        return {'result': 'ok'}

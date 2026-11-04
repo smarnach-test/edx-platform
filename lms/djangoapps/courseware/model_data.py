@@ -21,31 +21,26 @@ UserInfoCache: A cache for Scope.user_info
 DjangoOrmFieldCache: A base-class for single-row-per-field caches.
 """
 
+
 import json
-from abc import abstractmethod, ABCMeta
-from collections import defaultdict, namedtuple
-from .models import (
-    StudentModule,
-    XModuleUserStateSummaryField,
-    XModuleStudentPrefsField,
-    XModuleStudentInfoField
-)
 import logging
-from opaque_keys.edx.keys import CourseKey, UsageKey
+from abc import ABCMeta, abstractmethod
+from collections import defaultdict, namedtuple
+
+from django.db import DatabaseError, IntegrityError, transaction
+from opaque_keys.edx.asides import AsideUsageKeyV1, AsideUsageKeyV2
 from opaque_keys.edx.block_types import BlockTypeKeyV1
-from opaque_keys.edx.asides import AsideUsageKeyV1
-from contracts import contract, new_contract
-
-from django.db import DatabaseError
-
-from xblock.runtime import KeyValueStore
-from xblock.exceptions import KeyValueMultiSaveError, InvalidScopeError
-from xblock.fields import Scope, UserScope
-from xmodule.modulestore.django import modulestore
+from opaque_keys.edx.keys import LearningContextKey
 from xblock.core import XBlockAside
-from courseware.user_state_client import DjangoXBlockUserStateClient
+from xblock.exceptions import InvalidScopeError, KeyValueMultiSaveError
+from xblock.fields import Scope, UserScope
+from xblock.runtime import KeyValueStore
 
-from openedx.core.djangoapps.call_stack_manager import donottrack
+from lms.djangoapps.courseware.user_state_client import DjangoXBlockUserStateClient
+from openedx.core.lib.log_utils import get_username_or_pii_safe_user_id_for_log
+from xmodule.modulestore.django import modulestore  # pylint: disable=wrong-import-order
+
+from .models import StudentModule, XModuleStudentInfoField, XModuleStudentPrefsField, XModuleUserStateSummaryField
 
 log = logging.getLogger(__name__)
 
@@ -57,29 +52,30 @@ class InvalidWriteError(Exception):
     """
 
 
-def _all_usage_keys(descriptors, aside_types):
+def _all_usage_keys(blocks, aside_types):
     """
-    Return a set of all usage_ids for the `descriptors` and for
-    as all asides in `aside_types` for those descriptors.
+    Return a set of all usage_ids for the `blocks` and for
+    as all asides in `aside_types` for those blocks.
     """
     usage_ids = set()
-    for descriptor in descriptors:
-        usage_ids.add(descriptor.scope_ids.usage_id)
+    for block in blocks:
+        usage_ids.add(block.scope_ids.usage_id)
 
         for aside_type in aside_types:
-            usage_ids.add(AsideUsageKeyV1(descriptor.scope_ids.usage_id, aside_type))
+            usage_ids.add(AsideUsageKeyV1(block.scope_ids.usage_id, aside_type))
+            usage_ids.add(AsideUsageKeyV2(block.scope_ids.usage_id, aside_type))
 
     return usage_ids
 
 
-def _all_block_types(descriptors, aside_types):
+def _all_block_types(blocks, aside_types):
     """
-    Return a set of all block_types for the supplied `descriptors` and for
-    the asides types in `aside_types` associated with those descriptors.
+    Return a set of all block_types for the supplied `blocks` and for
+    the asides types in `aside_types` associated with those blocks.
     """
     block_types = set()
-    for descriptor in descriptors:
-        block_types.add(BlockTypeKeyV1(descriptor.entry_point, descriptor.scope_ids.block_type))
+    for block in blocks:
+        block_types.add(BlockTypeKeyV1(block.entry_point, block.scope_ids.block_type))
 
     for aside_type in aside_types:
         block_types.add(BlockTypeKeyV1(XBlockAside.entry_point, aside_type))
@@ -112,7 +108,7 @@ class DjangoKeyValueStore(KeyValueStore):
         Scope.user_info,
     )
 
-    def __init__(self, field_data_cache):
+    def __init__(self, field_data_cache):  # pylint: disable=super-init-not-called
         self._field_data_cache = field_data_cache
 
     def get(self, key):
@@ -125,7 +121,7 @@ class DjangoKeyValueStore(KeyValueStore):
         """
         self.set_many({key: value})
 
-    def set_many(self, kv_dict):
+    def set_many(self, kv_dict):  # pylint: disable=arguments-differ
         """
         Provide a bulk save mechanism.
 
@@ -153,16 +149,11 @@ class DjangoKeyValueStore(KeyValueStore):
             raise InvalidScopeError(key, self._allowed_scopes)
 
 
-new_contract("DjangoKeyValueStore", DjangoKeyValueStore)
-new_contract("DjangoKeyValueStore_Key", DjangoKeyValueStore.Key)
-
-
-class DjangoOrmFieldCache(object):
+class DjangoOrmFieldCache(metaclass=ABCMeta):
     """
     Baseclass for Scope-specific field cache objects that are based on
     single-row-per-field Django ORM objects.
     """
-    __metaclass__ = ABCMeta
 
     def __init__(self):
         self._cache = {}
@@ -180,7 +171,6 @@ class DjangoOrmFieldCache(object):
         for field_object in self._read_objects(fields, xblocks, aside_types):
             self._cache[self._cache_key_for_field_object(field_object)] = field_object
 
-    @contract(kvs_key=DjangoKeyValueStore.Key)
     def get(self, kvs_key):
         """
         Return the django model object specified by `kvs_key` from
@@ -199,7 +189,6 @@ class DjangoOrmFieldCache(object):
 
         return json.loads(field_object.value)
 
-    @contract(kvs_key=DjangoKeyValueStore.Key)
     def set(self, kvs_key, value):
         """
         Set the specified `kvs_key` to the field value `value`.
@@ -210,7 +199,6 @@ class DjangoOrmFieldCache(object):
         """
         self.set_many({kvs_key: value})
 
-    @contract(kv_dict="dict(DjangoKeyValueStore_Key: *)")
     def set_many(self, kv_dict):
         """
         Set the specified fields to the supplied values.
@@ -241,12 +229,11 @@ class DjangoOrmFieldCache(object):
 
             except DatabaseError:
                 log.exception("Saving field %r failed", kvs_key.field_name)
-                raise KeyValueMultiSaveError(saved_fields)
+                raise KeyValueMultiSaveError(saved_fields)  # pylint: disable=raise-missing-from  # noqa: B904
 
             finally:
                 saved_fields.append(kvs_key.field_name)
 
-    @contract(kvs_key=DjangoKeyValueStore.Key)
     def delete(self, kvs_key):
         """
         Delete the value specified by `kvs_key`.
@@ -265,7 +252,6 @@ class DjangoOrmFieldCache(object):
         field_object.delete()
         del self._cache[cache_key]
 
-    @contract(kvs_key=DjangoKeyValueStore.Key, returns=bool)
     def has(self, kvs_key):
         """
         Return whether the specified `kvs_key` is set.
@@ -277,7 +263,6 @@ class DjangoOrmFieldCache(object):
         """
         return self._cache_key_for_kvs_key(kvs_key) in self._cache
 
-    @contract(kvs_key=DjangoKeyValueStore.Key, returns="datetime|None")
     def last_modified(self, kvs_key):
         """
         Return when the supplied field was changed.
@@ -346,7 +331,7 @@ class DjangoOrmFieldCache(object):
         raise NotImplementedError()
 
 
-class UserStateCache(object):
+class UserStateCache:
     """
     Cache for Scope.user_state xblock field data.
     """
@@ -373,7 +358,6 @@ class UserStateCache(object):
         for user_state in block_field_state:
             self._cache[user_state.block_key] = user_state.state
 
-    @contract(kvs_key=DjangoKeyValueStore.Key)
     def set(self, kvs_key, value):
         """
         Set the specified `kvs_key` to the field value `value`.
@@ -384,7 +368,6 @@ class UserStateCache(object):
         """
         self.set_many({kvs_key: value})
 
-    @contract(kvs_key=DjangoKeyValueStore.Key, returns="datetime|None")
     def last_modified(self, kvs_key):
         """
         Return when the supplied field was changed.
@@ -403,7 +386,6 @@ class UserStateCache(object):
         except self._client.DoesNotExist:
             return None
 
-    @contract(kv_dict="dict(DjangoKeyValueStore_Key: *)")
     def set_many(self, kv_dict):
         """
         Set the specified fields to the supplied values.
@@ -423,13 +405,13 @@ class UserStateCache(object):
                 self.user.username,
                 pending_updates
             )
-        except DatabaseError:
-            log.exception("Saving user state failed for %s", self.user.username)
-            raise KeyValueMultiSaveError([])
+        except DatabaseError as err:
+            user_identifier_for_log = get_username_or_pii_safe_user_id_for_log(self.user)
+            log.exception("Saving user state failed for %s", user_identifier_for_log)
+            raise KeyValueMultiSaveError([]) from err
         finally:
             self._cache.update(pending_updates)
 
-    @contract(kvs_key=DjangoKeyValueStore.Key)
     def get(self, kvs_key):
         """
         Return the django model object specified by `kvs_key` from
@@ -446,7 +428,6 @@ class UserStateCache(object):
 
         return self._cache[cache_key][kvs_key.field_name]
 
-    @contract(kvs_key=DjangoKeyValueStore.Key)
     def delete(self, kvs_key):
         """
         Delete the value specified by `kvs_key`.
@@ -468,7 +449,6 @@ class UserStateCache(object):
         self._client.delete(self.user.username, cache_key, fields=[kvs_key.field_name])
         del field_state[kvs_key.field_name]
 
-    @contract(kvs_key=DjangoKeyValueStore.Key, returns=bool)
     def has(self, kvs_key):
         """
         Return whether the specified `kvs_key` is set.
@@ -503,7 +483,7 @@ class UserStateSummaryCache(DjangoOrmFieldCache):
     Cache for Scope.user_state_summary xblock field data.
     """
     def __init__(self, course_id):
-        super(UserStateSummaryCache, self).__init__()
+        super().__init__()
         self.course_id = course_id
 
     def _create_object(self, kvs_key, value):
@@ -537,7 +517,7 @@ class UserStateSummaryCache(DjangoOrmFieldCache):
         return XModuleUserStateSummaryField.objects.chunked_filter(
             'usage_id__in',
             _all_usage_keys(xblocks, aside_types),
-            field_name__in=set(field.name for field in fields),
+            field_name__in={field.name for field in fields},
         )
 
     def _cache_key_for_field_object(self, field_object):
@@ -547,7 +527,7 @@ class UserStateSummaryCache(DjangoOrmFieldCache):
         Arguments:
             field_object: A Django model instance that stores the data for fields in this cache
         """
-        return (field_object.usage_id.map_into_course(self.course_id), field_object.field_name)
+        return field_object.usage_id.map_into_course(self.course_id), field_object.field_name
 
     def _cache_key_for_kvs_key(self, key):
         """
@@ -556,7 +536,7 @@ class UserStateSummaryCache(DjangoOrmFieldCache):
         Arguments:
             key (:class:`~DjangoKeyValueStore.Key`): The key representing the cached field
         """
-        return (key.block_scope_id, key.field_name)
+        return key.block_scope_id, key.field_name
 
 
 class PreferencesCache(DjangoOrmFieldCache):
@@ -564,7 +544,7 @@ class PreferencesCache(DjangoOrmFieldCache):
     Cache for Scope.preferences xblock field data.
     """
     def __init__(self, user):
-        super(PreferencesCache, self).__init__()
+        super().__init__()
         self.user = user
 
     def _create_object(self, kvs_key, value):
@@ -600,7 +580,7 @@ class PreferencesCache(DjangoOrmFieldCache):
             'module_type__in',
             _all_block_types(xblocks, aside_types),
             student=self.user.pk,
-            field_name__in=set(field.name for field in fields),
+            field_name__in={field.name for field in fields},
         )
 
     def _cache_key_for_field_object(self, field_object):
@@ -610,7 +590,7 @@ class PreferencesCache(DjangoOrmFieldCache):
         Arguments:
             field_object: A Django model instance that stores the data for fields in this cache
         """
-        return (field_object.module_type, field_object.field_name)
+        return field_object.module_type, field_object.field_name
 
     def _cache_key_for_kvs_key(self, key):
         """
@@ -619,7 +599,7 @@ class PreferencesCache(DjangoOrmFieldCache):
         Arguments:
             key (:class:`~DjangoKeyValueStore.Key`): The key representing the cached field
         """
-        return (BlockTypeKeyV1(key.block_family, key.block_scope_id), key.field_name)
+        return BlockTypeKeyV1(key.block_family, key.block_scope_id), key.field_name
 
 
 class UserInfoCache(DjangoOrmFieldCache):
@@ -627,7 +607,7 @@ class UserInfoCache(DjangoOrmFieldCache):
     Cache for Scope.user_info xblock field data
     """
     def __init__(self, user):
-        super(UserInfoCache, self).__init__()
+        super().__init__()
         self.user = user
 
     def _create_object(self, kvs_key, value):
@@ -660,7 +640,7 @@ class UserInfoCache(DjangoOrmFieldCache):
         """
         return XModuleStudentInfoField.objects.filter(
             student=self.user.pk,
-            field_name__in=set(field.name for field in fields),
+            field_name__in={field.name for field in fields},
         )
 
     def _cache_key_for_field_object(self, field_object):
@@ -682,33 +662,34 @@ class UserInfoCache(DjangoOrmFieldCache):
         return key.field_name
 
 
-class FieldDataCache(object):
+class FieldDataCache:
     """
     A cache of django model objects needed to supply the data
-    for a module and its descendants
+    for a block and its descendants
     """
-    def __init__(self, descriptors, course_id, user, select_for_update=False, asides=None):
+    def __init__(self, blocks, course_id, user, asides=None, read_only=False):
         """
-        Find any courseware.models objects that are needed by any descriptor
-        in descriptors. Attempts to minimize the number of queries to the database.
-        Note: Only modules that have store_state = True or have shared
+        Find any courseware.models objects that are needed by any block
+        in blocks. Attempts to minimize the number of queries to the database.
+        Note: Only blocks that have store_state = True or have shared
         state will have a StudentModule.
 
         Arguments
-        descriptors: A list of XModuleDescriptors.
+        blocks: A list of XBlocks.
         course_id: The id of the current course
         user: The user for which to cache data
-        select_for_update: Ignored
         asides: The list of aside types to load, or None to prefetch no asides.
+        read_only: We should not perform writes (they become a no-op).
         """
         if asides is None:
             self.asides = []
         else:
             self.asides = asides
 
-        assert isinstance(course_id, CourseKey)
+        assert isinstance(course_id, LearningContextKey)
         self.course_id = course_id
         self.user = user
+        self.read_only = read_only
 
         self.cache = {
             Scope.user_state: UserStateCache(
@@ -726,89 +707,87 @@ class FieldDataCache(object):
             ),
         }
         self.scorable_locations = set()
-        self.add_descriptors_to_cache(descriptors)
+        self.add_blocks_to_cache(blocks)
 
-    def add_descriptors_to_cache(self, descriptors):
+    def add_blocks_to_cache(self, blocks):
         """
-        Add all `descriptors` to this FieldDataCache.
+        Add all `blocks` to this FieldDataCache.
         """
-        if self.user.is_authenticated():
-            self.scorable_locations.update(desc.location for desc in descriptors if desc.has_score)
-            for scope, fields in self._fields_to_cache(descriptors).items():
+        if self.user.is_authenticated:
+            self.scorable_locations.update(block.location for block in blocks if block.has_score)
+            for scope, fields in self._fields_to_cache(blocks).items():
                 if scope not in self.cache:
                     continue
 
-                self.cache[scope].cache_fields(fields, descriptors, self.asides)
+                self.cache[scope].cache_fields(fields, blocks, self.asides)
 
-    def add_descriptor_descendents(self, descriptor, depth=None, descriptor_filter=lambda descriptor: True):
+    def add_block_descendents(self, block, depth=None, block_filter=lambda block: True):
         """
-        Add all descendants of `descriptor` to this FieldDataCache.
+        Add all descendants of `block` to this FieldDataCache.
 
         Arguments:
-            descriptor: An XModuleDescriptor
-            depth is the number of levels of descendant modules to load StudentModules for, in addition to
-                the supplied descriptor. If depth is None, load all descendant StudentModules
-            descriptor_filter is a function that accepts a descriptor and return whether the field data
+            block: An XBlock
+            depth is the number of levels of descendant blocks to load StudentModules for, in addition to
+                the supplied block. If depth is None, load all descendant StudentModules
+            block_filter is a function that accepts a block and return whether the field data
                 should be cached
         """
 
-        def get_child_descriptors(descriptor, depth, descriptor_filter):
+        def get_child_blocks(block, depth, block_filter):
             """
-            Return a list of all child descriptors down to the specified depth
-            that match the descriptor filter. Includes `descriptor`
+            Return a list of all child blocks down to the specified depth
+            that match the block filter. Includes `block`
 
-            descriptor: The parent to search inside
+            block: The parent to search inside
             depth: The number of levels to descend, or None for infinite depth
-            descriptor_filter(descriptor): A function that returns True
-                if descriptor should be included in the results
+            block_filter(block): A function that returns True
+                if block should be included in the results
             """
-            if descriptor_filter(descriptor):
-                descriptors = [descriptor]
+            if block_filter(block):
+                blocks = [block]
             else:
-                descriptors = []
+                blocks = []
 
             if depth is None or depth > 0:
                 new_depth = depth - 1 if depth is not None else depth
 
-                for child in descriptor.get_children() + descriptor.get_required_module_descriptors():
-                    descriptors.extend(get_child_descriptors(child, new_depth, descriptor_filter))
+                for child in block.get_children() + block.get_required_block_descriptors():
+                    blocks.extend(get_child_blocks(child, new_depth, block_filter))
 
-            return descriptors
+            return blocks
 
-        with modulestore().bulk_operations(descriptor.location.course_key):
-            descriptors = get_child_descriptors(descriptor, depth, descriptor_filter)
+        with modulestore().bulk_operations(block.location.course_key):
+            blocks = get_child_blocks(block, depth, block_filter)
 
-        self.add_descriptors_to_cache(descriptors)
+        self.add_blocks_to_cache(blocks)
 
     @classmethod
-    def cache_for_descriptor_descendents(cls, course_id, user, descriptor, depth=None,
-                                         descriptor_filter=lambda descriptor: True,
-                                         select_for_update=False, asides=None):
+    def cache_for_block_descendents(cls, course_id, user, block, depth=None,
+                                    block_filter=lambda block: True,
+                                    asides=None, read_only=False):
         """
         course_id: the course in the context of which we want StudentModules.
         user: the django user for whom to load modules.
-        descriptor: An XModuleDescriptor
-        depth is the number of levels of descendant modules to load StudentModules for, in addition to
-            the supplied descriptor. If depth is None, load all descendant StudentModules
-        descriptor_filter is a function that accepts a descriptor and return whether the field data
+        block: An XBlock
+        depth is the number of levels of descendant blocks to load StudentModules for, in addition to
+            the supplied block. If depth is None, load all descendant StudentModules
+        block_filter is a function that accepts a block and return whether the field data
             should be cached
-        select_for_update: Ignored
         """
-        cache = FieldDataCache([], course_id, user, select_for_update, asides=asides)
-        cache.add_descriptor_descendents(descriptor, depth, descriptor_filter)
+        cache = FieldDataCache([], course_id, user, asides=asides, read_only=read_only)
+        cache.add_block_descendents(block, depth, block_filter)
         return cache
 
-    def _fields_to_cache(self, descriptors):
+    def _fields_to_cache(self, blocks):
         """
         Returns a map of scopes to fields in that scope that should be cached
         """
         scope_map = defaultdict(set)
-        for descriptor in descriptors:
-            for field in descriptor.fields.values():
+        for block in blocks:
+            for field in block.fields.values():
                 scope_map[field.scope].add(field)
         return scope_map
 
-    @contract(key=DjangoKeyValueStore.Key)
     def get(self, key):
         """
         Load the field value specified by `key`.
@@ -820,7 +799,7 @@ class FieldDataCache(object):
         Raises: KeyError if key isn't found in the cache
         """
 
-        if key.scope.user == UserScope.ONE and not self.user.is_anonymous():
+        if key.scope.user == UserScope.ONE and not self.user.is_anonymous:
             # If we're getting user data, we expect that the key matches the
             # user we were constructed for.
             assert key.user_id == self.user.id
@@ -830,7 +809,6 @@ class FieldDataCache(object):
 
         return self.cache[key.scope].get(key)
 
-    @contract(kv_dict="dict(DjangoKeyValueStore_Key: *)")
     def set_many(self, kv_dict):
         """
         Set all of the fields specified by the keys of `kv_dict` to the values
@@ -840,12 +818,14 @@ class FieldDataCache(object):
             kv_dict (dict): dict mapping from `DjangoKeyValueStore.Key`s to field values
         Raises: DatabaseError if any fields fail to save
         """
+        if self.read_only:
+            return
 
         saved_fields = []
         by_scope = defaultdict(dict)
-        for key, value in kv_dict.iteritems():
+        for key, value in kv_dict.items():
 
-            if key.scope.user == UserScope.ONE and not self.user.is_anonymous():
+            if key.scope.user == UserScope.ONE and not self.user.is_anonymous:
                 # If we're getting user data, we expect that the key matches the
                 # user we were constructed for.
                 assert key.user_id == self.user.id
@@ -855,7 +835,7 @@ class FieldDataCache(object):
 
             by_scope[key.scope][key] = value
 
-        for scope, set_many_data in by_scope.iteritems():
+        for scope, set_many_data in by_scope.items():
             try:
                 self.cache[scope].set_many(set_many_data)
                 # If save is successful on these fields, add it to
@@ -863,9 +843,8 @@ class FieldDataCache(object):
                 saved_fields.extend(key.field_name for key in set_many_data)
             except KeyValueMultiSaveError as exc:
                 log.exception('Error saving fields %r', [key.field_name for key in set_many_data])
-                raise KeyValueMultiSaveError(saved_fields + exc.saved_field_names)
+                raise KeyValueMultiSaveError(saved_fields + exc.saved_field_names)  # pylint: disable=raise-missing-from  # noqa: B904
 
-    @contract(key=DjangoKeyValueStore.Key)
     def delete(self, key):
         """
         Delete the value specified by `key`.
@@ -875,8 +854,10 @@ class FieldDataCache(object):
 
         Raises: KeyError if key isn't found in the cache
         """
+        if self.read_only:
+            return
 
-        if key.scope.user == UserScope.ONE and not self.user.is_anonymous():
+        if key.scope.user == UserScope.ONE and not self.user.is_anonymous:
             # If we're getting user data, we expect that the key matches the
             # user we were constructed for.
             assert key.user_id == self.user.id
@@ -886,7 +867,6 @@ class FieldDataCache(object):
 
         self.cache[key.scope].delete(key)
 
-    @contract(key=DjangoKeyValueStore.Key, returns=bool)
     def has(self, key):
         """
         Return whether the specified `key` is set.
@@ -897,7 +877,7 @@ class FieldDataCache(object):
         Returns: bool
         """
 
-        if key.scope.user == UserScope.ONE and not self.user.is_anonymous():
+        if key.scope.user == UserScope.ONE and not self.user.is_anonymous:
             # If we're getting user data, we expect that the key matches the
             # user we were constructed for.
             assert key.user_id == self.user.id
@@ -907,7 +887,6 @@ class FieldDataCache(object):
 
         return self.cache[key.scope].has(key)
 
-    @contract(key=DjangoKeyValueStore.Key, returns="datetime|None")
     def last_modified(self, key):
         """
         Return when the supplied field was changed.
@@ -917,7 +896,7 @@ class FieldDataCache(object):
 
         Returns: datetime if there was a modified date, or None otherwise
         """
-        if key.scope.user == UserScope.ONE and not self.user.is_anonymous():
+        if key.scope.user == UserScope.ONE and not self.user.is_anonymous:
             # If we're getting user data, we expect that the key matches the
             # user we were constructed for.
             assert key.user_id == self.user.id
@@ -931,17 +910,16 @@ class FieldDataCache(object):
         return sum(len(cache) for cache in self.cache.values())
 
 
-class ScoresClient(object):
+class ScoresClient:
     """
     Basic client interface for retrieving Score information.
 
     Eventually, this should read and write scores, but at the moment it only
     handles the read side of things.
     """
-    Score = namedtuple('Score', 'correct total')
+    Score = namedtuple('Score', 'correct total created')
 
     def __init__(self, course_key, user_id):
-        """Basic constructor. from_field_data_cache() is more appopriate for most uses."""
         self.course_key = course_key
         self.user_id = user_id
         self._locations_to_scores = {}
@@ -962,9 +940,9 @@ class ScoresClient(object):
         # attached to them (since old mongo identifiers don't include runs).
         # So we have to add that info back in before we put it into our lookup.
         self._locations_to_scores.update({
-            UsageKey.from_string(location).map_into_course(self.course_key): self.Score(correct, total)
-            for location, correct, total
-            in scores_qset.values_list('module_state_key', 'grade', 'max_grade')
+            location.map_into_course(self.course_key): self.Score(correct, total, created)
+            for location, correct, total, created
+            in scores_qset.values_list('module_state_key', 'grade', 'max_grade', 'created')
         })
         self._has_fetched = True
 
@@ -978,35 +956,63 @@ class ScoresClient(object):
         """
         if not self._has_fetched:
             raise ValueError(
-                "Tried to fetch location {} from ScoresClient before fetch_scores() has run."
+                "Tried to fetch location {} from ScoresClient before fetch_scores() has run."  # noqa: UP032
                 .format(location)
             )
-        return self._locations_to_scores.get(location)
+        return self._locations_to_scores.get(location.replace(version=None, branch=None))
 
     @classmethod
-    def from_field_data_cache(cls, fd_cache):
-        """Create a ScoresClient from a populated FieldDataCache."""
-        client = cls(fd_cache.course_id, fd_cache.user.id)
-        client.fetch_scores(fd_cache.scorable_locations)
+    def create_for_locations(cls, course_id, user_id, scorable_locations):
+        """Create a ScoresClient with pre-fetched data for the given locations."""
+        client = cls(course_id, user_id)
+        client.fetch_scores(scorable_locations)
         return client
 
 
-# @contract(user_id=int, usage_key=UsageKey, score="number|None", max_score="number|None")
-@donottrack(StudentModule)
 def set_score(user_id, usage_key, score, max_score):
     """
     Set the score and max_score for the specified user and xblock usage.
     """
-    student_module, created = StudentModule.objects.get_or_create(
-        student_id=user_id,
-        module_state_key=usage_key,
-        course_id=usage_key.course_key,
-        defaults={
-            'grade': score,
-            'max_grade': max_score,
-        }
-    )
+    created = False
+    kwargs = {"student_id": user_id, "module_state_key": usage_key, "course_id": usage_key.context_key}
+    try:
+        with transaction.atomic():
+            student_module, created = StudentModule.objects.get_or_create(
+                defaults={
+                    'grade': score,
+                    'max_grade': max_score,
+                    'module_type': usage_key.block_type,
+                },
+                **kwargs
+            )
+    except IntegrityError:
+        # log information for duplicate entry and get the record as above command failed.
+        log.exception(
+            'set_score: IntegrityError for student %s - course_id %s - usage_key %s having '
+            'score %d and max_score %d',
+            str(user_id), usage_key.context_key, usage_key, score, max_score
+        )
+        student_module = StudentModule.objects.get(**kwargs)
+
     if not created:
         student_module.grade = score
         student_module.max_grade = max_score
         student_module.save()
+    return student_module.modified
+
+
+def get_score(user_id, usage_key):
+    """
+    Get the score and max_score for the specified user and xblock usage.
+    Returns None if not found.
+    """
+    try:
+        student_module = StudentModule.objects.get(
+            student_id=user_id,
+            module_state_key=usage_key,
+            course_id=usage_key.course_key,
+        )
+    except StudentModule.DoesNotExist:
+        return None
+    else:
+        return student_module

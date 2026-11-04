@@ -2,12 +2,14 @@
 :class:`~django_require.staticstorage.OptimizedCachedRequireJsStorage`
 """
 
-from pipeline.storage import PipelineCachedStorage
+from pipeline.storage import PipelineManifestStorage
 from require.storage import OptimizedFilesMixin
 
+from openedx.core.storage import PipelineForgivingMixin
 
-class OptimizedCachedRequireJsStorage(OptimizedFilesMixin, PipelineCachedStorage):
+
+class OptimizedCachedRequireJsStorage(OptimizedFilesMixin, PipelineForgivingMixin, PipelineManifestStorage):
     """
     Custom storage backend that is used by Django-require.
     """
-    pass
+    pass  # pylint: disable=unnecessary-pass

@@ -1,119 +1,231 @@
+"""
+Urls of Studio.
+"""
+
+from auth_backends.urls import oauth2_urlpatterns
 from django.conf import settings
-from django.conf.urls import patterns, include, url
+from django.conf.urls.static import static
+from django.contrib import admin
+from django.contrib.admin import autodiscover as django_autodiscover
+from django.shortcuts import redirect
+from django.urls import include, path, re_path
+from django.utils.translation import gettext_lazy as _
+from django.views.generic import RedirectView
+from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
+from edx_rest_framework_extensions.url_converters import register_url_converters
 
-# There is a course creators admin table.
-from ratelimitbackend import admin
-admin.autodiscover()
+import openedx.core.djangoapps.common_views.xblock
+import openedx.core.djangoapps.debug.views
+import openedx.core.djangoapps.lang_pref.views
+from cms.djangoapps.contentstore import toggles
+from cms.djangoapps.contentstore import views as contentstore_views
+from cms.djangoapps.contentstore.views.block import xblock_edit_view
+from cms.djangoapps.contentstore.views.organization import OrganizationListView
+from openedx.core import toggles as core_toggles
+from openedx.core.apidocs import cached_schema_view
+from openedx.core.djangoapps.password_policy import compliance as password_policy_compliance
+from openedx.core.djangoapps.password_policy.forms import PasswordPolicyAwareAdminAuthForm
 
-# pylint: disable=bad-continuation
+django_autodiscover()
+
+# Must run before any pattern below that uses <course_key:...> or <usage_key:...>.
+register_url_converters()
+
+admin.site.site_header = _('Studio Administration')
+admin.site.site_title = admin.site.site_header
+
+if password_policy_compliance.should_enforce_compliance_on_login():
+    admin.site.login_form = PasswordPolicyAwareAdminAuthForm
+
+# Custom error pages
+# These are used by Django to render these error codes. Do not remove.
+# pylint: disable=invalid-name
+handler404 = contentstore_views.render_404
+handler500 = contentstore_views.render_500
 
 # Pattern to match a course key or a library key
 COURSELIKE_KEY_PATTERN = r'(?P<course_key_string>({}|{}))'.format(
     r'[^/]+/[^/]+/[^/]+', r'[^/:]+:[^/+]+\+[^/+]+(\+[^/]+)?'
 )
+
 # Pattern to match a library key only
 LIBRARY_KEY_PATTERN = r'(?P<library_key_string>library-v1:[^/+]+\+[^/+]+)'
 
-urlpatterns = patterns(
-    '',
+# oauth2_urlpatterns needs to be first to override any other login and
+# logout related views.
+urlpatterns = oauth2_urlpatterns + [
+    path('', include('openedx.core.djangoapps.user_authn.urls_common')),
+    path('', include('common.djangoapps.student.urls')),
+    path('transcripts/upload', contentstore_views.upload_transcripts, name='upload_transcripts'),
+    path('transcripts/download', contentstore_views.download_transcripts, name='download_transcripts'),
+    path('transcripts/check', contentstore_views.check_transcripts, name='check_transcripts'),
+    path('transcripts/choose', contentstore_views.choose_transcripts, name='choose_transcripts'),
+    path('transcripts/replace', contentstore_views.replace_transcripts, name='replace_transcripts'),
+    path('transcripts/rename', contentstore_views.rename_transcripts, name='rename_transcripts'),
+    re_path(r'^preview/xblock/(?P<usage_key_string>.*?)/handler/(?P<handler>[^/]*)(?:/(?P<suffix>.*))?$',
+            contentstore_views.preview_handler, name='preview_handler'),
+    re_path(r'^xblock/(?P<usage_key_string>.*?)/handler/(?P<handler>[^/]*)(?:/(?P<suffix>.*))?$',
+            contentstore_views.component_handler, name='component_handler'),
+    re_path(r'^xblock/resource/(?P<block_type>[^/]*)/(?P<uri>.*)$',
+            openedx.core.djangoapps.common_views.xblock.xblock_resource, name='xblock_resource_url'),
+    path('', include('openedx.core.djangoapps.xblock.rest_api.urls', namespace='xblock_api')),
+    path('not_found', contentstore_views.not_found, name='not_found'),
+    path('server_error', contentstore_views.server_error, name='server_error'),
+    path('organizations', OrganizationListView.as_view(), name='organizations'),
+    path('api/toggles/', include('openedx.core.djangoapps.waffle_utils.urls')),
 
-    url(r'^transcripts/upload$', 'contentstore.views.upload_transcripts', name='upload_transcripts'),
-    url(r'^transcripts/download$', 'contentstore.views.download_transcripts', name='download_transcripts'),
-    url(r'^transcripts/check$', 'contentstore.views.check_transcripts', name='check_transcripts'),
-    url(r'^transcripts/choose$', 'contentstore.views.choose_transcripts', name='choose_transcripts'),
-    url(r'^transcripts/replace$', 'contentstore.views.replace_transcripts', name='replace_transcripts'),
-    url(r'^transcripts/rename$', 'contentstore.views.rename_transcripts', name='rename_transcripts'),
-    url(r'^transcripts/save$', 'contentstore.views.save_transcripts', name='save_transcripts'),
-
-    url(r'^preview/xblock/(?P<usage_key_string>.*?)/handler/(?P<handler>[^/]*)(?:/(?P<suffix>.*))?$',
-        'contentstore.views.preview_handler', name='preview_handler'),
-
-    url(r'^xblock/(?P<usage_key_string>.*?)/handler/(?P<handler>[^/]*)(?:/(?P<suffix>.*))?$',
-        'contentstore.views.component_handler', name='component_handler'),
-
-    url(r'^xblock/resource/(?P<block_type>[^/]*)/(?P<uri>.*)$',
-        'contentstore.views.xblock.xblock_resource', name='xblock_resource_url'),
-
-    # temporary landing page for a course
-    url(r'^edge/(?P<org>[^/]+)/(?P<course>[^/]+)/course/(?P<coursename>[^/]+)$',
-        'contentstore.views.landing', name='landing'),
-
-    url(r'^not_found$', 'contentstore.views.not_found', name='not_found'),
-    url(r'^server_error$', 'contentstore.views.server_error', name='server_error'),
-
-    # temporary landing page for edge
-    url(r'^edge$', 'contentstore.views.edge', name='edge'),
     # noop to squelch ajax errors
-    url(r'^event$', 'contentstore.views.event', name='event'),
+    path('event', contentstore_views.event, name='event'),
+    path('heartbeat', include('openedx.core.djangoapps.heartbeat.urls')),
+    path('i18n/', include('django.conf.urls.i18n')),
 
-    url(r'^xmodule/', include('pipeline_js.urls')),
-    url(r'^heartbeat$', include('heartbeat.urls')),
+    # Course assets
+    path('', include('openedx.core.djangoapps.contentserver.urls')),
 
-    url(r'^user_api/', include('openedx.core.djangoapps.user_api.legacy_urls')),
-)
+    # User API endpoints
+    path('api/user/', include('openedx.core.djangoapps.user_api.urls')),
 
-# User creation and updating views
-urlpatterns += patterns(
-    '',
+    # Update session view
+    path('lang_pref/update_language', openedx.core.djangoapps.lang_pref.views.update_language,
+         name='update_language'
+         ),
 
-    url(r'^create_account$', 'student.views.create_account', name='create_account'),
-    url(r'^activate/(?P<key>[^/]*)$', 'student.views.activate_account', name='activate'),
+    # Darklang View to change the preview language (or dark language)
+    path('update_lang/', lambda request: redirect(f'{settings.LMS_ROOT_URL}/update_lang/')),
 
-    # ajax view that actually does the work
-    url(r'^login_post$', 'student.views.login_user', name='login_post'),
-    url(r'^logout$', 'student.views.logout_user', name='logout'),
-)
+    # For redirecting to help pages.
+    path('help_token/', include('help_tokens.urls')),
+    path('api/', include('cms.djangoapps.api.urls', namespace='api')),
 
-# restful api
-urlpatterns += patterns(
-    'contentstore.views',
+    # restful api
+    path('', RedirectView.as_view(url='/home/', permanent=True), name='homepage'),
+    path('howitworks', RedirectView.as_view(url='/home/', permanent=True), name='howitworks'),
+    path('signin_redirect_to_lms', contentstore_views.login_redirect_to_lms, name='login_redirect_to_lms'),
+    path('request_course_creator', contentstore_views.request_course_creator, name='request_course_creator'),
+    re_path(fr'^course_team/{COURSELIKE_KEY_PATTERN}(?:/(?P<email>.+))?$',
+            contentstore_views.course_team_handler, name='course_team_handler'),
+    re_path(fr'^course_info/{settings.COURSE_KEY_PATTERN}$', contentstore_views.course_info_handler,
+            name='course_info_handler'),
+    re_path(fr'^course_info_update/{settings.COURSE_KEY_PATTERN}/(?P<provided_id>\d+)?$',
+            contentstore_views.course_info_update_handler, name='course_info_update_handler'
+            ),
+    re_path(r'^home/?$', contentstore_views.course_listing, name='home'),
+    re_path(r'^home_library/?$', contentstore_views.library_listing, name='home_library'),
+    re_path(fr'^course/{settings.COURSE_KEY_PATTERN}/search_reindex?$',
+            contentstore_views.course_search_index_handler,
+            name='course_search_index_handler'
+            ),
+    re_path(fr'^course/{settings.COURSE_KEY_PATTERN}?$', contentstore_views.course_handler, name='course_handler'),
 
-    url(r'^$', 'howitworks', name='homepage'),
-    url(r'^howitworks$', 'howitworks'),
-    url(r'^signup$', 'signup', name='signup'),
-    url(r'^signin$', 'login_page', name='login'),
-    url(r'^request_course_creator$', 'request_course_creator'),
+    re_path(fr'^checklists/{settings.COURSE_KEY_PATTERN}?$',
+            contentstore_views.checklists_handler,
+            name='checklists_handler'),
 
-    url(r'^course_team/{}(?:/(?P<email>.+))?$'.format(COURSELIKE_KEY_PATTERN), 'course_team_handler'),
-    url(r'^course_info/{}$'.format(settings.COURSE_KEY_PATTERN), 'course_info_handler'),
-    url(
-        r'^course_info_update/{}/(?P<provided_id>\d+)?$'.format(settings.COURSE_KEY_PATTERN),
-        'course_info_update_handler'
-    ),
-    url(r'^home/?$', 'course_listing', name='home'),
-    url(
-        r'^course/{}/search_reindex?$'.format(settings.COURSE_KEY_PATTERN),
-        'course_search_index_handler',
-        name='course_search_index_handler'
-    ),
-    url(r'^course/{}?$'.format(settings.COURSE_KEY_PATTERN), 'course_handler', name='course_handler'),
-    url(r'^course_notifications/{}/(?P<action_state_id>\d+)?$'.format(settings.COURSE_KEY_PATTERN),
-        'course_notifications_handler'),
-    url(r'^course_rerun/{}$'.format(settings.COURSE_KEY_PATTERN), 'course_rerun_handler', name='course_rerun_handler'),
-    url(r'^container/{}$'.format(settings.USAGE_KEY_PATTERN), 'container_handler'),
-    url(r'^checklists/{}/(?P<checklist_index>\d+)?$'.format(settings.COURSE_KEY_PATTERN), 'checklists_handler'),
-    url(r'^orphan/{}$'.format(settings.COURSE_KEY_PATTERN), 'orphan_handler'),
-    url(r'^assets/{}/{}?$'.format(settings.COURSE_KEY_PATTERN, settings.ASSET_KEY_PATTERN), 'assets_handler'),
-    url(r'^import/{}$'.format(COURSELIKE_KEY_PATTERN), 'import_handler'),
-    url(r'^import_status/{}/(?P<filename>.+)$'.format(COURSELIKE_KEY_PATTERN), 'import_status_handler'),
-    url(r'^export/{}$'.format(COURSELIKE_KEY_PATTERN), 'export_handler'),
-    url(r'^xblock/outline/{}$'.format(settings.USAGE_KEY_PATTERN), 'xblock_outline_handler'),
-    url(r'^xblock/container/{}$'.format(settings.USAGE_KEY_PATTERN), 'xblock_container_handler'),
-    url(r'^xblock/{}/(?P<view_name>[^/]+)$'.format(settings.USAGE_KEY_PATTERN), 'xblock_view_handler'),
-    url(r'^xblock/{}?$'.format(settings.USAGE_KEY_PATTERN), 'xblock_handler'),
-    url(r'^tabs/{}$'.format(settings.COURSE_KEY_PATTERN), 'tabs_handler'),
-    url(r'^settings/details/{}$'.format(settings.COURSE_KEY_PATTERN), 'settings_handler'),
-    url(r'^settings/grading/{}(/)?(?P<grader_index>\d+)?$'.format(settings.COURSE_KEY_PATTERN), 'grading_handler'),
-    url(r'^settings/advanced/{}$'.format(settings.COURSE_KEY_PATTERN), 'advanced_settings_handler'),
-    url(r'^textbooks/{}$'.format(settings.COURSE_KEY_PATTERN), 'textbooks_list_handler'),
-    url(r'^textbooks/{}/(?P<textbook_id>\d[^/]*)$'.format(settings.COURSE_KEY_PATTERN), 'textbooks_detail_handler'),
-    url(r'^videos/{}$'.format(settings.COURSE_KEY_PATTERN), 'videos_handler'),
-    url(r'^video_encodings_download/{}$'.format(settings.COURSE_KEY_PATTERN), 'video_encodings_download'),
-    url(r'^group_configurations/{}$'.format(settings.COURSE_KEY_PATTERN), 'group_configurations_list_handler'),
-    url(r'^group_configurations/{}/(?P<group_configuration_id>\d+)(/)?(?P<group_id>\d+)?$'.format(
-        settings.COURSE_KEY_PATTERN), 'group_configurations_detail_handler'),
-    url(r'^api/val/v0/', include('edxval.urls')),
-)
+    re_path(fr'^course_notifications/{settings.COURSE_KEY_PATTERN}/(?P<action_state_id>\d+)?$',
+            contentstore_views.course_notifications_handler,
+            name='course_notifications_handler'),
+    re_path(fr'^course_rerun/{settings.COURSE_KEY_PATTERN}$', contentstore_views.course_rerun_handler,
+            name='course_rerun_handler'),
+    re_path(fr'^container/{settings.USAGE_KEY_PATTERN}$', contentstore_views.container_handler,
+            name='container_handler'),
+    re_path(fr'^container_embed/{settings.USAGE_KEY_PATTERN}$', contentstore_views.container_embed_handler,
+            name='container_embed_handler'),
+    re_path(fr'^orphan/{settings.COURSE_KEY_PATTERN}$', contentstore_views.orphan_handler,
+            name='orphan_handler'),
+    re_path(fr'^assets/{settings.COURSE_KEY_PATTERN}/{settings.ASSET_KEY_PATTERN}?$',
+            contentstore_views.assets_handler,
+            name='assets_handler'),
+    re_path(fr'^assets/{settings.COURSE_KEY_PATTERN}/{settings.ASSET_KEY_PATTERN}/usage',
+            contentstore_views.asset_usage_path_handler,
+            name='asset_usage_path_handler'),
+    re_path(fr'^import/{COURSELIKE_KEY_PATTERN}$', contentstore_views.import_handler,
+            name='import_handler'),
+    re_path(fr'^import_status/{COURSELIKE_KEY_PATTERN}/(?P<filename>.+)$',
+            contentstore_views.import_status_handler, name='import_status_handler'),
+    # rest api for course import/export
+    path('api/courses/', include('cms.djangoapps.contentstore.api.urls', namespace='courses_api')
+         ),
+    path('api/modulestore_migrator/',
+         include('cms.djangoapps.modulestore_migrator.rest_api.urls', namespace='modulestore_migrator_api')),
+    re_path(fr'^export/{COURSELIKE_KEY_PATTERN}$', contentstore_views.export_handler,
+            name='export_handler'),
+    re_path(fr'^export_output/{COURSELIKE_KEY_PATTERN}$', contentstore_views.export_output_handler,
+            name='export_output_handler'),
+    re_path(fr'^export_status/{COURSELIKE_KEY_PATTERN}$', contentstore_views.export_status_handler,
+            name='export_status_handler'),
+    re_path(fr'^xblock/outline/{settings.USAGE_KEY_PATTERN}$', contentstore_views.xblock_outline_handler,
+            name='xblock_outline_handler'),
+    re_path(fr'^xblock/container/{settings.USAGE_KEY_PATTERN}$', contentstore_views.xblock_container_handler,
+            name='xblock_container_handler'),
+    re_path(fr'^xblock/{settings.USAGE_KEY_PATTERN}/action/edit$', xblock_edit_view,
+            name='xblock_edit_handler'),
+    re_path(fr'^xblock/{settings.USAGE_KEY_PATTERN}/(?P<view_name>[^/]+)$', contentstore_views.xblock_view_handler,
+            name='xblock_view_handler'),
+    re_path(fr'^xblock/{settings.USAGE_KEY_PATTERN}?$', contentstore_views.xblock_handler,
+            name='xblock_handler'),
+    re_path(fr'^tabs/{settings.COURSE_KEY_PATTERN}$', contentstore_views.tabs_handler,
+            name='tabs_handler'),
+    re_path(fr'^settings/details/{settings.COURSE_KEY_PATTERN}$', contentstore_views.settings_handler,
+            name='settings_handler'),
+    re_path(fr'^settings/grading/{settings.COURSE_KEY_PATTERN}(/)?(?P<grader_index>\d+)?$',
+            contentstore_views.grading_handler, name='grading_handler'),
+    re_path(fr'^settings/advanced/{settings.COURSE_KEY_PATTERN}$', contentstore_views.advanced_settings_handler,
+            name='advanced_settings_handler'),
+    # Backward-compat redirect: old /settings/<course_key> URL now unconditionally goes to MFE.
+    # Must come after all other ^settings/... patterns so it doesn't shadow them.
+    re_path(fr'^settings/{settings.COURSE_KEY_PATTERN}$', contentstore_views.settings_handler),
+    re_path(fr'^textbooks/{settings.COURSE_KEY_PATTERN}$', contentstore_views.textbooks_list_handler,
+            name='textbooks_list_handler'),
+    re_path(fr'^textbooks/{settings.COURSE_KEY_PATTERN}/(?P<textbook_id>\d[^/]*)$',
+            contentstore_views.textbooks_detail_handler, name='textbooks_detail_handler'),
+    re_path(fr'^videos/{settings.COURSE_KEY_PATTERN}(?:/(?P<edx_video_id>[-\w]+))?$',
+            contentstore_views.videos_handler, name='videos_handler'),
+    re_path(fr'^generate_video_upload_link/{settings.COURSE_KEY_PATTERN}$',
+            contentstore_views.generate_video_upload_link_handler, name='generate_video_upload_link'),
+    re_path(fr'^video_images/{settings.COURSE_KEY_PATTERN}(?:/(?P<edx_video_id>[-\w]+))?$',
+            contentstore_views.video_images_handler, name='video_images_handler'),
+    path('video_images_upload_enabled', contentstore_views.video_images_upload_enabled,
+         name='video_images_upload_enabled'),
+    path('video_features/', contentstore_views.get_video_features, name='video_features'),
+    re_path(fr'^transcript_preferences/{settings.COURSE_KEY_PATTERN}$',
+            contentstore_views.transcript_preferences_handler, name='transcript_preferences_handler'),
+    re_path(fr'^transcript_credentials/{settings.COURSE_KEY_PATTERN}$',
+            contentstore_views.transcript_credentials_handler, name='transcript_credentials_handler'),
+    path('transcript_download/', contentstore_views.transcript_download_handler, name='transcript_download_handler'),
+    path('transcript_upload/', contentstore_views.transcript_upload_handler, name='transcript_upload_handler'),
+    re_path(r'^transcript_delete/{}(?:/(?P<edx_video_id>[-\w]+))?(?:/(?P<language_code>[^/]*))?$'.format(  # noqa: UP032
+        settings.COURSE_KEY_PATTERN
+    ), contentstore_views.transcript_delete_handler, name='transcript_delete_handler'),
+    path('transcript_upload_api/', contentstore_views.transcript_upload_api, name='transcript_upload_api'),
+    re_path(fr'^video_encodings_download/{settings.COURSE_KEY_PATTERN}$',
+            contentstore_views.video_encodings_download, name='video_encodings_download'),
+    re_path(fr'^group_configurations/{settings.COURSE_KEY_PATTERN}$',
+            contentstore_views.group_configurations_list_handler,
+            name='group_configurations_list_handler'),
+    re_path(r'^group_configurations/{}/(?P<group_configuration_id>\d+)(/)?(?P<group_id>\d+)?$'.format(  # noqa: UP032
+        settings.COURSE_KEY_PATTERN), contentstore_views.group_configurations_detail_handler,
+        name='group_configurations_detail_handler'),
+    path('api/val/v0/', include('edxval.urls')),
+    path('api/tasks/v0/', include('user_tasks.urls')),
+    path('accessibility', contentstore_views.accessibility, name='accessibility'),
+    re_path(fr'api/youtube/courses/{COURSELIKE_KEY_PATTERN}/edx-video-ids$',
+            contentstore_views.get_course_youtube_edx_videos_ids, name='youtube_edx_video_ids'),
+    re_path(fr'^api/courses/{settings.COURSE_KEY_PATTERN}/bulk_enable_disable_discussions$',
+            contentstore_views.bulk_enable_disable_discussions,
+            name='bulk_enable_disable_discussions'),
+]
+
+if not settings.DISABLE_DEPRECATED_SIGNIN_URL:
+    # TODO: Remove deprecated signin url when traffic proves it is no longer in use
+    urlpatterns += [
+        path('signin', contentstore_views.login_redirect_to_lms),
+    ]
+
+if not settings.DISABLE_DEPRECATED_SIGNUP_URL:
+    # TODO: Remove deprecated signup url when traffic proves it is no longer in use
+    urlpatterns += [
+        path('signup', contentstore_views.register_redirect_to_lms, name='register_redirect_to_lms'),
+    ]
 
 JS_INFO_DICT = {
     'domain': 'djangojs',
@@ -121,67 +233,62 @@ JS_INFO_DICT = {
     'packages': ('openassessment',),
 }
 
-urlpatterns += patterns(
-    '',
-    # Serve catalog of localized strings to be rendered by Javascript
-    url(r'^i18n.js$', 'django.views.i18n.javascript_catalog', JS_INFO_DICT),
+urlpatterns += [
+    path('openassessment/fileupload/', include('openassessment.fileupload.urls')),
+]
+
+if toggles.ENABLE_CONTENT_LIBRARIES:
+    urlpatterns += [
+        re_path(fr'^library/{LIBRARY_KEY_PATTERN}?$',
+                contentstore_views.library_handler, name='library_handler'),
+    ]
+
+if toggles.EXPORT_GIT.is_enabled():
+    urlpatterns += [
+        re_path(fr'^export_git/{settings.COURSE_KEY_PATTERN}$',
+                contentstore_views.export_git,
+                name='export_git')
+    ]
+
+if settings.ENABLE_SERVICE_STATUS:
+    urlpatterns.append(path('status/', include('openedx.core.djangoapps.service_status.urls')))
+
+# The password pages in the admin tool are disabled so that all password
+# changes go through our user portal and follow complexity requirements.
+if not settings.ENABLE_CHANGE_USER_PASSWORD_ADMIN:
+    urlpatterns.append(re_path(r'^admin/auth/user/\d+/password/$', handler404))
+urlpatterns.append(path('admin/password_change/', handler404))
+urlpatterns.append(
+    path('admin/login/', contentstore_views.redirect_to_lms_login_for_admin, name='redirect_to_lms_login_for_admin')
 )
-
-if settings.FEATURES.get('ENABLE_CONTENT_LIBRARIES'):
-    urlpatterns += (
-        url(r'^library/{}?$'.format(LIBRARY_KEY_PATTERN),
-            'contentstore.views.library_handler', name='library_handler'),
-        url(r'^library/{}/team/$'.format(LIBRARY_KEY_PATTERN),
-            'contentstore.views.manage_library_users', name='manage_library_users'),
-    )
-
-if settings.FEATURES.get('ENABLE_EXPORT_GIT'):
-    urlpatterns += (url(
-        r'^export_git/{}$'.format(
-            settings.COURSE_KEY_PATTERN,
-        ),
-        'contentstore.views.export_git',
-        name='export_git',
-    ),)
-
-if settings.FEATURES.get('ENABLE_SERVICE_STATUS'):
-    urlpatterns += patterns(
-        '',
-        url(r'^status/', include('service_status.urls')),
-    )
-
-if settings.FEATURES.get('AUTH_USE_CAS'):
-    urlpatterns += (
-        url(r'^cas-auth/login/$', 'external_auth.views.cas_login', name="cas-login"),
-        url(r'^cas-auth/logout/$', 'django_cas.views.logout', {'next_page': '/'}, name="cas-logout"),
-    )
-
-urlpatterns += patterns('', url(r'^admin/', include(admin.site.urls)),)
-
-# enable automatic login
-if settings.FEATURES.get('AUTOMATIC_AUTH_FOR_TESTING'):
-    urlpatterns += (
-        url(r'^auto_auth$', 'student.views.auto_auth'),
-    )
+urlpatterns.append(path('admin/', admin.site.urls))
 
 # enable entrance exams
-if settings.FEATURES.get('ENTRANCE_EXAMS'):
-    urlpatterns += (
-        url(r'^course/{}/entrance_exam/?$'.format(settings.COURSE_KEY_PATTERN), 'contentstore.views.entrance_exam'),
-    )
+if core_toggles.ENTRANCE_EXAMS.is_enabled():
+    urlpatterns.append(re_path(fr'^course/{settings.COURSE_KEY_PATTERN}/entrance_exam/?$',
+                       contentstore_views.entrance_exam))
 
 # Enable Web/HTML Certificates
-if settings.FEATURES.get('CERTIFICATES_HTML_VIEW'):
-    urlpatterns += (
-        url(r'^certificates/activation/{}/'.format(settings.COURSE_KEY_PATTERN),
-            'contentstore.views.certificates.certificate_activation_handler'),
-        url(r'^certificates/{}/(?P<certificate_id>\d+)/signatories/(?P<signatory_id>\d+)?$'.format(
-            settings.COURSE_KEY_PATTERN), 'contentstore.views.certificates.signatory_detail_handler'),
-        url(r'^certificates/{}/(?P<certificate_id>\d+)?$'.format(settings.COURSE_KEY_PATTERN),
-            'contentstore.views.certificates.certificates_detail_handler'),
-        url(r'^certificates/{}$'.format(settings.COURSE_KEY_PATTERN),
-            'contentstore.views.certificates.certificates_list_handler')
+if settings.CERTIFICATES_HTML_VIEW:
+    from cms.djangoapps.contentstore.views.certificates import (  # noqa: I001 - conditional import inside if block
+        CertificateActivationAPIView,
+        CertificateDetailAPIView,
+        certificates_list_handler,
+        signatory_detail_handler
     )
+
+    urlpatterns += [
+        re_path(fr'^certificates/activation/{settings.COURSE_KEY_PATTERN}/',
+                CertificateActivationAPIView.as_view(),
+                name='certificate_activation_handler'),
+        re_path(r'^certificates/{}/(?P<certificate_id>\d+)/signatories/(?P<signatory_id>\d+)?$'.format(  # noqa: UP032
+            settings.COURSE_KEY_PATTERN), signatory_detail_handler, name='signatory_detail_handler'),
+        re_path(fr'^certificates/{settings.COURSE_KEY_PATTERN}/(?P<certificate_id>\d+)?$',
+                CertificateDetailAPIView.as_view(), name='certificates_detail_handler'),
+        re_path(fr'^certificates/{settings.COURSE_KEY_PATTERN}$',
+                certificates_list_handler, name='certificates_list_handler')
+    ]
+
 
 if settings.DEBUG:
     try:
@@ -190,19 +297,143 @@ if settings.DEBUG:
     except ImportError:
         pass
 
-if 'debug_toolbar' in settings.INSTALLED_APPS:
-    import debug_toolbar
-    urlpatterns += (
-        url(r'^__debug__/', include(debug_toolbar.urls)),
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+    urlpatterns += static(
+        settings.VIDEO_IMAGE_SETTINGS['BASE_URL'],
+        document_root=settings.VIDEO_IMAGE_SETTINGS['STORAGE_KWARGS']['location']
     )
 
-# Custom error pages
-# pylint: disable=invalid-name
-handler404 = 'contentstore.views.render_404'
-handler500 = 'contentstore.views.render_500'
+    urlpatterns += static(
+        settings.VIDEO_TRANSCRIPTS_SETTINGS['BASE_URL'],
+        document_root=settings.VIDEO_TRANSCRIPTS_SETTINGS['STORAGE_KWARGS']['location']
+    )
+
+    # UX reference templates: development only. The view renders any template with
+    # request.GET as its context, so it must never be routed in production.
+    urlpatterns.append(path('template/<path:template>', openedx.core.djangoapps.debug.views.show_reference_template,
+                            name='openedx.core.djangoapps.debug.views.show_reference_template'))
+
+if 'debug_toolbar' in settings.INSTALLED_APPS:
+    import debug_toolbar
+    urlpatterns.append(path('__debug__/', include(debug_toolbar.urls)))
+
+urlpatterns.append(
+    path('api/learning_sequences/', include(
+        ('openedx.core.djangoapps.content.learning_sequences.urls', 'learning_sequences'),
+        namespace='learning_sequences'
+    ),
+    ),
+)
+
+urlpatterns.append(
+    path('', include(('openedx.core.djangoapps.content.search.urls', 'content_search'), namespace='content_search')),
+)
 
 # display error page templates, for testing purposes
-urlpatterns += (
-    url(r'404', handler404),
-    url(r'500', handler500),
-)
+urlpatterns += [
+    path('404', handler404),
+    path('500', handler500),
+]
+
+# API docs, served by drf-spectacular.
+#
+# Route names and paths are preserved from the edx-api-doc-tools implementation
+# these replaced, since reverse() calls and existing links depend on them.
+#
+# ``swagger.json`` / ``swagger.yaml`` serve the schema. drf-spectacular picks
+# the renderer by content negotiation, so the extension is passed through as
+# DRF's standard ``format`` suffix kwarg (without the leading dot) to select
+# JSON or YAML explicitly.
+#
+# These use ``custom_settings`` for the full API surface. SPECTACULAR_SETTINGS
+# is reserved for the narrower Authoring API schema at ``/authoring-api/``
+# registered below.
+#
+# The Swagger and ReDoc views reverse their schema URL with no arguments, so
+# ``api-docs/schema/`` exists alongside the format-suffixed routes for them to
+# point at.
+#
+# Schema generation is expensive and these endpoints are public, so both schema
+# routes are cached for OPENAPI_CACHE_TIMEOUT, as edx-api-doc-tools did via
+# SchemaView.as_cached_view. The document is too large for cache_page to store
+# -- see cached_schema_view() for why it caches the compressed body instead.
+_apidocs_schema_view = cached_schema_view()
+
+urlpatterns += [
+    re_path(
+        r'^swagger\.(?P<format>json|yaml)$',
+        _apidocs_schema_view,
+        name='apidocs-data',
+    ),
+    path(
+        'api-docs/schema/',
+        _apidocs_schema_view,
+        name='apidocs-schema',
+    ),
+    path(
+        'api-docs/',
+        SpectacularSwaggerView.as_view(url_name='apidocs-schema'),
+        name='apidocs-ui',
+    ),
+    path(
+        'api-docs/redoc/',
+        SpectacularRedocView.as_view(url_name='apidocs-schema'),
+        name='apidocs-ui-redoc',
+    ),
+    path(
+        'swagger/',
+        RedirectView.as_view(pattern_name='apidocs-ui', permanent=False),
+        name='apidocs-ui-swagger',
+    ),
+]
+
+# edx-drf-extensions csrf app
+urlpatterns += [
+    path('', include('csrf.urls')),
+]
+
+if 'openedx.testing.coverage_context_listener' in settings.INSTALLED_APPS:
+    urlpatterns += [
+        path('coverage_context', include('openedx.testing.coverage_context_listener.urls'))
+    ]
+
+# pylint: disable=wrong-import-position, wrong-import-order
+from edx_django_utils.plugins import get_plugin_url_patterns  # noqa: I001 - must be after urlpatterns are built
+# pylint: disable=wrong-import-position
+from openedx.core.djangoapps.plugins.constants import ProjectType  # noqa: I001 - must be after urlpatterns are built
+
+urlpatterns.extend(get_plugin_url_patterns(ProjectType.CMS))
+
+# Contentstore REST APIs
+urlpatterns += [
+    path('api/contentstore/', include('cms.djangoapps.contentstore.rest_api.urls'))
+]
+
+# Conforming addresses, mounted beside their legacy /api/contentstore/ routes
+# for the deprecation window.
+urlpatterns += [
+    path('api/authoring/v1/', include('cms.djangoapps.contentstore.rest_api.v1.authoring_urls')),
+    path('api/authoring/v2/', include('cms.djangoapps.contentstore.rest_api.v2.authoring_urls')),
+    path('api/authoring/v3/', include('cms.djangoapps.contentstore.rest_api.v3.authoring_urls')),
+    path('api/authoring/v4/', include('cms.djangoapps.contentstore.rest_api.v4.authoring_urls')),
+]
+
+# Content tagging
+urlpatterns += [
+    path('api/content_tagging/', include(('openedx.core.djangoapps.content_tagging.urls', 'content_tagging'))),
+]
+
+# openedx-core: competency-based education (CBE)
+urlpatterns += [
+    path('api/', include('openedx_learning.urls')),
+]
+
+# Authoring-api specific API docs (using drf-spectacular and openapi-v3).
+# This is separate from and in addition to the full studio swagger documentation already existing at /api-docs.
+# Custom settings are provided in SPECTACULAR_SETTINGS as environment variables
+# Filter function in cms/lib/spectacular.py determines paths that are swagger-documented.
+urlpatterns += [
+    re_path('^authoring-api/ui/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    re_path('^authoring-api/schema/', SpectacularAPIView.as_view(), name='schema'),
+]

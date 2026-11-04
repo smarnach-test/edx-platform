@@ -1,61 +1,51 @@
-<%! from django.utils.translation import ugettext as _ %>
+{% load i18n %}
+
 <script type="text/template" id="thread-list-template">
-    <div class="forum-nav-header">
-        <a href="#" class="forum-nav-browse" aria-haspopup="true">
-            ## There is no whitespace between these because the front-end JS code
-            ## needs to precisely compute the available width for forum-nav-
-            ## browse-current in order to do truncation of topic names.
-            <i class="icon fa fa-reorder"></i><span class="sr">${_("Discussion topics; current selection is: ")}</span><span class="forum-nav-browse-current">${_("All Discussions")}</span><span class="forum-nav-browse-drop-arrow">▾</span>
-        </a>
-        <form class="forum-nav-search">
-            <div class="forum-nav-search-ff-position-fix">
-                <label>
-                    <span class="sr">${_("Search")}</span>
-                    <input class="forum-nav-search-input" type="text" placeholder="${_("Search all posts")}">
-                    <i class="icon fa fa-search"></i>
-                </label>
-            </div>
-        </form>
-    </div>
-    <%include file="_filter_dropdown.html" />
-    <div class="forum-nav-thread-list-wrapper">
+    <div class="forum-nav-thread-list-wrapper" id="sort-filter-wrapper" tabindex="-1">
         <div class="forum-nav-refine-bar">
             <label class="forum-nav-filter-main">
-                ## Translators: This labels a filter menu in forum navigation
-                <span class="sr">${_("Filter:")}</span>
+                {# Translators: This labels a filter menu in forum navigation #}
+                <span class="sr">{% trans "Filter:" as tmsg %} {{tmsg|force_escape}}</span>
                 <select class="forum-nav-filter-main-control">
-                    ## Translators: This is a menu option for showing all forum threads unfiltered
-                    <option value="all">${_("Show all")}</option>
-                    ## Translators: This is a menu option for showing only unread forum threads
-                    <option value="unread">${_("Unread")}</option>
-                    ## Translators: This is a menu option for showing only unanswered forum
-                    ## question threads
-                    <option value="unanswered">${_("Unanswered")}</option>
-                    %if flag_moderator:
-                        ## Translators: This is a menu option for showing only forum threads flagged
-                        ## for abuse
-                        <option value="flagged">${_("Flagged")}</option>
-                    %endif
+                    {# Translators: This is a menu option for showing all forum threads unfiltered #}
+                    <option value="all">{% trans "Show all posts" as tmsg %} {{tmsg|force_escape}}</option>
+                    {# Translators: This is a menu option for showing only unread forum threads #}
+                    <option value="unread">{% trans "Unread posts" as tmsg %} {{tmsg|force_escape}}</option>
+                    {# Translators: This is a menu option for showing only unanswered forum #}
+                    {# question threads #}
+                    <option value="unanswered">{% trans "Unanswered posts" as tmsg %} {{tmsg|force_escape}}</option>
+                    {% if flag_moderator %}
+                        {# Translators: This is a menu option for showing only forum threads flagged #}
+                        {# for abuse #}
+                        <option value="flagged">{% trans "Flagged" as tmsg %} {{tmsg|force_escape}}</option>
+                    {% endif %}
                 </select>
-            </label>${"<% if (isCohorted && isPrivilegedUser) { %>"}<label class="forum-nav-filter-cohort">
-                ## Translators: This labels a cohort menu in forum navigation
-                <span class="sr">${_("Cohort:")}</span>
-                <select class="forum-nav-filter-cohort-control">
-                    <option value="">${_("in all cohorts")}</option>
-                        %for c in cohorts:
-                            <option value="${c['id']}">${c['name']}</option>
-                        %endfor
-                </select>
-            </label>${"<% } %>"}<label class="forum-nav-sort">
-                ## Translators: This labels a sort menu in forum navigation
-                <span class="sr">${_("Sort:")}</span>
+            </label>
+            {% if isDiscussionDivisionEnabled and isPrivilegedUser %}
+                <label class="forum-nav-filter-cohort">
+                    {# Translators: This labels a group menu in forum navigation #}
+                    <span class="sr">{% trans "Group:" as tmsg %} {{tmsg|force_escape}}</span>
+                    <select class="forum-nav-filter-cohort-control">
+                        <option value="">{% trans "in all groups" as tmsg %} {{tmsg|force_escape}}</option>
+                        {% if groups %}
+                            {% for group in groups %}
+                                <option value="{{ group.id|force_escape }}">{{ group.name|force_escape }}</option>
+                            {% endfor %}
+                        {% endif %}
+                    </select>
+                </label>
+            {% endif %}
+
+            <label class="forum-nav-sort">
+                {# Translators: This labels a sort menu in forum navigation #}
+                <span class="sr">{% trans "Sort:" as tmsg %} {{tmsg|force_escape}}</span>
                 <select class="forum-nav-sort-control">
-                    ## Translators: This is a menu option for sorting forum threads
-                    <option value="date">${_("by recent activity")}</option>
-                    ## Translators: This is a menu option for sorting forum threads
-                    <option value="comments">${_("by most activity")}</option>
-                    ## Translators: This is a menu option for sorting forum threads
-                    <option value="votes">${_("by most votes")}</option>
+                    {# Translators: This is a menu option for sorting forum threads #}
+                    <option value="activity">{% trans "by recent activity" as tmsg %} {{tmsg|force_escape}}</option>
+                    {# Translators: This is a menu option for sorting forum threads #}
+                    <option value="comments">{% trans "by most activity" as tmsg %} {{tmsg|force_escape}}</option>
+                    {# Translators: This is a menu option for sorting forum threads #}
+                    <option value="votes">{% trans "by most votes" as tmsg %} {{tmsg|force_escape}}</option>
                 </select>
             </label>
         </div>

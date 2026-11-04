@@ -1,76 +1,71 @@
-# -*- coding: utf-8 -*-
 """
 Tests for util.date_utils
 """
 
-from datetime import datetime, timedelta, tzinfo
 import unittest
+from datetime import datetime, timedelta, tzinfo
+from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
+import crum
 import ddt
-from mock import patch
-from nose.tools import assert_equals, assert_false  # pylint: disable=no-name-in-module
-from pytz import UTC
+import pytest
+from django.test.client import RequestFactory
+from markupsafe import Markup
 
-from util.date_utils import (
-    get_default_time_display, get_time_display, almost_same_datetime,
+from common.djangoapps.util.date_utils import (
+    almost_same_datetime,
+    get_default_time_display,
+    get_time_display,
     strftime_localized,
+    strftime_localized_html,
 )
 
 
 def test_get_default_time_display():
-    assert_equals("", get_default_time_display(None))
-    test_time = datetime(1992, 3, 12, 15, 3, 30, tzinfo=UTC)
-    assert_equals(
-        "Mar 12, 1992 at 15:03 UTC",
-        get_default_time_display(test_time))
+    assert get_default_time_display(None) == ""
+    test_time = datetime(1992, 3, 12, 15, 3, 30, tzinfo=ZoneInfo("UTC"))
+    assert get_default_time_display(test_time) == "Mar 12, 1992 at 15:03 UTC"
 
 
 def test_get_dflt_time_disp_notz():
     test_time = datetime(1992, 3, 12, 15, 3, 30)
-    assert_equals(
-        "Mar 12, 1992 at 15:03 UTC",
-        get_default_time_display(test_time))
+    assert get_default_time_display(test_time) == "Mar 12, 1992 at 15:03 UTC"
 
 
 def test_get_time_disp_ret_empty():
-    assert_equals("", get_time_display(None))
-    test_time = datetime(1992, 3, 12, 15, 3, 30, tzinfo=UTC)
-    assert_equals("", get_time_display(test_time, ""))
+    assert get_time_display(None) == ""
+    test_time = datetime(1992, 3, 12, 15, 3, 30, tzinfo=ZoneInfo("UTC"))
+    assert get_time_display(test_time, "") == ""
 
 
 def test_get_time_display():
-    test_time = datetime(1992, 3, 12, 15, 3, 30, tzinfo=UTC)
-    assert_equals("dummy text", get_time_display(test_time, 'dummy text'))
-    assert_equals("Mar 12 1992", get_time_display(test_time, '%b %d %Y'))
-    assert_equals("Mar 12 1992 UTC", get_time_display(test_time, '%b %d %Y %Z'))
-    assert_equals("Mar 12 15:03", get_time_display(test_time, '%b %d %H:%M'))
+    test_time = datetime(1992, 3, 12, 15, 3, 30, tzinfo=ZoneInfo("UTC"))
+    assert get_time_display(test_time, 'dummy text') == "dummy text"
+    assert get_time_display(test_time, '%b %d %Y') == "Mar 12 1992"
+    assert get_time_display(test_time, '%b %d %Y %Z') == "Mar 12 1992 UTC"
+    assert get_time_display(test_time, '%b %d %H:%M') == "Mar 12 15:03"
 
 
 def test_get_time_pass_through():
-    test_time = datetime(1992, 3, 12, 15, 3, 30, tzinfo=UTC)
-    assert_equals("Mar 12, 1992 at 15:03 UTC", get_time_display(test_time))
-    assert_equals("Mar 12, 1992 at 15:03 UTC", get_time_display(test_time, None))
-    assert_equals("Mar 12, 1992 at 15:03 UTC", get_time_display(test_time, "%"))
+    test_time = datetime(1992, 3, 12, 15, 3, 30, tzinfo=ZoneInfo("UTC"))
+    assert get_time_display(test_time) == "Mar 12, 1992 at 15:03 UTC"
+    assert get_time_display(test_time, None) == "Mar 12, 1992 at 15:03 UTC"
+    assert get_time_display(test_time, "%") == "Mar 12, 1992 at 15:03 UTC"
 
 
 def test_get_time_display_coerce():
-    test_time_standard = datetime(1992, 1, 12, 15, 3, 30, tzinfo=UTC)
-    test_time_daylight = datetime(1992, 7, 12, 15, 3, 30, tzinfo=UTC)
-    assert_equals("Jan 12, 1992 at 07:03 PST",
-                  get_time_display(test_time_standard, None, coerce_tz="US/Pacific"))
-    assert_equals("Jan 12, 1992 at 15:03 UTC",
-                  get_time_display(test_time_standard, None, coerce_tz="NONEXISTENTTZ"))
-    assert_equals("Jan 12 07:03",
-                  get_time_display(test_time_standard, '%b %d %H:%M', coerce_tz="US/Pacific"))
-    assert_equals("Jul 12, 1992 at 08:03 PDT",
-                  get_time_display(test_time_daylight, None, coerce_tz="US/Pacific"))
-    assert_equals("Jul 12, 1992 at 15:03 UTC",
-                  get_time_display(test_time_daylight, None, coerce_tz="NONEXISTENTTZ"))
-    assert_equals("Jul 12 08:03",
-                  get_time_display(test_time_daylight, '%b %d %H:%M', coerce_tz="US/Pacific"))
+    test_time_standard = datetime(1992, 1, 12, 15, 3, 30, tzinfo=ZoneInfo("UTC"))
+    test_time_daylight = datetime(1992, 7, 12, 15, 3, 30, tzinfo=ZoneInfo("UTC"))
+    assert get_time_display(test_time_standard, None, coerce_tz="US/Pacific") == "Jan 12, 1992 at 07:03 PST"
+    assert get_time_display(test_time_standard, None, coerce_tz="NONEXISTENTTZ") == "Jan 12, 1992 at 15:03 UTC"
+    assert get_time_display(test_time_standard, '%b %d %H:%M', coerce_tz="US/Pacific") == "Jan 12 07:03"
+    assert get_time_display(test_time_daylight, None, coerce_tz="US/Pacific") == "Jul 12, 1992 at 08:03 PDT"
+    assert get_time_display(test_time_daylight, None, coerce_tz="NONEXISTENTTZ") == "Jul 12, 1992 at 15:03 UTC"
+    assert get_time_display(test_time_daylight, '%b %d %H:%M', coerce_tz="US/Pacific") == "Jul 12 08:03"
 
 
-class NamelessTZ(tzinfo):
+class NamelessTZ(tzinfo):  # pylint: disable=abstract-method
     """Static timezone for testing"""
 
     def utcoffset(self, _dt):
@@ -81,11 +76,9 @@ class NamelessTZ(tzinfo):
 
 
 def test_get_default_time_display_no_tzname():
-    assert_equals("", get_default_time_display(None))
+    assert get_default_time_display(None) == ""
     test_time = datetime(1992, 3, 12, 15, 3, 30, tzinfo=NamelessTZ())
-    assert_equals(
-        "Mar 12, 1992 at 15:03-0300",
-        get_default_time_display(test_time))
+    assert get_default_time_display(test_time) == "Mar 12, 1992 at 15:03-0300"
 
 
 def test_almost_same_datetime():
@@ -100,19 +93,15 @@ def test_almost_same_datetime():
         timedelta(hours=1)
     )
 
-    assert_false(
-        almost_same_datetime(
-            datetime(2013, 5, 3, 11, 20, 30),
-            datetime(2013, 5, 3, 10, 21, 29)
-        )
+    assert not almost_same_datetime(
+        datetime(2013, 5, 3, 11, 20, 30),
+        datetime(2013, 5, 3, 10, 21, 29)
     )
 
-    assert_false(
-        almost_same_datetime(
-            datetime(2013, 5, 3, 11, 20, 30),
-            datetime(2013, 5, 3, 10, 21, 29),
-            timedelta(minutes=10)
-        )
+    assert not almost_same_datetime(
+        datetime(2013, 5, 3, 11, 20, 30),
+        datetime(2013, 5, 3, 10, 21, 29),
+        timedelta(minutes=10)
     )
 
 
@@ -120,7 +109,7 @@ def fake_ugettext(translations):
     """
     Create a fake implementation of ugettext, for testing.
     """
-    def _ugettext(text):                # pylint: disable=missing-docstring
+    def _ugettext(text):
         return translations.get(text, text)
     return _ugettext
 
@@ -129,7 +118,7 @@ def fake_pgettext(translations):
     """
     Create a fake implementation of pgettext, for testing.
     """
-    def _pgettext(context, text):       # pylint: disable=missing-docstring
+    def _pgettext(context, text):
         return translations.get((context, text), text)
     return _pgettext
 
@@ -143,16 +132,16 @@ class StrftimeLocalizedTest(unittest.TestCase):
         ("%Y", "2013"),
         ("%m/%d/%y", "02/14/13"),
         ("hello", "hello"),
-        (u'%Y년 %m월 %d일', u"2013년 02월 14일"),
+        ('%Y년 %m월 %d일', "2013년 02월 14일"),
         ("%a, %b %d, %Y", "Thu, Feb 14, 2013"),
         ("%I:%M:%S %p", "04:41:17 PM"),
         ("%A at %-I%P", "Thursday at 4pm"),
     )
-    def test_usual_strftime_behavior(self, (fmt, expected)):
-        dtime = datetime(2013, 02, 14, 16, 41, 17)
-        self.assertEqual(expected, strftime_localized(dtime, fmt))
-        # strftime doesn't like Unicode, so do the work in UTF8.
-        self.assertEqual(expected, dtime.strftime(fmt.encode('utf8')).decode('utf8'))
+    def test_usual_strftime_behavior(self, fmt_expected):
+        (fmt, expected) = fmt_expected
+        dtime = datetime(2013, 2, 14, 16, 41, 17)
+        assert expected == strftime_localized(dtime, fmt)
+        assert expected == dtime.strftime(fmt)
 
     @ddt.data(
         ("SHORT_DATE", "Feb 14, 2013"),
@@ -161,11 +150,12 @@ class StrftimeLocalizedTest(unittest.TestCase):
         ("DAY_AND_TIME", "Thursday at 4pm"),
         ("%x %X!", "Feb 14, 2013 04:41:17 PM!"),
     )
-    def test_shortcuts(self, (fmt, expected)):
-        dtime = datetime(2013, 02, 14, 16, 41, 17)
-        self.assertEqual(expected, strftime_localized(dtime, fmt))
+    def test_shortcuts(self, fmt_expected):
+        (fmt, expected) = fmt_expected
+        dtime = datetime(2013, 2, 14, 16, 41, 17)
+        assert expected == strftime_localized(dtime, fmt)
 
-    @patch('util.date_utils.pgettext', fake_pgettext(translations={
+    @patch('common.djangoapps.util.date_utils.pgettext', fake_pgettext(translations={
         ("abbreviated month name", "Feb"): "XXfebXX",
         ("month name", "February"): "XXfebruaryXX",
         ("abbreviated weekday name", "Thu"): "XXthuXX",
@@ -179,11 +169,12 @@ class StrftimeLocalizedTest(unittest.TestCase):
         ("TIME", "04:41:17 XXpmXX"),
         ("%x %X!", "XXfebXX 14, 2013 04:41:17 XXpmXX!"),
     )
-    def test_translated_words(self, (fmt, expected)):
-        dtime = datetime(2013, 02, 14, 16, 41, 17)
-        self.assertEqual(expected, strftime_localized(dtime, fmt))
+    def test_translated_words(self, fmt_expected):
+        (fmt, expected) = fmt_expected
+        dtime = datetime(2013, 2, 14, 16, 41, 17)
+        assert expected == strftime_localized(dtime, fmt)
 
-    @patch('util.date_utils.ugettext', fake_ugettext(translations={
+    @patch('common.djangoapps.util.date_utils.gettext', fake_ugettext(translations={
         "SHORT_DATE_FORMAT": "date(%Y.%m.%d)",
         "LONG_DATE_FORMAT": "date(%A.%Y.%B.%d)",
         "DATE_TIME_FORMAT": "date(%Y.%m.%d@%H.%M)",
@@ -198,11 +189,12 @@ class StrftimeLocalizedTest(unittest.TestCase):
         ("The time is: %X", "The time is: 16h.41m.17s"),
         ("%x %X", "date(2013.02.14) 16h.41m.17s"),
     )
-    def test_translated_formats(self, (fmt, expected)):
-        dtime = datetime(2013, 02, 14, 16, 41, 17)
-        self.assertEqual(expected, strftime_localized(dtime, fmt))
+    def test_translated_formats(self, fmt_expected):
+        (fmt, expected) = fmt_expected
+        dtime = datetime(2013, 2, 14, 16, 41, 17)
+        assert expected == strftime_localized(dtime, fmt)
 
-    @patch('util.date_utils.ugettext', fake_ugettext(translations={
+    @patch('common.djangoapps.util.date_utils.gettext', fake_ugettext(translations={
         "SHORT_DATE_FORMAT": "oops date(%Y.%x.%d)",
         "TIME_FORMAT": "oops %Hh.%Xm.%Ss",
     }))
@@ -210,9 +202,10 @@ class StrftimeLocalizedTest(unittest.TestCase):
         ("SHORT_DATE", "Feb 14, 2013"),
         ("TIME", "04:41:17 PM"),
     )
-    def test_recursion_protection(self, (fmt, expected)):
-        dtime = datetime(2013, 02, 14, 16, 41, 17)
-        self.assertEqual(expected, strftime_localized(dtime, fmt))
+    def test_recursion_protection(self, fmt_expected):
+        (fmt, expected) = fmt_expected
+        dtime = datetime(2013, 2, 14, 16, 41, 17)
+        assert expected == strftime_localized(dtime, fmt)
 
     @ddt.data(
         "%",
@@ -220,6 +213,37 @@ class StrftimeLocalizedTest(unittest.TestCase):
         "%Y/%m/%d%",
     )
     def test_invalid_format_strings(self, fmt):
-        dtime = datetime(2013, 02, 14, 16, 41, 17)
-        with self.assertRaises(ValueError):
+        dtime = datetime(2013, 2, 14, 16, 41, 17)
+        with pytest.raises(ValueError):  # noqa: PT011
             strftime_localized(dtime, fmt)
+
+
+@ddt.ddt
+class StrftimeLocalizedHtmlTest(unittest.TestCase):
+    """
+    Tests for strftime_localized_html.
+    """
+    def setUp(self):
+        super().setUp()
+        request = RequestFactory().request()
+        self.addCleanup(crum.set_current_request, None)
+        crum.set_current_request(request)
+
+    @ddt.data(
+        None,
+        'Africa/Casablanca',
+    )
+    def test_happy_path(self, timezone):
+        dtime = datetime(2013, 2, 14, 16, 41, 17)
+        with patch('common.djangoapps.util.date_utils.user_timezone_locale_prefs',
+                   return_value={'user_timezone': timezone}):
+            html = strftime_localized_html(dtime, 'SHORT_DATE')
+        assert isinstance(html, Markup)
+        self.assertRegex(html,  # noqa: PT009
+                         '<span class="localized-datetime" data-format="shortDate" data-timezone="%s" ' % timezone +  # noqa: UP031  # pylint: disable=line-too-long
+                         '\\s*data-datetime="2013-02-14T16:41:17" data-language="en">Feb 14, 2013</span>')
+
+    def test_invalid_format_string(self):
+        dtime = datetime(2013, 2, 14, 16, 41, 17)
+        with self.assertRaisesRegex(AssertionError, 'format "NOPE" not yet supported in strftime_localized_html'):  # noqa: PT027  # pylint: disable=line-too-long
+            strftime_localized_html(dtime, 'NOPE')

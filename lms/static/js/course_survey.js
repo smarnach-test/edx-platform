@@ -1,21 +1,20 @@
 $(function() {
-
     // adding js class for styling with accessibility in mind
     $('body').addClass('js');
 
     // form field label styling on focus
-    $("form :input").focus(function() {
-        $("label[for='" + this.id + "']").parent().addClass("is-focused");
+    $('form :input').focus(function() {
+        $("label[for='" + this.id + "']").parent().addClass('is-focused');
     }).blur(function() {
-        $("label").parent().removeClass("is-focused");
+        $('label').parent().removeClass('is-focused');
     });
 
-    $('.status.message.submission-error').addClass("is-hidden");
+    $('.status.message.submission-error').addClass('is-hidden');
 
     toggleSubmitButton(true);
 
     $('#survey-form').on('submit', function() {
-      /* validate required fields */
+        /* validate required fields */
 
         var $inputs = $('#survey-form :input');
 
@@ -24,22 +23,25 @@ $(function() {
         var cancel_submit = false;
 
         $inputs.each(function() {
+            var val, fieldLabel;
             /* see if it is a required field and - if so - make sure user presented all information */
-            if (typeof $(this).attr("required") !== typeof undefined) {
-                var val = $(this).val();
-                if (typeof(val) === "string") {
+            if (typeof $(this).attr('required') !== typeof undefined) {
+                val = $(this).val();
+                if (typeof val === 'string') {
                     if (val.trim().length === 0) {
-                        var field_label = $(this).parent().find("label");
+                        fieldLabel = $(this).parent().find('label');
                         $(this).parent().addClass('field-error');
-                        $('.status.message.submission-error .message-copy').append("<li class='error-item'>"+field_label.text()+"</li>");
+                        // eslint-disable-next-line max-len
+                        $('.status.message.submission-error .message-copy').append(edx.HtmlUtils.joinHtml(edx.HtmlUtils.HTML("<li class='error-item'>"), fieldLabel.text(), edx.HtmlUtils.HTML('</li>')).toString());
                         cancel_submit = true;
                     }
-                } else if (typeof(val) === "object") {
+                } else if (typeof val === 'object') {
                     /* for SELECT statements */
-                    if (val === null || val.length === 0 || val[0] === "") {
-                        var field_label = $(this).parent().find("label");
+                    if (val === null || val.length === 0 || val[0] === '') {
+                        fieldLabel = $(this).parent().find('label');
                         $(this).parent().addClass('field-error');
-                        $('.status.message.submission-error .message-copy').append("<li class='error-item'>"+field_label.text()+"</li>");
+                        // eslint-disable-next-line max-len
+                        $('.status.message.submission-error .message-copy').append(edx.HtmlUtils.joinHtml(edx.HtmlUtils.HTML("<li class='error-item'>"), fieldLabel.text(), edx.HtmlUtils.HTML('</li>')).toString());
                         cancel_submit = true;
                     }
                 }
@@ -47,11 +49,11 @@ $(function() {
         });
 
         if (cancel_submit) {
-          $('.status.message.submission-error').
-            removeClass("is-hidden").
-            focus();
-          $("html, body").animate({ scrollTop: 0 }, "fast");
-          return false;
+            $('.status.message.submission-error')
+                .removeClass('is-hidden')
+                .focus();
+            $('html, body').animate({scrollTop: 0}, 'fast');
+            return false;
         }
 
         toggleSubmitButton(false);
@@ -70,26 +72,25 @@ $(function() {
         toggleSubmitButton(true);
         json = $.parseJSON(jqXHR.responseText);
         $('.status.message.submission-error').addClass('is-shown').focus();
-        $('.status.message.submission-error .message-copy').
-            html(gettext("There has been an error processing your survey.")).
-            stop().
-            css("display", "block");
+        $('.status.message.submission-error .message-copy')
+            .text(gettext('There has been an error processing your survey.'))
+            .stop()
+            .css('display', 'block');
     });
 });
 
 function toggleSubmitButton(enable) {
     var $submitButton = $('form .form-actions #submit');
 
-    if(enable) {
-        $submitButton.
-            removeClass('is-disabled').
-            attr('aria-disabled', false).
-            removeProp('disabled');
-    }
-    else {
-        $submitButton.
-            addClass('is-disabled').
-            attr('aria-disabled', true).
-            prop('disabled', true);
+    if (enable) {
+        $submitButton
+            .removeClass('is-disabled')
+            .attr('aria-disabled', false)
+            .removeProp('disabled');
+    } else {
+        $submitButton
+            .addClass('is-disabled')
+            .attr('aria-disabled', true)
+            .prop('disabled', true);
     }
 }

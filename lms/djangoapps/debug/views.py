@@ -1,24 +1,30 @@
 """Views for debugging and diagnostics"""
 
+
 import pprint
 import traceback
 
-from django.http import Http404, HttpResponse, HttpResponseNotFound
-from django.contrib.auth.decorators import login_required
-from django.utils.html import escape
-
-from django.views.decorators.csrf import ensure_csrf_cookie
-from edxmako.shortcuts import render_to_response
-
 from codejail.safe_exec import safe_exec
+from django.contrib.auth.decorators import login_required
+from django.http import Http404, HttpResponse
+from django.utils.html import escape
+from django.views.decorators.csrf import ensure_csrf_cookie
 
-from mako.exceptions import TopLevelLookupException
+from common.djangoapps.edxmako.shortcuts import render_to_response
+from openedx.core.djangolib.markup import HTML
 
 
 @login_required
 @ensure_csrf_cookie
 def run_python(request):
-    """A page to allow testing the Python sandbox on a production server."""
+    """
+    A page to allow testing the Python sandbox on a production server.
+
+    Runs in the override context "debug_run_python", so resource limits with come first from:
+        CODE_JAIL['limit_overrides']['debug_run_python']
+    and then from:
+        CODE_JAIL['limits']
+    """
     if not request.user.is_staff:
         raise Http404
     c = {}
@@ -28,8 +34,13 @@ def run_python(request):
         py_code = c['code'] = request.POST.get('code')
         g = {}
         try:
-            safe_exec(py_code, g)
-        except Exception as e:
+            safe_exec(
+                code=py_code,
+                globals_dict=g,
+                slug="debug_run_python",
+                limit_overrides_context="debug_run_python",
+            )
+        except Exception:   # pylint: disable=broad-except
             c['results'] = traceback.format_exc()
         else:
             c['results'] = pprint.pformat(g)
@@ -39,24 +50,9 @@ def run_python(request):
 @login_required
 def show_parameters(request):
     """A page that shows what parameters were on the URL and post."""
-    html = []
+    html_list = []
     for name, value in sorted(request.GET.items()):
-        html.append(escape("GET {}: {!r}".format(name, value)))
+        html_list.append(escape(f"GET {name}: {value!r}"))
     for name, value in sorted(request.POST.items()):
-        html.append(escape("POST {}: {!r}".format(name, value)))
-    return HttpResponse("\n".join("<p>{}</p>".format(h) for h in html))
-
-
-def show_reference_template(request, template):
-    """
-    Shows the specified template as an HTML page. This is used only in debug mode to allow the UX team
-    to produce and work with static reference templates.
-    e.g. /template/ux/reference/container.html shows the template under ux/reference/container.html
-
-    Note: dynamic parameters can also be passed to the page.
-    e.g. /template/ux/reference/container.html?name=Foo
-    """
-    try:
-        return render_to_response(template, request.GET.dict())
-    except TopLevelLookupException:
-        return HttpResponseNotFound("Couldn't find template {template}".format(template=template))
+        html_list.append(escape(f"POST {name}: {value!r}"))
+    return HttpResponse("\n".join(HTML("<p>{}</p>").format(h) for h in html_list))

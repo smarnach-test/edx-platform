@@ -2,11 +2,16 @@
 Convenience methods for working with datetime objects
 """
 
-from datetime import datetime, timedelta
-import re
 
-from pytz import timezone, UTC, UnknownTimeZoneError
-from django.utils.translation import pgettext, ugettext
+import re
+from datetime import datetime, timedelta
+
+import crum
+from django.utils.translation import get_language, gettext, pgettext
+from pytz import UnknownTimeZoneError, timezone, utc
+
+from lms.djangoapps.courseware.context_processor import user_timezone_locale_prefs
+from openedx.core.djangolib.markup import HTML
 
 
 def get_default_time_display(dtime):
@@ -21,14 +26,14 @@ def get_default_time_display(dtime):
 
     """
     if dtime is None:
-        return u""
+        return ""
     if dtime.tzinfo is not None:
         try:
-            timezone = u" " + dtime.tzinfo.tzname(dtime)
+            timezone = " " + dtime.tzinfo.tzname(dtime)  # pylint: disable=redefined-outer-name
         except NotImplementedError:
             timezone = dtime.strftime('%z')
     else:
-        timezone = u" UTC"
+        timezone = " UTC"
 
     localized = strftime_localized(dtime, "DATE_TIME")
     return (localized + timezone).strip()
@@ -52,12 +57,12 @@ def get_time_display(dtime, format_string=None, coerce_tz=None):
         try:
             to_tz = timezone(coerce_tz)
         except UnknownTimeZoneError:
-            to_tz = UTC
+            to_tz = utc
         dtime = to_tz.normalize(dtime.astimezone(to_tz))
     if dtime is None or format_string is None:
         return get_default_time_display(dtime)
     try:
-        return unicode(strftime_localized(dtime, format_string))
+        return strftime_localized(dtime, format_string)
     except ValueError:
         return get_default_time_display(dtime)
 
@@ -78,7 +83,7 @@ def to_timestamp(datetime_value):
     Convert a datetime into a timestamp, represented as the number
     of seconds since January 1, 1970 UTC.
     """
-    return int((datetime_value - datetime(1970, 1, 1, tzinfo=UTC)).total_seconds())
+    return int((datetime_value - datetime(1970, 1, 1, tzinfo=utc)).total_seconds())
 
 
 def from_timestamp(timestamp):
@@ -89,7 +94,7 @@ def from_timestamp(timestamp):
     If the timestamp cannot be converted, returns None instead.
     """
     try:
-        return datetime.utcfromtimestamp(int(timestamp)).replace(tzinfo=UTC)
+        return datetime.utcfromtimestamp(int(timestamp)).replace(tzinfo=utc)
     except (ValueError, TypeError):
         return None
 
@@ -132,25 +137,25 @@ def strftime_localized(dtime, format):      # pylint: disable=redefined-builtin
 
     if format == "SHORT_DATE":
         format = "%x"
-    elif format == "LONG_DATE":
+    elif format == "LONG_DATE":  # pylint: disable=comparison-with-callable
         # Translators: the translation for "LONG_DATE_FORMAT" must be a format
         # string for formatting dates in a long form.  For example, the
         # American English form is "%A, %B %d %Y".
         # See http://strftime.org for details.
-        format = ugettext("LONG_DATE_FORMAT")
+        format = gettext("LONG_DATE_FORMAT")
         if format == "LONG_DATE_FORMAT":
             format = DEFAULT_LONG_DATE_FORMAT
-    elif format == "DATE_TIME":
+    elif format == "DATE_TIME":  # pylint: disable=comparison-with-callable
         # Translators: the translation for "DATE_TIME_FORMAT" must be a format
         # string for formatting dates with times.  For example, the American
         # English form is "%b %d, %Y at %H:%M".
         # See http://strftime.org for details.
-        format = ugettext("DATE_TIME_FORMAT")
+        format = gettext("DATE_TIME_FORMAT")
         if format == "DATE_TIME_FORMAT":
             format = DEFAULT_DATE_TIME_FORMAT
-    elif format == "DAY_AND_TIME":
+    elif format == "DAY_AND_TIME":  # pylint: disable=comparison-with-callable
         format = DEFAULT_DAY_AND_TIME_FORMAT
-    elif format == "TIME":
+    elif format == "TIME":  # pylint: disable=comparison-with-callable
         format = "%X"
 
     def process_percent_code(match):
@@ -181,7 +186,7 @@ def strftime_localized(dtime, format):      # pylint: disable=redefined-builtin
             # format string for formatting dates in a brief form.  For example,
             # the American English form is "%b %d %Y".
             # See http://strftime.org for details.
-            actual_format = ugettext("SHORT_DATE_FORMAT")
+            actual_format = gettext("SHORT_DATE_FORMAT")
             if actual_format == "SHORT_DATE_FORMAT":
                 actual_format = DEFAULT_SHORT_DATE_FORMAT
             if "%x" in actual_format:
@@ -193,7 +198,7 @@ def strftime_localized(dtime, format):      # pylint: disable=redefined-builtin
             # Translators: the translation for "TIME_FORMAT" must be a format
             # string for formatting times.  For example, the American English
             # form is "%H:%M:%S". See http://strftime.org for details.
-            actual_format = ugettext("TIME_FORMAT")
+            actual_format = gettext("TIME_FORMAT")
             if actual_format == "TIME_FORMAT":
                 actual_format = DEFAULT_TIME_FORMAT
             if "%X" in actual_format:
@@ -209,6 +214,40 @@ def strftime_localized(dtime, format):      # pylint: disable=redefined-builtin
 
     formatted_date = re.sub(r"%-.|%.|%", process_percent_code, format)
     return formatted_date
+
+
+def strftime_localized_html(dtime, fmt):
+    """
+    Returns an html string that can be further localized in browser by JS code
+
+    For example, a user's default timezone preference is "whatever the browser default is" which must be queried via
+    Javascript. So we write out a UTC formatted date here, but tag it with enough information that dateutil_factory.js
+    can then later update the DOM to use the proper formatting.
+
+    Arguments:
+        dtime (datetime): Datetime to format
+        fmt (str): One of the special enum values that strftime_localized accepts. Only SHORT_DATE supported now.
+    """
+    locale_prefs = user_timezone_locale_prefs(crum.get_current_request())
+    user_timezone = locale_prefs['user_timezone']
+    language = get_language()
+
+    # Here we map the enums for strftime_localized into the enums used by date-utils.js when localizing on JS side.
+    format_mapping = {
+        'SHORT_DATE': 'shortDate',
+    }
+    assert fmt in format_mapping.keys(), 'format "%s" not yet supported in strftime_localized_html' % fmt  # pylint: disable=consider-iterating-dictionary  # noqa: UP031
+
+    date_html = '<span class="localized-datetime" data-format="{format}" data-timezone="{user_timezone}" \
+                       data-datetime="{formatted_date}" data-language="{language}">{formatted_date_localized}</span>'
+
+    return HTML(date_html).format(
+        language=language,
+        user_timezone=user_timezone,
+        format=format_mapping[fmt],
+        formatted_date=dtime.isoformat(),
+        formatted_date_localized=strftime_localized(dtime, fmt),
+    )
 
 
 # In order to extract the strings below, we have to mark them with pgettext.

@@ -1,6 +1,7 @@
 """Provides a function to convert html to plaintext."""
+
 import logging
-from subprocess import Popen, PIPE
+from subprocess import PIPE, Popen
 
 log = logging.getLogger(__name__)
 
@@ -11,7 +12,7 @@ def html_to_text(html_message):
     Currently uses lynx in a subprocess; should be refactored to
     use something more pythonic.
     """
-    process = Popen(
+    process = Popen(  # pylint: disable=consider-using-with
         ['lynx', '-stdin', '-display_charset=UTF-8', '-assume_charset=UTF-8', '-dump'],
         stdin=PIPE,
         stdout=PIPE
@@ -24,4 +25,4 @@ def html_to_text(html_message):
     if err_from_stderr:
         log.info(err_from_stderr)
 
-    return plaintext
+    return plaintext.decode()

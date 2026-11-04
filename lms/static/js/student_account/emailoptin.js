@@ -1,11 +1,11 @@
-;(function (define) {
+(function(define) {
     'use strict';
-    define(['jquery', 'jquery.cookie'], function($) {
 
+    define(['jquery', 'jquery.cookie'], function($) {
         var EmailOptInInterface = {
 
             urls: {
-                emailOptInUrl: '/user_api/v1/preferences/email_opt_in/'
+                emailOptInUrl: '/api/user/v1/preferences/email_opt_in/'
             },
 
             headers: {
@@ -18,7 +18,7 @@
              * @param  {string} courseKey  Slash-separated course key.
              * @param {string} emailOptIn The preference to opt in or out of organization emails.
              */
-            setPreference: function( courseKey, emailOptIn ) {
+            setPreference: function(courseKey, emailOptIn) {
                 return $.ajax({
                     url: this.urls.emailOptInUrl,
                     type: 'POST',

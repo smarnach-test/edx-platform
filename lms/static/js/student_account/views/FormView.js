@@ -1,64 +1,76 @@
-;(function (define) {
+(function(define) {
     'use strict';
-    define([
-            'jquery',
-            'underscore',
-            'backbone',
-            'js/utils/edx.utils.validate'
-        ],
-        function($, _, Backbone, EdxUtilsValidate) {
 
+    define([
+        'jquery',
+        'underscore',
+        'backbone',
+        'common/js/utils/edx.utils.validate',
+        'edx-ui-toolkit/js/utils/html-utils',
+        'edx-ui-toolkit/js/utils/string-utils',
+        'text!templates/student_account/form_errors.underscore'
+    ], function($, _, Backbone, EdxUtilsValidate, HtmlUtils, StringUtils, formErrorsTpl) {
         return Backbone.View.extend({
             tagName: 'form',
-
             el: '',
-
             tpl: '',
-
             fieldTpl: '#form_field-tpl',
-
+            formErrorsTpl: formErrorsTpl,
+            formErrorsJsHook: 'js-form-errors',
+            defaultFormErrorsTitle: gettext('An error occurred.'),
             events: {},
-
             errors: [],
-
             formType: '',
-
             $form: {},
-
             fields: [],
-
+            liveValidationFields: [],
             // String to append to required label fields
-            requiredStr: '*',
-
+            requiredStr: '',
+            /*
+                Translators: This string is appended to optional field labels on the student login, registration, and
+                profile forms.
+            */
+            optionalStr: gettext('(optional)'),
             submitButton: '',
+            isEnterpriseEnable: false,
+            showRegisterLinks: true,
 
-            initialize: function( data ) {
+            initialize: function(data) {
                 this.model = data.model;
-                this.preRender( data );
+                this.showRegisterLinks = (
+                    typeof data.showRegisterLinks !== 'undefined'
+                ) ? data.showRegisterLinks : this.showRegisterLinks;
+
+                this.preRender(data);
 
                 this.tpl = $(this.tpl).html();
                 this.fieldTpl = $(this.fieldTpl).html();
-                this.buildForm( data.fields );
+                this.buildForm(data.fields);
 
-                this.listenTo( this.model, 'error', this.saveError );
+                this.listenTo(this.model, 'error', this.saveError);
             },
 
             /* Allows extended views to add custom
              * init steps without needing to repeat
              * default init steps
              */
-            preRender: function( data ) {
+            preRender: function(data) {
                 /* Custom code goes here */
                 return data;
             },
 
-            render: function( html ) {
+            render: function(html) {
                 var fields = html || '';
 
-                $(this.el).html( _.template( this.tpl, {
-                    fields: fields
-                }));
-
+                HtmlUtils.setHtml(
+                    $(this.el),
+                    HtmlUtils.HTML(
+                        _.template(this.tpl)({
+                            fields: fields,
+                            HtmlUtils: HtmlUtils
+                        })
+                    )
+                );
                 this.postRender();
 
                 return this;
@@ -67,11 +79,11 @@
             postRender: function() {
                 var $container = $(this.el);
                 this.$form = $container.find('form');
-                this.$errors = $container.find('.submission-error');
+                this.$formFeedback = $container.find('.js-form-feedback');
                 this.$submitButton = $container.find(this.submitButton);
             },
 
-            buildForm: function( data ) {
+            buildForm: function(data) {
                 var html = [],
                     i,
                     len = data.length,
@@ -79,68 +91,59 @@
 
                 this.fields = data;
 
-                for ( i=0; i<len; i++ ) {
-                    if ( data[i].errorMessages ) {
-                        data[i].errorMessages = this.escapeStrings( data[i].errorMessages );
+                for (i = 0; i < len; i++) {
+                    if (data[i].errorMessages) {
+                        data[i].errorMessages = this.escapeStrings(data[i].errorMessages);
                     }
 
-                    html.push( _.template( fieldTpl, $.extend( data[i], {
+                    html.push(HtmlUtils.template(fieldTpl)($.extend(data[i], {
                         form: this.formType,
-                        requiredStr: this.requiredStr
-                    }) ) );
+                        requiredStr: this.requiredStr,
+                        optionalStr: this.optionalStr,
+                        supplementalText: data[i].supplementalText || '',
+                        supplementalLink: data[i].supplementalLink || '',
+                        loginIssueSupportLink: data[i].loginIssueSupportLink || '',
+                        showRegisterLinks: this.showRegisterLinks,
+                        isEnterpriseEnable: this.isEnterpriseEnable
+                    })));
                 }
 
-                this.render( html.join('') );
+                this.render(html.join(''));
             },
 
             /* Helper method to toggle display
              * including accessibility considerations
              */
             element: {
-                hide: function( $el ) {
-                    if ( $el ) {
+                hide: function($el) {
+                    if ($el) {
                         $el.addClass('hidden');
                     }
                 },
 
-                scrollTop: function( $el ) {
+                scrollTop: function($el) {
                     // Scroll to top of selected element
                     $('html,body').animate({
                         scrollTop: $el.offset().top
-                    },'slow');
+                    }, 'slow');
                 },
 
-                show: function( $el ) {
-                    if ( $el ) {
+                show: function($el) {
+                    if ($el) {
                         $el.removeClass('hidden');
                     }
                 }
             },
 
-            escapeStrings: function( obj ) {
-                _.each( obj, function( val, key ) {
-                    obj[key] = _.escape( val );
+            escapeStrings: function(obj) {
+                _.each(obj, function(val, key) {
+                    obj[key] = _.escape(val);
                 });
 
                 return obj;
             },
 
-            focusFirstError: function() {
-                var $error = this.$form.find('.error').first(),
-                    $field = {},
-                    $parent = {};
-
-                if ( $error.is('label') ) {
-                    $parent = $error.parent('.form-field');
-                    $error = $parent.find('input') || $parent.find('select');
-                } else {
-                    $field = $error;
-                }
-
-                $error.focus();
-            },
-
-            forgotPassword: function( event ) {
+            forgotPassword: function(event) {
                 event.preventDefault();
 
                 this.trigger('password-help');
@@ -151,69 +154,130 @@
                     $form = this.$form,
                     elements = $form[0].elements,
                     i,
+                    $n,
+                    tpl,
                     len = elements.length,
                     $el,
                     $label,
                     key = '',
                     errors = [],
-                    test = {};
+                    validation = {},
+                    $desc,
+                    $validationNode;
 
-                for ( i=0; i<len; i++ ) {
-
-                    $el = $( elements[i] );
+                for (i = 0; i < len; i++) {
+                    $el = $(elements[i]);
                     $label = $form.find('label[for=' + $el.attr('id') + ']');
                     key = $el.attr('name') || false;
 
-                    if ( key ) {
-                        test = this.validate( elements[i] );
-                        if ( test.isValid ) {
+                    // Due to a bug in firefox, whitespaces in email type field are not removed.
+                    // TODO: Remove this code once firefox bug is resolved.
+                    if (key === 'email') {
+                        $el.val($el.val().trim());
+                    }
+
+                    if (key) {
+                        if (this.interesting_fields($el)) {
+                            this.remove_validation_error($el, $form);
+                        }
+                        validation = this.validate(elements[i]);
+                        if (validation.isValid) {
                             obj[key] = $el.attr('type') === 'checkbox' ? $el.is(':checked') : $el.val();
                             $el.removeClass('error');
                             $label.removeClass('error');
                         } else {
-                            errors.push( test.message );
+                            if (this.interesting_fields($el)) {
+                                $validationNode = this.get_error_validation_node($el, $form);
+                                if ($validationNode) {
+                                    $n = $.parseHTML(validation.message);
+                                    tpl = HtmlUtils.template('<i class="fa fa-exclamation-triangle"></i>');
+
+                                    HtmlUtils.prepend($n, tpl());
+                                    HtmlUtils.append($validationNode, HtmlUtils.HTML($n));
+                                }
+
+                                $desc = $form.find('#' + $el.attr('id') + '-desc');
+                                $desc.remove();
+                            }
+
+                            errors.push(validation.message);
                             $el.addClass('error');
                             $label.addClass('error');
                         }
                     }
                 }
 
-                this.errors = _.uniq( errors );
+                this.errors = _.uniq(errors);
 
                 return obj;
             },
+            remove_validation_error: function($el, $form) {
+                var $validationNode = this.get_error_validation_node($el, $form);
+                if ($validationNode && $validationNode.find('li').length > 0) {
+                    $validationNode.empty();
+                }
+            },
 
-            saveError: function( error ) {
-                this.errors = ['<li>' + error.responseText + '</li>'];
-                this.setErrors();
+            get_error_validation_node: function($el, $form) {
+                var $node = $form.find('#' + $el.attr('id') + '-validation-error-msg');
+                return $node.find('ul');
+            },
+
+            interesting_fields: function($el) {
+                return ($el.attr('name') === 'email' || $el.attr('name') === 'password');
+            },
+
+            toggleHelp: function(event, $help) {
+                var $el = $(event.currentTarget);
+                var $i = $el.find('i');
+
+                if ($help.css('display') === 'block') {
+                    $help.css('display', 'none');
+                    $i.addClass('fa-caret-right').removeClass('fa-caret-down');
+                } else {
+                    $help.css('display', 'block');
+                    $i.addClass('fa-caret-down').removeClass('fa-caret-right');
+                }
+            },
+
+            saveError: function(error) {
+                this.errors = [
+                    StringUtils.interpolate(
+                        '<li>{error}</li>', {
+                            error: error.responseText
+                        }
+                    )
+                ];
+                this.renderErrors(this.defaultFormErrorsTitle, this.errors);
+                this.scrollToFormFeedback();
                 this.toggleDisableButton(false);
             },
 
-            setErrors: function() {
-                var $msg = this.$errors.find('.message-copy'),
-                    html = [],
-                    errors = this.errors,
-                    i,
-                    len = errors.length;
-
-                for ( i=0; i<len; i++ ) {
-                    html.push( errors[i] );
-                }
-
-                $msg.html( html.join('') );
-
-                this.element.show( this.$errors );
-
-                // Scroll to error messages
-                $('html,body').animate({
-                    scrollTop: this.$errors.offset().top
-                },'slow');
-
-                // Focus on first error field
-                this.focusFirstError();
+            /* Wrapper for renderFormFeedback provided for convenience since the majority of
+             * our calls to renderFormFeedback are for rendering error messages.
+             */
+            renderErrors: function(title, errorMessages) {
+                this.clearFormErrors();
+                this.renderFormFeedback(this.formErrorsTpl, {
+                    jsHook: this.formErrorsJsHook,
+                    title: title,
+                    messagesHtml: HtmlUtils.HTML(errorMessages.join(''))
+                });
             },
 
-            submitForm: function( event ) {
+            renderFormFeedback: function(template, context) {
+                var tpl = HtmlUtils.template(template);
+                HtmlUtils.prepend(this.$formFeedback, tpl(context));
+            },
+
+            /* Allows extended views to add non-form attributes
+             * to the data before saving it to model
+             */
+            setExtraData: function(data) {
+                return data;
+            },
+
+            submitForm: function(event) {
                 var data = this.getFormData();
 
                 if (!_.isUndefined(event)) {
@@ -222,12 +286,15 @@
 
                 this.toggleDisableButton(true);
 
-                if ( !_.compact(this.errors).length ) {
-                    this.model.set( data );
+                if (!_.compact(this.errors).length) {
+                    data = this.setExtraData(data);
+                    this.model.set(data);
                     this.model.save();
-                    this.toggleErrorMsg( false );
+                    this.clearFormErrors();
                 } else {
-                    this.toggleErrorMsg( true );
+                    this.renderErrors(this.defaultFormErrorsTitle, this.errors);
+                    this.scrollToFormFeedback();
+                    this.toggleDisableButton(false);
                 }
 
                 this.postFormSubmission();
@@ -240,12 +307,19 @@
                 return true;
             },
 
-            toggleErrorMsg: function( show ) {
-                if ( show ) {
-                    this.setErrors();
-                    this.toggleDisableButton(false);
-                } else {
-                    this.element.hide( this.$errors );
+            resetValidationVariables: function() {
+                return true;
+            },
+
+            clearFormErrors: function() {
+                var query = '.' + this.formErrorsJsHook;
+                this.clearFormFeedbackItems(query);
+            },
+
+            clearFormFeedbackItems: function(query) {
+                var $items = this.$formFeedback.find(query);
+                if ($items.length > 0) {
+                    $items.remove();
                 }
             },
 
@@ -257,14 +331,50 @@
              *      disabled (boolean): If set to TRUE, disable the button.
              *
              */
-            toggleDisableButton: function ( disabled ) {
+            toggleDisableButton: function(disabled) {
                 if (this.$submitButton) {
                     this.$submitButton.attr('disabled', disabled);
                 }
             },
 
-            validate: function( $el ) {
-                return EdxUtilsValidate.validate( $el );
+            scrollToFormFeedback: function() {
+                var self = this;
+                // Scroll to feedback container
+                $('html,body').animate({
+                    scrollTop: this.$formFeedback.offset().top
+                }, 'slow', function() {
+                    self.resetValidationVariables();
+                });
+
+                // Focus on the feedback container to ensure screen readers see the messages.
+                this.$formFeedback.focus();
+            },
+
+            validate: function($el) {
+                return EdxUtilsValidate.validate($el);
+            },
+
+            liveValidate: function($el, url, dataType, data, method, model) {
+                $.ajax({
+                    url: url,
+                    dataType: dataType,
+                    data: data,
+                    method: method,
+                    success: function(response) {
+                        model.trigger('validation', $el, response);
+                    }
+                });
+            },
+
+            inLiveValidationFields: function($el) {
+                var i,
+                    name = $el.attr('name') || false;
+                for (i = 0; i < this.liveValidationFields.length; ++i) {
+                    if (this.liveValidationFields[i] === name) {
+                        return true;
+                    }
+                }
+                return false;
             }
         });
     });

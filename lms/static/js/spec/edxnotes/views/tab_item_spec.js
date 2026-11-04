@@ -1,11 +1,11 @@
 define([
     'jquery', 'common/js/spec_helpers/template_helpers', 'js/edxnotes/collections/tabs',
-    'js/edxnotes/views/tabs_list', 'js/spec/edxnotes/custom_matchers', 'jasmine-jquery'
-], function($, TemplateHelpers, TabsCollection, TabsListView, customMatchers) {
+    'js/edxnotes/views/tabs_list'
+], function($, TemplateHelpers, TabsCollection, TabsListView) {
     'use strict';
+
     describe('EdxNotes TabItemView', function() {
-        beforeEach(function () {
-            customMatchers(this);
+        beforeEach(function() {
             TemplateHelpers.installTemplate('templates/edxnotes/tab-item');
             this.collection = new TabsCollection([
                 {identifier: 'first-item'},
@@ -20,7 +20,7 @@ define([
             }).render();
         });
 
-        it('can contain an icon', function () {
+        it('can contain an icon', function() {
             var firstItem = this.tabsList.$('#first-item'),
                 secondItem = this.tabsList.$('#second-item');
 
@@ -28,7 +28,7 @@ define([
             expect(secondItem.find('.icon')).toHaveClass('icon-class');
         });
 
-        it('can navigate between tabs', function () {
+        it('can navigate between tabs', function() {
             var firstItem = this.tabsList.$('#first-item'),
                 secondItem = this.tabsList.$('#second-item');
 
@@ -43,7 +43,7 @@ define([
             expect(secondItem).toContainText('Current tab');
         });
 
-        it('can close the tab', function () {
+        it('can close the tab', function() {
             var secondItem = this.tabsList.$('#second-item');
 
             expect(this.tabsList.$('.tab')).toHaveLength(2);

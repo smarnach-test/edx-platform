@@ -2,10 +2,16 @@
 Unit tests for helpers.py.
 """
 
-from contentstore.tests.utils import CourseTestCase
-from contentstore.views.helpers import xblock_studio_url, xblock_type_display_name
-from xmodule.modulestore.tests.factories import ItemFactory, LibraryFactory
-from django.utils import http
+from unittest.mock import Mock, patch
+from urllib.parse import quote
+
+from cms.djangoapps.contentstore.tests.utils import CourseTestCase
+from xmodule.modulestore.tests.factories import (  # pylint: disable=wrong-import-order
+    BlockFactory,
+    LibraryFactory,
+)
+
+from ...helpers import xblock_embed_lms_url, xblock_lms_url, xblock_studio_url, xblock_type_display_name
 
 
 class HelpersTestCase(CourseTestCase):
@@ -16,73 +22,113 @@ class HelpersTestCase(CourseTestCase):
     def test_xblock_studio_url(self):
 
         # Verify course URL
-        course_url = u'/course/{}'.format(unicode(self.course.id))
-        self.assertEqual(xblock_studio_url(self.course), course_url)
+        course_url = f'/course/{str(self.course.id)}'
+        self.assertEqual(xblock_studio_url(self.course), course_url)  # noqa: PT009
 
         # Verify chapter URL
-        chapter = ItemFactory.create(parent_location=self.course.location, category='chapter',
-                                     display_name="Week 1")
-        self.assertEqual(
+        chapter = BlockFactory.create(parent_location=self.course.location, category='chapter',
+                                      display_name="Week 1")
+        self.assertEqual(  # noqa: PT009
             xblock_studio_url(chapter),
-            u'{}?show={}'.format(course_url, http.urlquote(chapter.location))
+            f'{course_url}?show={quote(str(chapter.location).encode())}'
         )
 
         # Verify sequential URL
-        sequential = ItemFactory.create(parent_location=chapter.location, category='sequential',
-                                        display_name="Lesson 1")
-        self.assertEqual(
+        sequential = BlockFactory.create(parent_location=chapter.location, category='sequential',
+                                         display_name="Lesson 1")
+        self.assertEqual(  # noqa: PT009
             xblock_studio_url(sequential),
-            u'{}?show={}'.format(course_url, http.urlquote(sequential.location))
+            f'{course_url}?show={quote(str(sequential.location).encode())}'
         )
 
         # Verify unit URL
-        vertical = ItemFactory.create(parent_location=sequential.location, category='vertical',
-                                      display_name='Unit')
-        self.assertEqual(xblock_studio_url(vertical), u'/container/{}'.format(vertical.location))
+        vertical = BlockFactory.create(parent_location=sequential.location, category='vertical',
+                                       display_name='Unit')
+        self.assertEqual(xblock_studio_url(vertical), f'/container/{vertical.location}')  # noqa: PT009
 
         # Verify child vertical URL
-        child_vertical = ItemFactory.create(parent_location=vertical.location, category='vertical',
-                                            display_name='Child Vertical')
-        self.assertEqual(xblock_studio_url(child_vertical), u'/container/{}'.format(child_vertical.location))
+        child_vertical = BlockFactory.create(parent_location=vertical.location, category='vertical',
+                                             display_name='Child Vertical')
+        self.assertEqual(xblock_studio_url(child_vertical), f'/container/{child_vertical.location}')  # noqa: PT009
 
         # Verify video URL
-        video = ItemFactory.create(parent_location=child_vertical.location, category="video",
-                                   display_name="My Video")
-        self.assertIsNone(xblock_studio_url(video))
+        video = BlockFactory.create(parent_location=child_vertical.location, category="video",
+                                    display_name="My Video")
+        self.assertIsNone(xblock_studio_url(video))  # noqa: PT009
+        # Verify video URL with find_parent=True
+        self.assertEqual(xblock_studio_url(video, find_parent=True), f'/container/{child_vertical.location}')  # noqa: PT009  # pylint: disable=line-too-long
 
         # Verify library URL
         library = LibraryFactory.create()
-        expected_url = u'/library/{}'.format(unicode(library.location.library_key))
-        self.assertEqual(xblock_studio_url(library), expected_url)
+        expected_url = f'/library/{str(library.location.library_key)}'
+        self.assertEqual(xblock_studio_url(library), expected_url)  # noqa: PT009
+
+    @patch('cms.djangoapps.contentstore.helpers.configuration_helpers.get_value')
+    def test_xblock_lms_url(self, mock_get_value: Mock):
+        mock_get_value.return_value = 'lms.example.com'
+
+        # Verify chapter URL
+        chapter = BlockFactory.create(
+            parent_location=self.course.location, category='chapter', display_name="Week 1"
+        )
+        self.assertEqual(  # noqa: PT009
+            xblock_lms_url(chapter),
+            f"lms.example.com/courses/{chapter.location.course_key}/jump_to/{chapter.location}"
+        )
+
+        # Verify sequential URL
+        sequential = BlockFactory.create(
+            parent_location=chapter.location, category='sequential', display_name="Lesson 1"
+        )
+        self.assertEqual(  # noqa: PT009
+            xblock_lms_url(sequential),
+            f"lms.example.com/courses/{sequential.location.course_key}/jump_to/{sequential.location}"
+        )
+
+    @patch('cms.djangoapps.contentstore.helpers.configuration_helpers.get_value')
+    def test_xblock_embed_lms_url(self, mock_get_value: Mock):
+        mock_get_value.return_value = 'lms.example.com'
+
+        # Verify chapter URL
+        chapter = BlockFactory.create(
+            parent_location=self.course.location, category='chapter', display_name="Week 1"
+        )
+        self.assertEqual(xblock_embed_lms_url(chapter), f"lms.example.com/xblock/{chapter.location}")  # noqa: PT009
+
+        # Verify sequential URL
+        sequential = BlockFactory.create(
+            parent_location=chapter.location, category='sequential', display_name="Lesson 1"
+        )
+        self.assertEqual(xblock_embed_lms_url(sequential), f"lms.example.com/xblock/{sequential.location}")  # noqa: PT009  # pylint: disable=line-too-long
 
     def test_xblock_type_display_name(self):
 
         # Verify chapter type display name
-        chapter = ItemFactory.create(parent_location=self.course.location, category='chapter')
-        self.assertEqual(xblock_type_display_name(chapter), u'Section')
-        self.assertEqual(xblock_type_display_name('chapter'), u'Section')
+        chapter = BlockFactory.create(parent_location=self.course.location, category='chapter')
+        self.assertEqual(xblock_type_display_name(chapter), 'Section')  # noqa: PT009
+        self.assertEqual(xblock_type_display_name('chapter'), 'Section')  # noqa: PT009
 
         # Verify sequential type display name
-        sequential = ItemFactory.create(parent_location=chapter.location, category='sequential')
-        self.assertEqual(xblock_type_display_name(sequential), u'Subsection')
-        self.assertEqual(xblock_type_display_name('sequential'), u'Subsection')
+        sequential = BlockFactory.create(parent_location=chapter.location, category='sequential')
+        self.assertEqual(xblock_type_display_name(sequential), 'Subsection')  # noqa: PT009
+        self.assertEqual(xblock_type_display_name('sequential'), 'Subsection')  # noqa: PT009
 
         # Verify unit type display names
-        vertical = ItemFactory.create(parent_location=sequential.location, category='vertical')
-        self.assertEqual(xblock_type_display_name(vertical), u'Unit')
-        self.assertEqual(xblock_type_display_name('vertical'), u'Unit')
+        vertical = BlockFactory.create(parent_location=sequential.location, category='vertical')
+        self.assertEqual(xblock_type_display_name(vertical), 'Unit')  # noqa: PT009
+        self.assertEqual(xblock_type_display_name('vertical'), 'Unit')  # noqa: PT009
 
         # Verify child vertical type display name
-        child_vertical = ItemFactory.create(parent_location=vertical.location, category='vertical',
-                                            display_name='Child Vertical')
-        self.assertEqual(xblock_type_display_name(child_vertical), u'Vertical')
+        child_vertical = BlockFactory.create(parent_location=vertical.location, category='vertical',
+                                             display_name='Child Vertical')
+        self.assertEqual(xblock_type_display_name(child_vertical), 'Vertical')  # noqa: PT009
 
         # Verify video type display names
-        video = ItemFactory.create(parent_location=vertical.location, category="video")
-        self.assertEqual(xblock_type_display_name(video), u'Video')
-        self.assertEqual(xblock_type_display_name('video'), u'Video')
+        video = BlockFactory.create(parent_location=vertical.location, category="video")
+        self.assertEqual(xblock_type_display_name(video), 'Video')  # noqa: PT009
+        self.assertEqual(xblock_type_display_name('video'), 'Video')  # noqa: PT009
 
         # Verify split test type display names
-        split_test = ItemFactory.create(parent_location=vertical.location, category="split_test")
-        self.assertEqual(xblock_type_display_name(split_test), u'Content Experiment')
-        self.assertEqual(xblock_type_display_name('split_test'), u'Content Experiment')
+        split_test = BlockFactory.create(parent_location=vertical.location, category="split_test")
+        self.assertEqual(xblock_type_display_name(split_test), 'Content Experiment')  # noqa: PT009
+        self.assertEqual(xblock_type_display_name('split_test'), 'Content Experiment')  # noqa: PT009

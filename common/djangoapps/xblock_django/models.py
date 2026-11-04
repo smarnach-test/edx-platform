@@ -1,39 +1,81 @@
 """
 Models.
 """
-from django.utils.translation import ugettext_lazy as _
 
-from django.db.models import TextField
 
 from config_models.models import ConfigurationModel
+from django.db import models
+from django.utils.translation import gettext_lazy as _
 
 
-class XBlockDisableConfig(ConfigurationModel):
+class XBlockConfiguration(ConfigurationModel):
     """
-    Configuration for disabling XBlocks.
+    XBlock configuration used by both LMS and Studio, and not specific to a particular template.
+
+    .. no_pii:
     """
 
-    disabled_blocks = TextField(
-        default='', blank=True,
-        help_text=_('Space-separated list of XBlocks which should not render.')
+    KEY_FIELDS = ('name',)  # xblock name is unique
+
+    class Meta(ConfigurationModel.Meta):
+        app_label = 'xblock_django'
+
+    # boolean field 'enabled' inherited from parent ConfigurationModel
+    name = models.CharField(max_length=255, null=False, db_index=True)
+    deprecated = models.BooleanField(
+        default=False,
+        verbose_name=_('show deprecation messaging in Studio')
     )
 
-    @classmethod
-    def is_block_type_disabled(cls, block_type):
-        """ Return True if block_type is disabled. """
+    def __str__(self):
+        return (  # noqa: UP032
+            "XBlockConfiguration(name={}, enabled={}, deprecated={})"
+        ).format(self.name, self.enabled, self.deprecated)
 
-        config = cls.current()
-        if not config.enabled:
-            return False
 
-        return block_type in config.disabled_blocks.split()  # pylint: disable=no-member
+class XBlockStudioConfigurationFlag(ConfigurationModel):
+    """
+    Enables site-wide Studio configuration for XBlocks.
 
-    @classmethod
-    def disabled_block_types(cls):
-        """ Return list of disabled xblock types. """
+    .. no_pii:
+    """
 
-        config = cls.current()
-        if not config.enabled:
-            return ()
+    class Meta:
+        app_label = "xblock_django"
 
-        return config.disabled_blocks.split()  # pylint: disable=no-member
+    # boolean field 'enabled' inherited from parent ConfigurationModel
+
+    def __str__(self):
+        return f"XBlockStudioConfigurationFlag(enabled={self.enabled})"
+
+
+class XBlockStudioConfiguration(ConfigurationModel):
+    """
+    Studio editing configuration for a specific XBlock/template combination.
+
+    .. no_pii:
+    """
+    KEY_FIELDS = ('name', 'template')  # xblock name/template combination is unique
+
+    FULL_SUPPORT = 'fs'
+    PROVISIONAL_SUPPORT = 'ps'
+    UNSUPPORTED = 'us'
+
+    SUPPORT_CHOICES = (
+        (FULL_SUPPORT, _('Fully Supported')),
+        (PROVISIONAL_SUPPORT, _('Provisionally Supported')),
+        (UNSUPPORTED, _('Unsupported'))
+    )
+
+    # boolean field 'enabled' inherited from parent ConfigurationModel
+    name = models.CharField(max_length=255, null=False, db_index=True)
+    template = models.CharField(max_length=255, blank=True, default='')
+    support_level = models.CharField(max_length=2, choices=SUPPORT_CHOICES, default=UNSUPPORTED)
+
+    class Meta:
+        app_label = "xblock_django"
+
+    def __str__(self):
+        return (  # noqa: UP032
+            "XBlockStudioConfiguration(name={}, template={}, enabled={}, support_level={})"
+        ).format(self.name, self.template, self.enabled, self.support_level)

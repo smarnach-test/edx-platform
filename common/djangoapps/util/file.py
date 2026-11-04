@@ -2,25 +2,29 @@
 Utility methods related to file handling.
 """
 
-from datetime import datetime
-import os
-from pytz import UTC
 
+import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from django.conf import settings
 from django.core.exceptions import PermissionDenied
-from django.core.files.storage import DefaultStorage, get_valid_filename
-from django.utils.translation import ugettext as _
-from django.utils.translation import ungettext
+from django.core.files.storage import DefaultStorage
+from django.utils.text import get_valid_filename
+from django.utils.translation import gettext as _
+from django.utils.translation import ngettext
+from storages.backends.s3boto3 import S3Boto3Storage
 
 
 class FileValidationException(Exception):
     """
     An exception thrown during file validation.
     """
-    pass
+    pass  # pylint: disable=unnecessary-pass
 
 
 def store_uploaded_file(
-        request, file_key, allowed_file_types, base_storage_filename, max_file_size, validator=None,
+        request, file_key, allowed_file_types, base_storage_filename, max_file_size, validator=None, is_private=False,
 ):
     """
     Stores an uploaded file to django file storage.
@@ -42,6 +46,8 @@ def store_uploaded_file(
             a `FileValidationException` if the file is not properly formatted. If any exception is thrown, the stored
             file will be deleted before the exception is re-raised. Note that the implementor of the validator function
             should take care to close the stored file if they open it for reading.
+        is_private (Boolean): an optional boolean which if True and the storage backend is S3,
+            sets the ACL for the file object to be private.
 
     Returns:
         Storage: the file storage object where the file can be retrieved from
@@ -57,7 +63,7 @@ def store_uploaded_file(
         file_extension = os.path.splitext(uploaded_file.name)[1].lower()
         if file_extension not in allowed_file_types:
             file_types = "', '".join(allowed_file_types)
-            msg = ungettext(
+            msg = ngettext(
                 "The file must end with the extension '{file_types}'.",
                 "The file must end with one of the following extensions: '{file_types}'.",
                 len(allowed_file_types)).format(file_types=file_types)
@@ -72,6 +78,12 @@ def store_uploaded_file(
         file_storage = DefaultStorage()
         # If a file already exists with the supplied name, file_storage will make the filename unique.
         stored_file_name = file_storage.save(stored_file_name, uploaded_file)
+        if is_private and settings.STORAGES['default']['BACKEND'] == 'storages.backends.s3boto3.S3Boto3Storage':
+            S3Boto3Storage().connection.meta.client.put_object_acl(
+                ACL='private',
+                Bucket=settings.AWS_STORAGE_BUCKET_NAME,
+                Key=stored_file_name,
+            )
 
         if validator:
             try:
@@ -86,22 +98,33 @@ def store_uploaded_file(
     return file_storage, stored_file_name
 
 
-# pylint: disable=invalid-name
 def course_filename_prefix_generator(course_id, separator='_'):
     """
-    Generates a course-identifying unicode string for use in a file
-    name.
+    Generates a course-identifying unicode string for use in a file name.
 
     Args:
         course_id (object): A course identification object.
+        separator (str): The character or chain of characters used for separating course details in
+            the filename.
     Returns:
-        str: A unicode string which can safely be inserted into a
-            filename.
+        str: A unicode string which can safely be inserted into a filename.
     """
-    return get_valid_filename(unicode(separator).join([course_id.org, course_id.course, course_id.run]))
+    filename = str(separator).join([
+        course_id.org,
+        course_id.course,
+        course_id.run
+    ])
+
+    enable_course_filename_ccx_suffix = getattr(
+        settings, 'ENABLE_COURSE_FILENAME_CCX_SUFFIX', False
+    )
+
+    if enable_course_filename_ccx_suffix and getattr(course_id, 'ccx', None):
+        filename = separator.join([filename, 'ccx', course_id.ccx])
+
+    return get_valid_filename(filename)
 
 
-# pylint: disable=invalid-name
 def course_and_time_based_filename_generator(course_id, base_name):
     """
     Generates a filename (without extension) based on the current time and the supplied filename.
@@ -118,14 +141,14 @@ def course_and_time_based_filename_generator(course_id, base_name):
             and the current time. Note that there will be no extension.
 
     """
-    return u"{course_prefix}_{base_name}_{timestamp_str}".format(
+    return "{course_prefix}_{base_name}_{timestamp_str}".format(
         course_prefix=course_filename_prefix_generator(course_id),
         base_name=get_valid_filename(base_name),
-        timestamp_str=datetime.now(UTC).strftime("%Y-%m-%d-%H%M%S")
+        timestamp_str=datetime.now(ZoneInfo("UTC")).strftime("%Y-%m-%d-%H%M%S")
     )
 
 
-class UniversalNewlineIterator(object):
+class UniversalNewlineIterator:
     """
     This iterable class can be used as a wrapper around a file-like
     object which does not inherently support being read in
@@ -143,7 +166,7 @@ class UniversalNewlineIterator(object):
         """
         Replace CR and CRLF with LF within `string`.
         """
-        return string.replace('\r\n', '\n').replace('\r', '\n')
+        return string.replace('\r\n', '\n').replace('\r', '\n').encode('utf-8')
 
     def generate_lines(self):
         """
@@ -163,7 +186,7 @@ class UniversalNewlineIterator(object):
                     line = char
                     yield self.sanitize(last_line)
                 else:
-                    line += char
+                    line += str(char) if isinstance(char, int) else char
             buf = self.original_file.read(self.buffer_size)
             if not buf and line:
                 yield self.sanitize(line)

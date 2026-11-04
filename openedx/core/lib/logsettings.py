@@ -1,24 +1,19 @@
 """Get log settings."""
 
-import os
+
+import logging
 import platform
 import sys
+import warnings
 from logging.handlers import SysLogHandler
 
 LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
 
 
-def get_logger_config(log_dir,
+def get_logger_config(log_dir,  # pylint: disable=unused-argument
                       logging_env="no_env",
-                      tracking_filename="tracking.log",
-                      edx_filename="edx.log",
-                      dev_env=False,
-                      syslog_addr=None,
-                      debug=False,
                       local_loglevel='INFO',
-                      console_loglevel=None,
-                      service_variant=None):
-
+                      service_variant=""):
     """
 
     Return the appropriate logging config dictionary. You should assign the
@@ -26,38 +21,167 @@ def get_logger_config(log_dir,
     this way instead of registering directly is because I didn't want to worry
     about resetting the logging state if this is called multiple times when
     settings are extended.
-
-    If dev_env is set to true logging will not be done via local rsyslogd,
-    instead, tracking and application logs will be dropped in log_dir.
-
-    "tracking_filename" and "edx_filename" are ignored unless dev_env
-    is set to true since otherwise logging is handled by rsyslogd.
-
     """
 
     # Revert to INFO if an invalid string is passed in
     if local_loglevel not in LOG_LEVELS:
         local_loglevel = 'INFO'
 
-    if console_loglevel is None or console_loglevel not in LOG_LEVELS:
-        console_loglevel = 'DEBUG' if debug else 'INFO'
-
-    if service_variant is None:
-        # default to a blank string so that if SERVICE_VARIANT is not
-        # set we will not log to a sub directory
-        service_variant = ''
-
     hostname = platform.node().split(".")[0]
-    syslog_format = ("[service_variant={service_variant}]"
+    syslog_format = ("[service_variant={service_variant}]"  # noqa: UP032
                      "[%(name)s][env:{logging_env}] %(levelname)s "
-                     "[{hostname}  %(process)d] [%(filename)s:%(lineno)d] "
+                     "[{hostname}  %(process)d] [user %(userid)s] [ip %(remoteip)s] [%(filename)s:%(lineno)d] "
                      "- %(message)s").format(service_variant=service_variant,
                                              logging_env=logging_env,
                                              hostname=hostname)
 
-    handlers = ['console', 'local']
-    if syslog_addr:
-        handlers.append('syslogger-remote')
+    logger_config = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'standard': {
+                'format': '%(asctime)s %(levelname)s %(process)d '
+                          '[%(name)s] [user %(userid)s] [ip %(remoteip)s] %(filename)s:%(lineno)d - %(message)s',
+            },
+            'syslog_format': {'format': syslog_format},
+            'raw': {'format': '%(message)s'},
+        },
+        'filters': {
+            'require_debug_false': {
+                '()': 'django.utils.log.RequireDebugFalse',
+            },
+            'userid_context': {
+                '()': 'edx_django_utils.logging.UserIdFilter',
+            },
+            'remoteip_context': {
+                '()': 'edx_django_utils.logging.RemoteIpFilter',
+            }
+        },
+        'handlers': {
+            'console': {
+                'level': 'INFO',
+                'class': 'logging.StreamHandler',
+                'formatter': 'standard',
+                'filters': ['userid_context', 'remoteip_context'],
+                'stream': sys.stderr,
+            },
+            'mail_admins': {
+                'level': 'ERROR',
+                'filters': ['require_debug_false'],
+                'class': 'django.utils.log.AdminEmailHandler'
+            },
+            'local': {
+                'level': local_loglevel,
+                'class': 'logging.handlers.SysLogHandler',
+                'address': '/dev/log',
+                'formatter': 'syslog_format',
+                'filters': ['userid_context', 'remoteip_context'],
+                'facility': SysLogHandler.LOG_LOCAL0,
+            },
+            'tracking': {
+                'level': 'DEBUG',
+                'class': 'logging.handlers.SysLogHandler',
+                'address': '/dev/log',
+                'facility': SysLogHandler.LOG_LOCAL1,
+                'formatter': 'raw',
+            },
+        },
+        'loggers': {
+            'tracking': {
+                'handlers': ['tracking'],
+                'level': 'DEBUG',
+                'propagate': False,
+            },
+            '': {
+                'handlers': ['console', 'local'],
+                'level': 'INFO',
+                'propagate': False
+            },
+            'django.request': {
+                'handlers': ['mail_admins'],
+                'level': 'ERROR',
+                'propagate': True,
+            },
+            # requests is so loud at INFO (logs every connection) that we
+            # force it to warn by default.
+            'requests.packages.urllib3': {
+                'level': 'WARN'
+            }
+        }
+    }
+
+    return logger_config
+
+
+def log_python_warnings():
+    """
+    Stop ignoring DeprecationWarning, ImportWarning, and PendingDeprecationWarning;
+    log all Python warnings to the main log file.
+
+    Not used in test runs, so pytest can collect the warnings triggered for
+    each test case.
+    """
+    warnings.simplefilter('default')
+    warnings.filterwarnings('ignore', 'Not importing directory ')
+    warnings.filterwarnings('ignore', 'Setting _field_data is deprecated')
+    warnings.filterwarnings('ignore', 'Setting _field_data via the constructor is deprecated')
+    warnings.filterwarnings('ignore', '.*unclosed.*', category=ResourceWarning)
+    # Remove default_app_config warning after updating Django to 4.2
+    warnings.filterwarnings(
+        'ignore',
+        '.*You can remove default_app_config.*',
+        category=PendingDeprecationWarning
+    )
+    warnings.filterwarnings(
+        'ignore',
+        'Instead access HTTPResponse.headers directly.*',
+        category=DeprecationWarning,
+        module='elasticsearch'
+    )
+    warnings.filterwarnings(
+        'ignore',
+        'Using or importing the ABCs from \'collections\' instead of from \'collections.abc\' is deprecated.*',
+        category=DeprecationWarning,
+        module="sass",
+    )
+    warnings.filterwarnings(
+        'ignore', "'etree' is deprecated. Use 'xml.etree.ElementTree' instead.",
+        category=DeprecationWarning, module='wiki'
+    )
+    # try:
+    #     # There are far too many of these deprecation warnings in startup to output for every management command;
+    #     # suppress them until we've fixed at least the most common ones as reported by the test suite
+    #     from django.utils.deprecation import RemovedInDjango50Warning, RemovedInDjango51Warning
+    #     warnings.simplefilter('ignore', RemovedInDjango50Warning)
+    #     warnings.simplefilter('ignore', RemovedInDjango51Warning)
+    # except ImportError:
+    #     pass
+    logging.captureWarnings(True)
+
+
+def get_docker_logger_config(log_dir='/var/tmp',
+                             logging_env="no_env",
+                             edx_filename="edx.log",
+                             dev_env=False,
+                             debug=False,
+                             service_variant='lms'):
+    """
+    Return the appropriate logging config dictionary for a docker based setup.
+    You should assign the result of this to the LOGGING var in your settings.
+    """
+
+    hostname = platform.node().split(".")[0]
+    syslog_format = (  # noqa: UP032
+        "[service_variant={service_variant}]"
+        "[%(name)s][env:{logging_env}] %(levelname)s "
+        "[{hostname}  %(process)d] [%(filename)s:%(lineno)d] "
+        "- %(message)s"
+    ).format(
+        service_variant=service_variant,
+        logging_env=logging_env, hostname=hostname
+    )
+
+    handlers = ['console']
 
     logger_config = {
         'version': 1,
@@ -73,94 +197,63 @@ def get_logger_config(log_dir,
         'filters': {
             'require_debug_false': {
                 '()': 'django.utils.log.RequireDebugFalse',
+            },
+            'userid_context': {
+                '()': 'edx_django_utils.logging.UserIdFilter',
+            },
+            'remoteip_context': {
+                '()': 'edx_django_utils.logging.RemoteIpFilter',
             }
         },
         'handlers': {
             'console': {
-                'level': console_loglevel,
+                'level': 'DEBUG' if debug else 'INFO',
                 'class': 'logging.StreamHandler',
                 'formatter': 'standard',
+                'filters': ['userid_context', 'remoteip_context'],
                 'stream': sys.stderr,
             },
-            'mail_admins': {
-                'level': 'ERROR',
-                'filters': ['require_debug_false'],
-                'class': 'django.utils.log.AdminEmailHandler'
-            },
-            'newrelic': {
-                'level': 'ERROR',
-                'class': 'lms.lib.newrelic_logging.NewRelicHandler',
+            'tracking': {
+                'level': 'DEBUG',
+                'class': 'logging.handlers.RotatingFileHandler',
+                'filename': '/var/tmp/tracking_logs.log',
+                'backupCount': 5,
                 'formatter': 'raw',
+                'maxBytes': 10485760
             }
         },
         'loggers': {
+            'django': {
+                'handlers': handlers,
+                'propagate': True,
+                'level': 'INFO'
+            },
             'tracking': {
                 'handlers': ['tracking'],
                 'level': 'DEBUG',
                 'propagate': False,
             },
-            '': {
+            'requests': {
                 'handlers': handlers,
-                'level': 'DEBUG',
-                'propagate': False
+                'propagate': True,
+                'level': 'WARNING'
+            },
+            'factory': {
+                'handlers': handlers,
+                'propagate': True,
+                'level': 'WARNING'
             },
             'django.request': {
-                'handlers': ['mail_admins'],
-                'level': 'ERROR',
+                'handlers': handlers,
                 'propagate': True,
+                'level': 'ERROR'
+            },
+            '': {
+                'handlers': handlers,
+                'level': 'INFO',
+                'propagate': False
             },
         }
     }
-    if syslog_addr:
-        logger_config['handlers'].update({
-            'syslogger-remote': {
-                'level': 'INFO',
-                'class': 'logging.handlers.SysLogHandler',
-                'address': syslog_addr,
-                'formatter': 'syslog_format',
-            },
-        })
-
-    if dev_env:
-        tracking_file_loc = os.path.join(log_dir, tracking_filename)
-        edx_file_loc = os.path.join(log_dir, edx_filename)
-        logger_config['handlers'].update({
-            'local': {
-                'class': 'logging.handlers.RotatingFileHandler',
-                'level': local_loglevel,
-                'formatter': 'standard',
-                'filename': edx_file_loc,
-                'maxBytes': 1024 * 1024 * 2,
-                'backupCount': 5,
-            },
-            'tracking': {
-                'level': 'DEBUG',
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': tracking_file_loc,
-                'formatter': 'raw',
-                'maxBytes': 1024 * 1024 * 2,
-                'backupCount': 5,
-            },
-        })
-    else:
-        # for production environments we will only
-        # log INFO and up
-        logger_config['loggers']['']['level'] = 'INFO'
-        logger_config['handlers'].update({
-            'local': {
-                'level': local_loglevel,
-                'class': 'logging.handlers.SysLogHandler',
-                'address': '/dev/log',
-                'formatter': 'syslog_format',
-                'facility': SysLogHandler.LOG_LOCAL0,
-            },
-            'tracking': {
-                'level': 'DEBUG',
-                'class': 'logging.handlers.SysLogHandler',
-                'address': '/dev/log',
-                'facility': SysLogHandler.LOG_LOCAL1,
-                'formatter': 'raw',
-            },
-        })
 
     return logger_config

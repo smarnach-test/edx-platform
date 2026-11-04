@@ -1,44 +1,53 @@
-from __future__ import absolute_import
+# pylint: disable=missing-module-docstring
 
 import logging
 from functools import partial
 
 from django.conf import settings
-from django.core.urlresolvers import reverse
-from django.http import Http404, HttpResponseBadRequest
 from django.contrib.auth.decorators import login_required
-from edxmako.shortcuts import render_to_string
-
-from openedx.core.lib.xblock_utils import replace_static_urls, wrap_xblock, wrap_fragment, request_token
-from xmodule.x_module import PREVIEW_VIEWS, STUDENT_VIEW, AUTHOR_VIEW
-from xmodule.contentstore.django import contentstore
-from xmodule.error_module import ErrorDescriptor
-from xmodule.exceptions import NotFoundError, ProcessingError
-from xmodule.library_tools import LibraryToolsService
-from xmodule.services import SettingsService
-from xmodule.modulestore.django import modulestore, ModuleI18nService
-from xmodule.mixin import wrap_with_license
+from django.core.cache import cache
+from django.http import Http404, HttpResponseBadRequest
+from django.urls import reverse
+from django.utils.translation import gettext as _
+from django.views.decorators.clickjacking import xframe_options_exempt
 from opaque_keys.edx.keys import UsageKey
-from xmodule.x_module import ModuleSystem
+from opaque_keys.edx.locator import LibraryContainerLocator
+from rest_framework.request import Request
+from web_fragments.fragment import Fragment
+from xblock.django.request import django_to_webob_request, webob_to_django_response
+from xblock.exceptions import NoSuchHandlerError, NotFoundError, ProcessingError
 from xblock.runtime import KvsFieldData
-from xblock.django.request import webob_to_django_response, django_to_webob_request
-from xblock.exceptions import NoSuchHandlerError
-from xblock.fragment import Fragment
-from student.auth import has_studio_read_access, has_studio_write_access
-from xblock_django.user_service import DjangoXBlockUserService
 
-from lms.djangoapps.lms_xblock.field_data import LmsFieldData
-from cms.lib.xblock.field_data import CmsFieldData
-from cms.lib.xblock.runtime import local_resource_url
-
-from util.sandboxing import can_execute_unsafe_code, get_python_lib_zip
-
-import static_replace
-from .session_kv_store import SessionKeyValueStore
-from .helpers import render_from_lms
-
-from contentstore.views.access import get_user_role
+from cms.djangoapps.contentstore.toggles import individualize_anonymous_user_id
 from cms.djangoapps.xblock_config.models import StudioConfig
+from cms.lib.xblock.field_data import CmsFieldData
+from cms.lib.xblock.upstream_sync import UpstreamLink
+from common.djangoapps.edxmako.services import MakoService
+from common.djangoapps.edxmako.shortcuts import render_to_string
+from common.djangoapps.static_replace.services import ReplaceURLService
+from common.djangoapps.static_replace.wrapper import replace_urls_wrapper
+from common.djangoapps.student.models import anonymous_id_for_user
+from common.djangoapps.xblock_django.user_service import DjangoXBlockUserService
+from lms.djangoapps.lms_xblock.field_data import LmsFieldData
+from openedx.core.djangoapps.content.services import StudioPermissionsService
+from openedx.core.djangoapps.discussions.services import DiscussionConfigService
+from openedx.core.djangoapps.video_config.services import VideoConfigService
+from openedx.core.lib.cache_utils import CacheService
+from openedx.core.lib.license import wrap_with_license
+from openedx.core.lib.xblock_utils import request_token, wrap_fragment, wrap_xblock, wrap_xblock_aside
+from xmodule.contentstore.django import contentstore
+from xmodule.exceptions import NotFoundError as XModuleNotFoundError
+from xmodule.modulestore.django import XBlockI18nService, modulestore
+from xmodule.partitions.partitions_service import PartitionService
+from xmodule.services import SettingsService, TeamsConfigurationService, XQueueService
+from xmodule.studio_editable import has_author_view
+from xmodule.util.builtin_assets import add_webpack_js_to_fragment
+from xmodule.util.sandboxing import SandboxService
+from xmodule.x_module import AUTHOR_VIEW, PREVIEW_VIEWS, STUDENT_VIEW, XModuleMixin
+
+from ..utils import get_visibility_partition_info
+from .access import get_user_role
+from .session_kv_store import SessionKeyValueStore
 
 __all__ = ['preview_handler']
 
@@ -46,6 +55,7 @@ log = logging.getLogger(__name__)
 
 
 @login_required
+@xframe_options_exempt
 def preview_handler(request, usage_key_string, handler, suffix=''):
     """
     Dispatch an AJAX action to an xblock
@@ -56,8 +66,9 @@ def preview_handler(request, usage_key_string, handler, suffix=''):
     """
     usage_key = UsageKey.from_string(usage_key_string)
 
-    descriptor = modulestore().get_item(usage_key)
-    instance = _load_preview_module(request, descriptor)
+    block = modulestore().get_item(usage_key)
+    instance = _load_preview_block(request, block)
+
     # Let the module handle the AJAX
     req = django_to_webob_request(request)
     try:
@@ -65,11 +76,11 @@ def preview_handler(request, usage_key_string, handler, suffix=''):
 
     except NoSuchHandlerError:
         log.exception("XBlock %s attempted to access missing handler %r", instance, handler)
-        raise Http404
+        raise Http404  # pylint: disable=raise-missing-from  # noqa: B904
 
-    except NotFoundError:
+    except (XModuleNotFoundError, NotFoundError):
         log.exception("Module indicating to user that request doesn't exist")
-        raise Http404
+        raise Http404  # pylint: disable=raise-missing-from  # noqa: B904
 
     except ProcessingError:
         log.warning("Module raised an error while processing AJAX request",
@@ -83,162 +94,209 @@ def preview_handler(request, usage_key_string, handler, suffix=''):
     return webob_to_django_response(resp)
 
 
-class PreviewModuleSystem(ModuleSystem):  # pylint: disable=abstract-method
+def handler_url(block, handler_name, suffix='', query='', thirdparty=False):  # pylint: disable=unused-argument
     """
-    An XModule ModuleSystem for use in Studio previews
+    Handler URL function for Preview
     """
-    # xmodules can check for this attribute during rendering to determine if
-    # they are being rendered for preview (i.e. in Studio)
-    is_author_mode = True
-
-    def handler_url(self, block, handler_name, suffix='', query='', thirdparty=False):
-        return reverse('preview_handler', kwargs={
-            'usage_key_string': unicode(block.scope_ids.usage_id),
-            'handler': handler_name,
-            'suffix': suffix,
-        }) + '?' + query
-
-    def local_resource_url(self, block, uri):
-        return local_resource_url(block, uri)
-
-    def applicable_aside_types(self, block):
-        """
-        Remove acid_aside and honor the config record
-        """
-        if not StudioConfig.asides_enabled(block.scope_ids.block_type):
-            return []
-        return [
-            aside_type
-            for aside_type in super(PreviewModuleSystem, self).applicable_aside_types(block)
-            if aside_type != 'acid_aside'
-        ]
-
-    def render_child_placeholder(self, block, view_name, context):
-        """
-        Renders a placeholder XBlock.
-        """
-        return self.wrap_xblock(block, view_name, Fragment(), context)
+    return reverse('preview_handler', kwargs={
+        'usage_key_string': str(block.scope_ids.usage_id),
+        'handler': handler_name,
+        'suffix': suffix,
+    }) + '?' + query
 
 
-class StudioPermissionsService(object):
+def preview_applicable_aside_types(block, applicable_aside_types=None):
     """
-    Service that can provide information about a user's permissions.
-
-    Deprecated. To be replaced by a more general authorization service.
-
-    Only used by LibraryContentDescriptor (and library_tools.py).
+    Remove acid_aside and honor the config record
     """
+    if not StudioConfig.asides_enabled(block.scope_ids.block_type):
+        return []
 
-    def __init__(self, request):
-        super(StudioPermissionsService, self).__init__()
-        self._request = request
-
-    def can_read(self, course_key):
-        """ Does the user have read access to the given course/library? """
-        return has_studio_read_access(self._request.user, course_key)
-
-    def can_write(self, course_key):
-        """ Does the user have read access to the given course/library? """
-        return has_studio_write_access(self._request.user, course_key)
+    # TODO: aside_type != 'acid_aside' check should be removed once AcidBlock is only installed during tests
+    # (see https://openedx.atlassian.net/browse/TE-811)
+    return [
+        aside_type
+        for aside_type in applicable_aside_types(block)
+        if aside_type != 'acid_aside'
+    ]
 
 
-def _preview_module_system(request, descriptor, field_data):
+def render_child_placeholder(block, view_name, context, wrap_block=None):
     """
-    Returns a ModuleSystem for the specified descriptor that is specialized for
-    rendering module previews.
+    Renders a placeholder XBlock.
+    """
+    return wrap_block(block, view_name, Fragment(), context)
+
+
+def preview_layout_asides(block, context, frag, view_name, aside_frag_fns, wrap_aside=None):
+    """
+    Custom layout of asides for preview
+    """
+    position_for_asides = '<!-- footer for xblock_aside -->'
+    result = Fragment()
+    result.add_fragment_resources(frag)
+
+    for aside, aside_fn in aside_frag_fns:
+        aside_frag = aside_fn(block, context)
+        if aside_frag.content != '':
+            aside_frag_wrapped = wrap_aside(block, aside, view_name, aside_frag, context)
+            aside.save()
+            result.add_fragment_resources(aside_frag_wrapped)
+            replacement = position_for_asides + aside_frag_wrapped.content
+            frag.content = frag.content.replace(position_for_asides, replacement)
+
+    result.add_content(frag.content)
+    return result
+
+
+def _prepare_runtime_for_preview(request, block):
+    """
+    Sets properties in the runtime of the specified block that is
+    required for rendering block previews.
 
     request: The active django request
-    descriptor: An XModuleDescriptor
+    block: An XBlock
     """
 
-    course_id = descriptor.location.course_key
-    display_name_only = (descriptor.category == 'static_tab')
+    course_id = block.location.course_key
+    display_name_only = (block.category == 'static_tab')
 
     wrappers = [
-        # This wrapper wraps the module in the template specified above
+        # This wrapper wraps the block in the template specified above
         partial(
             wrap_xblock,
             'PreviewRuntime',
             display_name_only=display_name_only,
-            usage_id_serializer=unicode,
+            usage_id_serializer=str,
             request_token=request_token(request)
         ),
 
         # This wrapper replaces urls in the output that start with /static
         # with the correct course-specific url for the static content
-        partial(replace_static_urls, None, course_id=course_id),
+        partial(replace_urls_wrapper, replace_url_service=ReplaceURLService, static_replace_only=True),
         _studio_wrap_xblock,
     ]
 
-    if settings.FEATURES.get("LICENSING", False):
+    wrappers_asides = [
+        partial(
+            wrap_xblock_aside,
+            'PreviewRuntime',
+            usage_id_serializer=str,
+            request_token=request_token(request)
+        )
+    ]
+
+    mako_service = MakoService(namespace_prefix='lms.')
+    if settings.LICENSING:
         # stick the license wrapper in front
-        wrappers.insert(0, wrap_with_license)
+        wrappers.insert(0, partial(wrap_with_license, mako_service=mako_service))
 
-    descriptor.runtime._services['studio_user_permissions'] = StudioPermissionsService(request)  # pylint: disable=protected-access
+    anonymous_user_id = deprecated_anonymous_user_id = 'student'
+    if individualize_anonymous_user_id(course_id):
+        anonymous_user_id = anonymous_id_for_user(request.user, course_id)
+        # See the docstring of `DjangoXBlockUserService`.
+        deprecated_anonymous_user_id = anonymous_id_for_user(request.user, None)
 
-    return PreviewModuleSystem(
-        static_url=settings.STATIC_URL,
-        # TODO (cpennington): Do we want to track how instructors are using the preview problems?
-        track_function=lambda event_type, event: None,
-        filestore=descriptor.runtime.resources_fs,
-        get_module=partial(_load_preview_module, request),
-        render_template=render_from_lms,
-        debug=True,
-        replace_urls=partial(static_replace.replace_static_urls, data_directory=None, course_id=course_id),
-        user=request.user,
-        can_execute_unsafe_code=(lambda: can_execute_unsafe_code(course_id)),
-        get_python_lib_zip=(lambda: get_python_lib_zip(contentstore, course_id)),
-        mixins=settings.XBLOCK_MIXINS,
-        course_id=course_id,
-        anonymous_student_id='student',
+    # NOTE: As of Ulmo, these services only apply to the preview views. If you want a service to be present in all
+    # Studio ModuleStoreRuntimes, then add it to load_services_for_studio.
+    # HISTORICAL CONTEXT: Until Ulmo, the `block.runtime._services.update(service)` call below would
+    # actually update the services dictionary for all runtimes, as `_services` was aliased between them.
+    # This caused a grading bug, under certain conditions, so it was fixed
+    # in https://github.com/openedx/openedx-platform/pull/37825; now, every runtime gets a fresh,
+    # independent copy of `_services`. That's good, except that some Studio code had become dependent
+    # on the bugged behavior and thus expected the "preview" services below to be present in all Studio runtimes.
+    # We fixed the known instance of that bugged assumption here:
+    # https://github.com/openedx/openedx-platform/pull/37900.
+    # This comment is left here as a note for future devs investigating similar bugs.
+    services = {
+        "studio_user_permissions": StudioPermissionsService(request.user),
+        "i18n": XBlockI18nService,
+        'mako': mako_service,
+        "settings": SettingsService(),
+        "user": DjangoXBlockUserService(
+            request.user,
+            user_role=get_user_role(request.user, course_id),
+            anonymous_user_id=anonymous_user_id,
+            deprecated_anonymous_user_id=deprecated_anonymous_user_id,
+        ),
+        "partitions": StudioPartitionService(course_id=course_id),
+        "teams_configuration": TeamsConfigurationService(),
+        "sandbox": SandboxService(contentstore=contentstore, course_id=course_id),
+        "cache": CacheService(cache),
+        'replace_urls': ReplaceURLService,
+        'video_config': VideoConfigService(),
+        'discussion_config_service': DiscussionConfigService(),
+        'xqueue': XQueueService(block),
+    }
 
-        # Set up functions to modify the fragment produced by student_view
-        wrappers=wrappers,
-        error_descriptor_class=ErrorDescriptor,
-        get_user_role=lambda: get_user_role(request.user, course_id),
-        # Get the raw DescriptorSystem, not the CombinedSystem
-        descriptor_runtime=descriptor._runtime,  # pylint: disable=protected-access
-        services={
-            "i18n": ModuleI18nService(),
-            "field-data": field_data,
-            "library_tools": LibraryToolsService(modulestore()),
-            "settings": SettingsService(),
-            "user": DjangoXBlockUserService(request.user),
-        },
+    block.runtime.get_block_for_descriptor = partial(_load_preview_block, request)
+    block.runtime.mixins = settings.XBLOCK_MIXINS
+
+    # Set up functions to modify the fragment produced by student_view
+    block.runtime.wrappers = wrappers
+    block.runtime.wrappers_asides = wrappers_asides
+    block.runtime._services.update(services)  # pylint: disable=protected-access
+
+    # xmodules can check for this attribute during rendering to determine if
+    # they are being rendered for preview (i.e. in Studio)
+    block.runtime.is_author_mode = True
+    block.runtime.handler_url_override = handler_url
+    block.runtime.applicable_aside_types_override = preview_applicable_aside_types
+    block.runtime.render_child_placeholder = partial(
+        render_child_placeholder,
+        wrap_block=block.runtime.wrap_xblock
+    )
+    block.runtime.layout_asides_override = partial(
+        preview_layout_asides,
+        wrap_aside=block.runtime.wrap_aside
     )
 
 
-def _load_preview_module(request, descriptor):
+class StudioPartitionService(PartitionService):
     """
-    Return a preview XModule instantiated from the supplied descriptor. Will use mutable fields
-    if XModule supports an author_view. Otherwise, will use immutable fields and student_view.
+    A runtime mixin to allow the display and editing of component visibility based on user partitions.
+    """
+    def get_user_group_id_for_partition(self, user, user_partition_id):
+        """
+        Override this method to return None, as the split_test_block calls this
+        to determine which group a user should see, but is robust to getting a return
+        value of None meaning that all groups should be shown.
+        """
+        return None
+
+
+def _load_preview_block(request: Request, block: XModuleMixin):
+    """
+    Return a preview XBlock instantiated from the supplied block. Will use mutable fields
+    if XBlock supports an author_view. Otherwise, will use immutable fields and student_view.
 
     request: The active django request
-    descriptor: An XModuleDescriptor
+    block: An XModuleMixin
     """
     student_data = KvsFieldData(SessionKeyValueStore(request))
-    if _has_author_view(descriptor):
+    if has_author_view(block):
         wrapper = partial(CmsFieldData, student_data=student_data)
     else:
         wrapper = partial(LmsFieldData, student_data=student_data)
 
-    # wrap the _field_data upfront to pass to _preview_module_system
-    wrapped_field_data = wrapper(descriptor._field_data)  # pylint: disable=protected-access
-    preview_runtime = _preview_module_system(request, descriptor, wrapped_field_data)
+    _prepare_runtime_for_preview(request, block)
 
-    descriptor.bind_for_student(
-        preview_runtime,
+    block.bind_for_student(
         request.user.id,
         [wrapper]
     )
-    return descriptor
+    return block
 
 
 def _is_xblock_reorderable(xblock, context):
     """
-    Returns true if the specified xblock is in the set of reorderable xblocks.
+    Returns true if the specified xblock is in the set of reorderable xblocks
+    otherwise returns false.
     """
-    return xblock.location in context['reorderable_items']
+    try:
+        return xblock.location in context['reorderable_items']
+    except KeyError:
+        return False
 
 
 # pylint: disable=unused-argument
@@ -246,11 +304,53 @@ def _studio_wrap_xblock(xblock, view, frag, context, display_name_only=False):
     """
     Wraps the results of rendering an XBlock view in a div which adds a header and Studio action buttons.
     """
+    # Allow some imported components to be edited by authors in course.
+    editable_library_components = ["html", "problem"]
     # Only add the Studio wrapper when on the container page. The "Pages" page will remain as is for now.
     if not context.get('is_pages_view', None) and view in PREVIEW_VIEWS:
         root_xblock = context.get('root_xblock')
         is_root = root_xblock and xblock.location == root_xblock.location
         is_reorderable = _is_xblock_reorderable(xblock, context)
+        selected_groups_label = get_visibility_partition_info(xblock)['selected_groups_label']
+        if selected_groups_label:
+            selected_groups_label = _('Access restricted to: {list_of_groups}').format(list_of_groups=selected_groups_label)  # pylint: disable=line-too-long
+        course = modulestore().get_course(xblock.location.course_key)
+
+        can_edit = context.get('can_edit', True)
+        can_add = context.get('can_add', True)
+        can_move = context.get('can_move', True)
+        # Set by block.py as an already-final boolean. Default True so callers
+        # that don't set it preserve pre-RBAC behaviour (matching can_edit).
+        can_manage_tags = context.get('can_manage_tags', True)
+        root_upstream_link = UpstreamLink.try_get_for_block(root_xblock, log_error=False)
+        upstream_link = UpstreamLink.try_get_for_block(xblock, log_error=False)
+        if (
+            root_upstream_link.error_message is None
+            and isinstance(root_upstream_link.upstream_key, LibraryContainerLocator)
+        ):
+            # If this unit is linked to a library unit, for now we make it completely read-only
+            # because when it is synced, all local changes like added components will be lost.
+            # (This is only on the frontend; the backend doesn't enforce it)
+            can_edit = False
+            can_add = False
+            can_move = False
+
+        if upstream_link.error_message is None and upstream_link.upstream_ref:
+            can_edit = xblock.category in editable_library_components
+
+        # All content-modifying actions require edit access. A user may reach
+        # the actions menu with only tag-management rights (can_manage_tags),
+        # so gate the edit-type flags on can_edit to keep Move/Add/Delete and
+        # (via can_edit_visibility below) Manage Access out of their reach.
+        can_add = can_add and can_edit
+        can_move = can_move and can_edit
+
+        # Is this a course or a library?
+        is_course = xblock.context_key.is_course
+        tags_count_map = context.get('tags_count_map')
+        tags_count = 0
+        if tags_count_map:
+            tags_count = tags_count_map.get(str(xblock.location), 0)
         template_context = {
             'xblock_context': context,
             'xblock': xblock,
@@ -258,36 +358,48 @@ def _studio_wrap_xblock(xblock, view, frag, context, display_name_only=False):
             'content': frag.content,
             'is_root': is_root,
             'is_reorderable': is_reorderable,
-            'can_edit': context.get('can_edit', True),
-            'can_edit_visibility': context.get('can_edit_visibility', True),
-            'can_add': context.get('can_add', True),
+            'can_edit': can_edit,
+            'can_edit_visibility': can_edit and context.get('can_edit_visibility', is_course),
+            'course_authoring_url': settings.COURSE_AUTHORING_MICROFRONTEND_URL,
+            'is_loading': context.get('is_loading', False),
+            'is_selected': context.get('is_selected', False),
+            'selectable': context.get('selectable', False),
+            'selected_groups_label': selected_groups_label,
+            'can_add': can_add,
+            # Generally speaking, "if you can add, you can delete". One exception is itembank (Problem Bank)
+            # which has its own separate "add" workflow but uses the normal delete workflow for its child blocks.
+            'can_delete': can_add or (root_xblock and root_xblock.scope_ids.block_type == "itembank" and can_edit),
+            'can_move': can_move,
+            'language': getattr(course, 'language', None),
+            'is_course': is_course,
+            'tags_count': tags_count,
+            # Set by block.py as an already-final boolean. Defaults True so
+            # callers that don't set it preserve pre-RBAC behaviour (the "Edit
+            # Title" affordance was historically always available, including for
+            # imported components).
+            'can_edit_title': context.get('can_edit_title', True),
+            'can_manage_tags': can_manage_tags,
         }
+
+        add_webpack_js_to_fragment(frag, "js/factories/xblock_validation")
+
         html = render_to_string('studio_xblock_wrapper.html', template_context)
         frag = wrap_fragment(frag, html)
     return frag
 
 
-def get_preview_fragment(request, descriptor, context):
+def get_preview_fragment(request, block, context):
     """
     Returns the HTML returned by the XModule's student_view or author_view (if available),
-    specified by the descriptor and idx.
+    specified by the block and idx.
     """
-    module = _load_preview_module(request, descriptor)
+    block = _load_preview_block(request, block)
 
-    preview_view = AUTHOR_VIEW if _has_author_view(module) else STUDENT_VIEW
+    preview_view = AUTHOR_VIEW if has_author_view(block) else STUDENT_VIEW
 
     try:
-        fragment = module.render(preview_view, context)
+        fragment = block.render(preview_view, context)
     except Exception as exc:                          # pylint: disable=broad-except
-        log.warning("Unable to render %s for %r", preview_view, module, exc_info=True)
+        log.warning("Unable to render %s for %r", preview_view, block, exc_info=True)
         fragment = Fragment(render_to_string('html_error.html', {'message': str(exc)}))
     return fragment
-
-
-def _has_author_view(descriptor):
-    """
-    Returns True if the xmodule linked to the descriptor supports "author_view".
-
-    If False, "student_view" and LmsFieldData should be used.
-    """
-    return getattr(descriptor, 'has_author_view', False)

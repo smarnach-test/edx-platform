@@ -1,24 +1,27 @@
+# pylint: disable=missing-module-docstring
 import json
 import logging
 import sys
 from functools import wraps
 
-from django.conf import settings
-from django.core.validators import ValidationError, validate_email
-from django.views.decorators.csrf import requires_csrf_token
-from django.views.defaults import server_error
-from django.http import (Http404, HttpResponse, HttpResponseNotAllowed,
-                         HttpResponseServerError)
-import dogstats_wrapper as dog_stats_api
-from edxmako.shortcuts import render_to_response
-import zendesk
-from microsite_configuration import microsite
-
 import calc
-import track.views
-
+import crum
+from django.conf import settings
+from django.contrib.auth.decorators import login_required
+from django.http import Http404, HttpResponse, HttpResponseForbidden, HttpResponseServerError
+from django.shortcuts import redirect
+from django.views.decorators.csrf import ensure_csrf_cookie, requires_csrf_token
+from django.views.defaults import server_error
 from opaque_keys import InvalidKeyError
-from opaque_keys.edx.keys import CourseKey
+from opaque_keys.edx.keys import CourseKey, UsageKey
+
+from common.djangoapps.edxmako.shortcuts import render_to_response
+from common.djangoapps.student.roles import GlobalStaff
+from common.djangoapps.track import views as track_views
+from lms.djangoapps.courseware.access import has_access
+from lms.djangoapps.courseware.masquerade import setup_masquerade
+from openedx.core.djangoapps.schedules.utils import reset_self_paced_schedule
+from openedx.features.course_experience.utils import dates_banner_should_display
 
 log = logging.getLogger(__name__)
 
@@ -35,12 +38,62 @@ def ensure_valid_course_key(view_func):
             try:
                 CourseKey.from_string(course_key)
             except InvalidKeyError:
-                raise Http404
+                raise Http404  # pylint: disable=raise-missing-from  # noqa: B904
 
         response = view_func(request, *args, **kwargs)
         return response
 
     return inner
+
+
+def ensure_valid_usage_key(view_func):
+    """
+    This decorator should only be used with views which have argument usage_key_string.
+    If usage_key_string is not valid raise 404.
+    """
+    @wraps(view_func)
+    def inner(request, *args, **kwargs):
+        usage_key = kwargs.get('usage_key_string')
+        if usage_key is not None:
+            try:
+                UsageKey.from_string(usage_key)
+            except InvalidKeyError:
+                raise Http404  # pylint: disable=raise-missing-from  # noqa: B904
+
+        response = view_func(request, *args, **kwargs)
+        return response
+
+    return inner
+
+
+def require_global_staff(func):
+    """View decorator that requires that the user have global staff permissions. """
+    @wraps(func)
+    def wrapped(request, *args, **kwargs):
+        if GlobalStaff().has_user(request.user):
+            return func(request, *args, **kwargs)
+        else:
+            return HttpResponseForbidden(
+                "Must be {platform_name} staff to perform this action.".format(  # noqa: UP032
+                    platform_name=settings.PLATFORM_NAME
+                )
+            )
+    return login_required(wrapped)
+
+
+def fix_crum_request(func):
+    """
+    A decorator that ensures that the 'crum' package (a middleware that stores and fetches the current request in
+    thread-local storage) can correctly fetch the current request. Under certain conditions, the current request cannot
+    be fetched by crum (e.g.: when HTTP errors are raised in our views via 'raise Http404', et. al.). This decorator
+    manually sets the current request for crum if it cannot be fetched.
+    """
+    @wraps(func)
+    def wrapper(request, *args, **kwargs):
+        if not crum.get_current_request():
+            crum.set_current_request(request=request)
+        return func(request, *args, **kwargs)
+    return wrapper
 
 
 @requires_csrf_token
@@ -49,11 +102,56 @@ def jsonable_server_error(request, template_name='500.html'):
     500 error handler that serves JSON on an AJAX request, and proxies
     to the Django default `server_error` view otherwise.
     """
-    if request.is_ajax():
+    if request.headers.get('x-requested-with') == 'XMLHttpRequest':
         msg = {"error": "The edX servers encountered an error"}
         return HttpResponseServerError(json.dumps(msg))
     else:
         return server_error(request, template_name=template_name)
+
+
+def handle_500(template_path, context=None, test_func=None):
+    """
+    Decorator for view specific 500 error handling.
+    Custom handling will be skipped only if test_func is passed and it returns False
+
+    Usage:
+
+        @handle_500(
+            template_path='certificates/server-error.html',
+            context={'error-info': 'Internal Server Error'},
+            test_func=lambda request: request.GET.get('preview', None)
+        )
+        def my_view(request):
+            # Any unhandled exception in this view would be handled by the handle_500 decorator
+            # ...
+
+    """
+    def decorator(func):
+        """
+        Decorator to render custom html template in case of uncaught exception in wrapped function
+        """
+        @wraps(func)
+        def inner(request, *args, **kwargs):
+            """
+            Execute the function in try..except block and return custom server-error page in case of unhandled exception
+            """
+            try:
+                return func(request, *args, **kwargs)
+            except Exception:  # pylint: disable=broad-except
+                if settings.DEBUG:  # pylint: disable=no-else-raise
+                    # In debug mode let django process the 500 errors and display debug info for the developer
+                    raise
+                elif test_func is None or test_func(request):
+                    # Display custom 500 page if either
+                    #   1. test_func is None (meaning nothing to test)
+                    #   2. or test_func(request) returns True
+                    log.exception("Error in django view.")
+                    return render_to_response(template_path, context)
+                else:
+                    # Do not show custom 500 error when test fails
+                    raise
+        return inner
+    return decorator
 
 
 def calculate(request):
@@ -61,217 +159,66 @@ def calculate(request):
     equation = request.GET['equation']
     try:
         result = calc.evaluator({}, {}, equation)
-    except:
-        event = {'error': map(str, sys.exc_info()),
+    except:  # pylint: disable=bare-except
+        event = {'error': list(map(str, sys.exc_info())),
                  'equation': equation}
-        track.views.server_track(request, 'error:calc', event, page='calc')
-        return HttpResponse(json.dumps({'result': 'Invalid syntax'}))
-    return HttpResponse(json.dumps({'result': str(result)}))
+        track_views.server_track(request, 'error:calc', event, page='calc')
+        return HttpResponse(json.dumps({'result': 'Invalid syntax'}))  # pylint: disable=http-response-with-json-dumps
+    return HttpResponse(json.dumps({'result': str(result)}))  # pylint: disable=http-response-with-json-dumps
 
 
-class _ZendeskApi(object):
-    def __init__(self):
-        """
-        Instantiate the Zendesk API.
-
-        All of `ZENDESK_URL`, `ZENDESK_USER`, and `ZENDESK_API_KEY` must be set
-        in `django.conf.settings`.
-        """
-        self._zendesk_instance = zendesk.Zendesk(
-            settings.ZENDESK_URL,
-            settings.ZENDESK_USER,
-            settings.ZENDESK_API_KEY,
-            use_api_token=True,
-            api_version=2,
-            # As of 2012-05-08, Zendesk is using a CA that is not
-            # installed on our servers
-            client_args={"disable_ssl_certificate_validation": True}
-        )
-
-    def create_ticket(self, ticket):
-        """
-        Create the given `ticket` in Zendesk.
-
-        The ticket should have the format specified by the zendesk package.
-        """
-        ticket_url = self._zendesk_instance.create_ticket(data=ticket)
-        return zendesk.get_id_from_url(ticket_url)
-
-    def update_ticket(self, ticket_id, update):
-        """
-        Update the Zendesk ticket with id `ticket_id` using the given `update`.
-
-        The update should have the format specified by the zendesk package.
-        """
-        self._zendesk_instance.update_ticket(ticket_id=ticket_id, data=update)
-
-
-def _record_feedback_in_zendesk(realname, email, subject, details, tags, additional_info):
+def add_p3p_header(view_func):
     """
-    Create a new user-requested Zendesk ticket.
-
-    Once created, the ticket will be updated with a private comment containing
-    additional information from the browser and server, such as HTTP headers
-    and user state. Returns a boolean value indicating whether ticket creation
-    was successful, regardless of whether the private comment update succeeded.
+    This decorator should only be used with views which may be displayed through the iframe.
+    It adds additional headers to response and therefore gives IE browsers an ability to save cookies inside the iframe
+    Details:
+    http://blogs.msdn.com/b/ieinternals/archive/2013/09/17/simple-introduction-to-p3p-cookie-blocking-frame.aspx
+    http://stackoverflow.com/questions/8048306/what-is-the-most-broad-p3p-header-that-will-work-with-ie
     """
-    zendesk_api = _ZendeskApi()
+    @wraps(view_func)
+    def inner(request, *args, **kwargs):
+        """
+        Helper function
+        """
+        response = view_func(request, *args, **kwargs)
+        response['P3P'] = settings.P3P_HEADER
+        return response
+    return inner
 
-    additional_info_string = (
-        "Additional information:\n\n" +
-        "\n".join("%s: %s" % (key, value) for (key, value) in additional_info.items() if value is not None)
+
+@ensure_csrf_cookie
+def reset_course_deadlines(request):
+    """
+    Set the start_date of a schedule to today, which in turn will adjust due dates for
+    sequentials belonging to a self paced course
+
+    IMPORTANT NOTE: If updates are happening to the logic here, ALSO UPDATE the `reset_course_deadlines`
+    function in openedx/features/course_experience/api/v1/views.py as well.
+    """
+    course_key = CourseKey.from_string(request.POST.get('course_id'))
+    _course_masquerade, user = setup_masquerade(
+        request,
+        course_key,
+        has_access(request.user, 'staff', course_key)
     )
 
-    # Tag all issues with LMS to distinguish channel in Zendesk; requested by student support team
-    zendesk_tags = list(tags.values()) + ["LMS"]
+    # We ignore the missed_deadlines because this endpoint could be used for
+    # learners who have remaining attempts on a problem and reset their due dates in order to
+    # submit additional attempts. This can apply for 'completed' (submitted) content that would
+    # not be marked as past_due
+    _missed_deadlines, missed_gated_content = dates_banner_should_display(course_key, user)
+    if not missed_gated_content:
+        reset_self_paced_schedule(user, course_key)
 
-    # Per edX support, we would like to be able to route white label feedback items
-    # via tagging
-    white_label_org = microsite.get_value('course_org_filter')
-    if white_label_org:
-        zendesk_tags = zendesk_tags + ["whitelabel_{org}".format(org=white_label_org)]
-
-    new_ticket = {
-        "ticket": {
-            "requester": {"name": realname, "email": email},
-            "subject": subject,
-            "comment": {"body": details},
-            "tags": zendesk_tags
-        }
-    }
-    try:
-        ticket_id = zendesk_api.create_ticket(new_ticket)
-    except zendesk.ZendeskError as err:
-        log.error("Error creating Zendesk ticket: %s", str(err))
-        return False
-
-    # Additional information is provided as a private update so the information
-    # is not visible to the user.
-    ticket_update = {"ticket": {"comment": {"public": False, "body": additional_info_string}}}
-    try:
-        zendesk_api.update_ticket(ticket_id, ticket_update)
-    except zendesk.ZendeskError as err:
-        log.error("Error updating Zendesk ticket: %s", str(err))
-        # The update is not strictly necessary, so do not indicate failure to the user
-        pass
-
-    return True
+    referrer = request.META.get('HTTP_REFERER')
+    return redirect(referrer) if referrer else HttpResponse()
 
 
-DATADOG_FEEDBACK_METRIC = "lms_feedback_submissions"
-
-
-def _record_feedback_in_datadog(tags):
-    datadog_tags = [u"{k}:{v}".format(k=k, v=v) for k, v in tags.items()]
-    dog_stats_api.increment(DATADOG_FEEDBACK_METRIC, tags=datadog_tags)
-
-
-def submit_feedback(request):
+def expose_header(header, response):
     """
-    Create a new user-requested ticket, currently implemented with Zendesk.
-
-    If feedback submission is not enabled, any request will raise `Http404`.
-    If any configuration parameter (`ZENDESK_URL`, `ZENDESK_USER`, or
-    `ZENDESK_API_KEY`) is missing, any request will raise an `Exception`.
-    The request must be a POST request specifying `subject` and `details`.
-    If the user is not authenticated, the request must also specify `name` and
-    `email`. If the user is authenticated, the `name` and `email` will be
-    populated from the user's information. If any required parameter is
-    missing, a 400 error will be returned indicating which field is missing and
-    providing an error message. If Zendesk ticket creation fails, 500 error
-    will be returned with no body; if ticket creation succeeds, an empty
-    successful response (200) will be returned.
+    Add a header name to Access-Control-Expose-Headers to allow client code to access that header's value
     """
-    if not settings.FEATURES.get('ENABLE_FEEDBACK_SUBMISSION', False):
-        raise Http404()
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-    if (
-        not settings.ZENDESK_URL or
-        not settings.ZENDESK_USER or
-        not settings.ZENDESK_API_KEY
-    ):
-        raise Exception("Zendesk enabled but not configured")
-
-    def build_error_response(status_code, field, err_msg):
-        return HttpResponse(json.dumps({"field": field, "error": err_msg}), status=status_code)
-
-    additional_info = {}
-
-    required_fields = ["subject", "details"]
-    if not request.user.is_authenticated():
-        required_fields += ["name", "email"]
-    required_field_errs = {
-        "subject": "Please provide a subject.",
-        "details": "Please provide details.",
-        "name": "Please provide your name.",
-        "email": "Please provide a valid e-mail.",
-    }
-
-    for field in required_fields:
-        if field not in request.POST or not request.POST[field]:
-            return build_error_response(400, field, required_field_errs[field])
-
-    subject = request.POST["subject"]
-    details = request.POST["details"]
-    tags = dict(
-        [(tag, request.POST[tag]) for tag in ["issue_type", "course_id"] if tag in request.POST]
-    )
-
-    if request.user.is_authenticated():
-        realname = request.user.profile.name
-        email = request.user.email
-        additional_info["username"] = request.user.username
-    else:
-        realname = request.POST["name"]
-        email = request.POST["email"]
-        try:
-            validate_email(email)
-        except ValidationError:
-            return build_error_response(400, "email", required_field_errs["email"])
-
-    for header, pretty in [
-        ("HTTP_REFERER", "Page"),
-        ("HTTP_USER_AGENT", "Browser"),
-        ("REMOTE_ADDR", "Client IP"),
-        ("SERVER_NAME", "Host")
-    ]:
-        additional_info[pretty] = request.META.get(header)
-
-    success = _record_feedback_in_zendesk(realname, email, subject, details, tags, additional_info)
-    _record_feedback_in_datadog(tags)
-
-    return HttpResponse(status=(200 if success else 500))
-
-
-def info(request):
-    ''' Info page (link from main header) '''
-    return render_to_response("info.html", {})
-
-
-# From http://djangosnippets.org/snippets/1042/
-def parse_accept_header(accept):
-    """Parse the Accept header *accept*, returning a list with pairs of
-    (media_type, q_value), ordered by q values.
-    """
-    result = []
-    for media_range in accept.split(","):
-        parts = media_range.split(";")
-        media_type = parts.pop(0)
-        media_params = []
-        q = 1.0
-        for part in parts:
-            (key, value) = part.lstrip().split("=", 1)
-            if key == "q":
-                q = float(value)
-            else:
-                media_params.append((key, value))
-        result.append((media_type, tuple(media_params), q))
-    result.sort(lambda x, y: -cmp(x[2], y[2]))
-    return result
-
-
-def accepts(request, media_type):
-    """Return whether this request has an Accept header that matches type"""
-    accept = parse_accept_header(request.META.get("HTTP_ACCEPT", ""))
-    return media_type in [t for (t, p, q) in accept]
+    exposedHeaders = response.get('Access-Control-Expose-Headers', '')
+    exposedHeaders += f', {header}' if exposedHeaders else header
+    response['Access-Control-Expose-Headers'] = exposedHeaders
+    return response

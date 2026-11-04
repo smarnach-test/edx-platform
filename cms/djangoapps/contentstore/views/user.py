@@ -1,25 +1,23 @@
-from django.core.exceptions import PermissionDenied
-from django.contrib.auth.models import User
+"""Views for users"""
+
+
 from django.contrib.auth.decorators import login_required
-from django.views.decorators.http import require_http_methods
-from django.utils.translation import ugettext as _
-from django.views.decorators.http import require_POST
-from django.views.decorators.csrf import ensure_csrf_cookie
-from edxmako.shortcuts import render_to_response
-
-from xmodule.modulestore.django import modulestore
-from opaque_keys.edx.keys import CourseKey
-from opaque_keys.edx.locator import LibraryLocator
-from util.json_request import JsonResponse, expect_json
-from student.roles import CourseInstructorRole, CourseStaffRole, LibraryUserRole
-from course_creators.views import user_requested_access
-
-from student.auth import STUDIO_EDIT_ROLES, STUDIO_VIEW_USERS, get_user_permissions
-
-from student.models import CourseEnrollment
+from django.contrib.auth.models import User  # pylint: disable=imported-auth-user
 from django.http import HttpResponseNotFound
-from student import auth
+from django.shortcuts import redirect
+from django.utils.translation import gettext as _
+from django.views.decorators.csrf import ensure_csrf_cookie
+from django.views.decorators.http import require_http_methods, require_POST
+from opaque_keys.edx.keys import CourseKey
 
+from cms.djangoapps.course_creators.views import user_requested_access
+from common.djangoapps.student import auth
+from common.djangoapps.student.auth import STUDIO_EDIT_ROLES, STUDIO_VIEW_USERS, get_user_permissions
+from common.djangoapps.student.models import CourseEnrollment
+from common.djangoapps.student.roles import CourseInstructorRole, CourseStaffRole
+from common.djangoapps.util.json_request import JsonResponse, expect_json
+
+from ..utils import get_course_team_url
 
 __all__ = ['request_course_creator', 'course_team_handler']
 
@@ -34,7 +32,6 @@ def request_course_creator(request):
     return JsonResponse({"Status": "OK"})
 
 
-# pylint: disable=unused-argument
 @login_required
 @ensure_csrf_cookie
 @require_http_methods(("GET", "POST", "PUT", "DELETE"))
@@ -46,7 +43,8 @@ def course_team_handler(request, course_key_string=None, email=None):
         html: return html page for managing course team
         json: return json representation of a particular course team member (email is required).
     POST or PUT
-        json: modify the permissions for a particular course team member (email is required, as well as role in the payload).
+        json: modify the permissions for a particular course team member (email is required, as well as role in the
+         payload).
     DELETE:
         json: remove a particular course team member from the course team (email is required).
     """
@@ -56,7 +54,10 @@ def course_team_handler(request, course_key_string=None, email=None):
     if 'application/json' in request.META.get('HTTP_ACCEPT', 'application/json'):
         return _course_team_user(request, course_key, email)
     elif request.method == 'GET':  # assume html
-        return _manage_users(request, course_key)
+        course_team_url = get_course_team_url(course_key)
+        if course_team_url:
+            return redirect(course_team_url)
+        return HttpResponseNotFound()
     else:
         return HttpResponseNotFound()
 
@@ -69,35 +70,6 @@ def user_with_role(user, role):
         'email': user.email,
         'role': role
     }
-
-
-def _manage_users(request, course_key):
-    """
-    This view will return all CMS users who are editors for the specified course
-    """
-    # check that logged in user has permissions to this item
-    user_perms = get_user_permissions(request.user, course_key)
-    if not user_perms & STUDIO_VIEW_USERS:
-        raise PermissionDenied()
-
-    course_module = modulestore().get_course(course_key)
-    instructors = set(CourseInstructorRole(course_key).users_with_role())
-    # the page only lists staff and assumes they're a superset of instructors. Do a union to ensure.
-    staff = set(CourseStaffRole(course_key).users_with_role()).union(instructors)
-
-    formatted_users = []
-    for user in instructors:
-        formatted_users.append(user_with_role(user, 'instructor'))
-    for user in staff - instructors:
-        formatted_users.append(user_with_role(user, 'staff'))
-
-    return render_to_response('manage_users.html', {
-        'context_course': course_module,
-        'show_transfer_ownership_hint': request.user in instructors and len(instructors) == 1,
-        'users': formatted_users,
-        'allow_actions': bool(user_perms & STUDIO_EDIT_ROLES),
-    })
-
 
 @expect_json
 def _course_team_user(request, course_key, email):
@@ -116,18 +88,14 @@ def _course_team_user(request, course_key, email):
 
     try:
         user = User.objects.get(email=email)
-    except Exception:
+    except Exception:  # pylint: disable=broad-except
         msg = {
             "error": _("Could not find user by email address '{email}'.").format(email=email),
         }
         return JsonResponse(msg, 404)
 
-    is_library = isinstance(course_key, LibraryLocator)
     # Ordered list of roles: can always move self to the right, but need STUDIO_EDIT_ROLES to move any user left
-    if is_library:
-        role_hierarchy = (CourseInstructorRole, CourseStaffRole, LibraryUserRole)
-    else:
-        role_hierarchy = (CourseInstructorRole, CourseStaffRole)
+    role_hierarchy = (CourseInstructorRole, CourseStaffRole)
 
     if request.method == "GET":
         # just return info about the user
@@ -148,13 +116,6 @@ def _course_team_user(request, course_key, email):
     if not ((requester_perms & STUDIO_EDIT_ROLES) or (user.id == request.user.id)):
         return permissions_error_response
 
-    # can't modify an inactive user
-    if not user.is_active:
-        msg = {
-            "error": _('User {email} has registered but has not yet activated his/her account.').format(email=email),
-        }
-        return JsonResponse(msg, 400)
-
     if request.method == "DELETE":
         new_role = None
     else:
@@ -165,6 +126,13 @@ def _course_team_user(request, course_key, email):
             new_role = request.json.get("role", request.POST.get("role"))
         else:
             return JsonResponse({"error": _("No `role` specified.")}, 400)
+
+    # can't modify an inactive user but can remove it
+    if not (user.is_active or new_role is None):
+        msg = {
+            "error": _('User {email} has registered but has not yet activated their account.').format(email=email),
+        }
+        return JsonResponse(msg, 400)
 
     old_roles = set()
     role_added = False
@@ -178,7 +146,7 @@ def _course_team_user(request, course_key, email):
                 role_added = True
             else:
                 return permissions_error_response
-        elif role.has_user(user):
+        elif role.has_user(user, check_user_activation=False):  # pylint: disable=no-value-for-parameter
             # Remove the user from this old role:
             old_roles.add(role)
 
@@ -191,7 +159,7 @@ def _course_team_user(request, course_key, email):
             return JsonResponse(msg, 400)
         auth.remove_users(request.user, role, user)
 
-    if new_role and not is_library:
+    if new_role:
         # The user may be newly added to this course.
         # auto-enroll the user in the course so that "View Live" will work.
         CourseEnrollment.enroll(user, course_key)

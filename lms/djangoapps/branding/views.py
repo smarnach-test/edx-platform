@@ -1,119 +1,103 @@
 """Views for the branding app. """
+
 import logging
-import urllib
+import urllib.parse
 
 from django.conf import settings
-from django.core.urlresolvers import reverse
-from django.core.cache import cache
-from django.views.decorators.cache import cache_control
-from django.http import HttpResponse, Http404
-from django.utils import translation
-from django.shortcuts import redirect
-from django.views.decorators.csrf import ensure_csrf_cookie
 from django.contrib.staticfiles.storage import staticfiles_storage
+from django.core.cache import cache
+from django.db import transaction
+from django.http import Http404, HttpResponse
+from django.shortcuts import redirect
+from django.urls.exceptions import NoReverseMatch
+from django.utils import translation
+from django.utils.translation.trans_real import get_supported_language_variant
+from django.views.decorators.cache import cache_control
+from django.views.decorators.csrf import ensure_csrf_cookie
 
-from edxmako.shortcuts import render_to_response
-import student.views
-from student.models import CourseEnrollment
-import courseware.views
-from microsite_configuration import microsite
-from edxmako.shortcuts import marketing_link
-from util.cache import cache_if_anonymous
-from util.json_request import JsonResponse
-import branding.api as branding_api
-
+import lms.djangoapps.branding.api as branding_api
+import lms.djangoapps.courseware.views.views as courseware_views
+from common.djangoapps.edxmako.shortcuts import marketing_link, render_to_response
+from common.djangoapps.student import views as student_views
+from common.djangoapps.util.cache import cache_if_anonymous
+from common.djangoapps.util.json_request import JsonResponse
+from lms.djangoapps.branding.toggles import use_catalog_mfe
+from openedx.core.djangoapps.lang_pref.api import released_languages
+from openedx.core.djangoapps.site_configuration import helpers as configuration_helpers
 
 log = logging.getLogger(__name__)
 
 
-def get_course_enrollments(user):
-    """
-    Returns the course enrollments for the passed in user within the context of a microsite, that
-    is filtered by course_org_filter
-    """
-    enrollments = CourseEnrollment.enrollments_for_user(user)
-    microsite_org = microsite.get_value('course_org_filter')
-    if microsite_org:
-        site_enrollments = [
-            enrollment for enrollment in enrollments if enrollment.course_id.org == microsite_org
-        ]
-    else:
-        site_enrollments = [
-            enrollment for enrollment in enrollments
-        ]
-    return site_enrollments
-
-
 @ensure_csrf_cookie
+@transaction.non_atomic_requests
 @cache_if_anonymous()
 def index(request):
-    '''
+    """
     Redirects to main page -- info page if user authenticated, or marketing if not
-    '''
-
-    if settings.COURSEWARE_ENABLED and request.user.is_authenticated():
-        # For microsites, only redirect to dashboard if user has
-        # courses in his/her dashboard. Otherwise UX is a bit cryptic.
+    """
+    if request.user.is_authenticated:
+        # Only redirect to dashboard if user has
+        # courses in their dashboard. Otherwise UX is a bit cryptic.
         # In this case, we want to have the user stay on a course catalog
         # page to make it easier to browse for courses (and register)
-        if microsite.get_value(
-            'ALWAYS_REDIRECT_HOMEPAGE_TO_DASHBOARD_FOR_AUTHENTICATED_USER',
-            settings.FEATURES.get('ALWAYS_REDIRECT_HOMEPAGE_TO_DASHBOARD_FOR_AUTHENTICATED_USER', True)
-        ):
-            return redirect(reverse('dashboard'))
+        if configuration_helpers.get_value(
+                'ALWAYS_REDIRECT_HOMEPAGE_TO_DASHBOARD_FOR_AUTHENTICATED_USER',
+                getattr(settings, 'ALWAYS_REDIRECT_HOMEPAGE_TO_DASHBOARD_FOR_AUTHENTICATED_USER', True)):
+            return redirect('dashboard')
 
-    if settings.FEATURES.get('AUTH_USE_CERTIFICATES'):
-        from external_auth.views import ssl_login
-        # Set next URL to dashboard if it isn't set to avoid
-        # caching a redirect to / that causes a redirect loop on logout
-        if not request.GET.get('next'):
-            req_new = request.GET.copy()
-            req_new['next'] = reverse('dashboard')
-            request.GET = req_new
-        return ssl_login(request)
+    if use_catalog_mfe():
+        return redirect(f'{settings.CATALOG_MICROFRONTEND_URL}/', permanent=True)
 
-    enable_mktg_site = microsite.get_value(
-        'ENABLE_MKTG_SITE',
-        settings.FEATURES.get('ENABLE_MKTG_SITE', False)
+    marketing_urls = configuration_helpers.get_value(
+        'MKTG_URLS',
+        settings.MKTG_URLS
     )
+    root_url = marketing_urls.get("ROOT")
+    if root_url and root_url != getattr(settings, "LMS_ROOT_URL", None):
+        return redirect(root_url)
 
-    if enable_mktg_site:
-        return redirect(settings.MKTG_URLS.get('ROOT'))
-
-    domain = request.META.get('HTTP_HOST')
+    domain = request.headers.get('Host')
 
     # keep specialized logic for Edge until we can migrate over Edge to fully use
-    # microsite definitions
+    # configuration.
     if domain and 'edge.edx.org' in domain:
-        return redirect(reverse("signin_user"))
+        return redirect("signin_user")
 
     #  we do not expect this case to be reached in cases where
     #  marketing and edge are enabled
-    return student.views.index(request, user=request.user)
+
+    try:
+        return student_views.index(request, user=request.user)
+    except NoReverseMatch:
+        log.error(
+            f'NoReverseMatch on index view for domain {domain}; '
+            f'request_site={getattr(request, "site", None)}; '
+            f'Auth Status={request.user.is_authenticated}; '
+            f'Request Meta={request.META}'
+        )
+        raise
 
 
 @ensure_csrf_cookie
 @cache_if_anonymous()
 def courses(request):
     """
-    Render the "find courses" page. If the marketing site is enabled, redirect
-    to that. Otherwise, if subdomain branding is on, this is the university
-    profile page. Otherwise, it's the edX courseware.views.courses page
+    Serve the "find courses" page. Redirects to the catalog MFE or the marketing
+    site COURSES URL if configured; falls back to rendering the local courses page.
     """
-    enable_mktg_site = microsite.get_value(
-        'ENABLE_MKTG_SITE',
-        settings.FEATURES.get('ENABLE_MKTG_SITE', False)
-    )
+    if use_catalog_mfe():
+        return redirect(f'{settings.CATALOG_MICROFRONTEND_URL}/courses', permanent=True)
 
-    if enable_mktg_site:
-        return redirect(marketing_link('COURSES'), permanent=True)
+    courses_url = marketing_link('COURSES')
+    if courses_url != '#':
+        return redirect(courses_url, permanent=True)
 
-    if not settings.FEATURES.get('COURSES_ARE_BROWSABLE'):
+    if not settings.COURSES_ARE_BROWSABLE:
         raise Http404
 
     #  we do not expect this case to be reached in cases where
-    #  marketing is enabled or the courses are not browsable
-    return courseware.views.courses(request)
+    #  the courses are not browsable
+    return courseware_views.courses(request)
 
 
 def _footer_static_url(request, name):
@@ -130,7 +114,7 @@ def _footer_css_urls(request, package_name):
     # to identify the CSS file name(s) to include in the footer.
     # We then construct an absolute URI so that external sites (such as the marketing site)
     # can locate the assets.
-    package = settings.PIPELINE_CSS.get(package_name, {})
+    package = settings.PIPELINE['STYLESHEETS'].get(package_name, {})
     paths = [package['output_filename']] if not settings.DEBUG else package['source_filenames']
     return [
         _footer_static_url(request, path)
@@ -138,19 +122,19 @@ def _footer_css_urls(request, package_name):
     ]
 
 
-def _render_footer_html(request, show_openedx_logo, include_dependencies):
+def _render_footer_html(request, show_openedx_logo, include_dependencies, include_language_selector, language):
     """Render the footer as HTML.
 
     Arguments:
         show_openedx_logo (bool): If True, include the OpenEdX logo in the rendered HTML.
         include_dependencies (bool): If True, include JavaScript and CSS dependencies.
+        include_language_selector (bool): If True, include a language selector with all supported languages.
 
     Returns: unicode
 
     """
     bidi = 'rtl' if translation.get_language_bidi() else 'ltr'
-    version = 'edx' if settings.FEATURES.get('IS_EDX_DOMAIN') else 'openedx'
-    css_name = settings.FOOTER_CSS[version][bidi]
+    css_name = settings.FOOTER_CSS['openedx'][bidi]
 
     context = {
         'hide_openedx_link': not show_openedx_logo,
@@ -158,13 +142,11 @@ def _render_footer_html(request, show_openedx_logo, include_dependencies):
         'footer_css_urls': _footer_css_urls(request, css_name),
         'bidi': bidi,
         'include_dependencies': include_dependencies,
+        'include_language_selector': include_language_selector,
+        'language': language
     }
 
-    return (
-        render_to_response("footer-edx-v3.html", context)
-        if settings.FEATURES.get("IS_EDX_DOMAIN", False)
-        else render_to_response("footer.html", context)
-    )
+    return render_to_response("footer.html", context)
 
 
 @cache_control(must_revalidate=True, max_age=settings.FOOTER_BROWSER_CACHE_MAX_AGE)
@@ -229,13 +211,12 @@ def footer(request):
                 # ...
             ],
             "openedx_link": {
-                "url": "http://open.edx.org",
+                "url": "https://open.edx.org",
                 "title": "Powered by Open edX",
                 "image": "http://example.com/openedx.png"
             },
-            "logo_image": "http://example.com/static/images/default-theme/logo.png",
-            "copyright": "EdX, Open edX, and the edX and Open edX logos are \
-                registered trademarks or trademarks of edX Inc."
+            "logo_image": "http://example.com/static/images/logo.png",
+            "copyright": "edX, Open edX and their respective logos are registered trademarks of edX Inc."
         }
 
 
@@ -245,7 +226,7 @@ def footer(request):
         Accepts: text/html
 
 
-    Example: Including the footer with the "Powered by OpenEdX" logo
+    Example: Including the footer with the "Powered by Open edX" logo
 
         GET /api/branding/v1/footer?show-openedx-logo=1
         Accepts: text/html
@@ -255,6 +236,13 @@ def footer(request):
 
         GET /api/branding/v1/footer?language=en
         Accepts: text/html
+
+
+    Example: Retrieving the footer with a language selector
+
+        GET /api/branding/v1/footer?include-language-selector=1
+        Accepts: text/html
+
 
     Example: Retrieving the footer with all JS and CSS dependencies (for testing)
 
@@ -266,7 +254,7 @@ def footer(request):
         raise Http404
 
     # Use the content type to decide what representation to serve
-    accepts = request.META.get('HTTP_ACCEPT', '*/*')
+    accepts = request.headers.get('Accept', '*/*')
 
     # Show the OpenEdX logo in the footer
     show_openedx_logo = bool(request.GET.get('show-openedx-logo', False))
@@ -277,26 +265,37 @@ def footer(request):
 
     # Override the language if necessary
     language = request.GET.get('language', translation.get_language())
+    try:
+        language = get_supported_language_variant(language)
+    except LookupError:
+        language = settings.LANGUAGE_CODE
+
+    # Include a language selector
+    include_language_selector = request.GET.get('include-language-selector', '') == '1'
 
     # Render the footer information based on the extension
     if 'text/html' in accepts or '*/*' in accepts:
-        cache_key = u"branding.footer.{params}.html".format(
-            params=urllib.urlencode({
-                'language': language,
-                'show_openedx_logo': show_openedx_logo,
-                'include_dependencies': include_dependencies,
-            })
-        )
+        cache_params = {
+            'language': language,
+            'show_openedx_logo': show_openedx_logo,
+            'include_dependencies': include_dependencies
+        }
+        if include_language_selector:
+            cache_params['language_selector_options'] = ','.join(sorted([lang.code for lang in released_languages()]))
+        cache_key = f"branding.footer.{urllib.parse.urlencode(cache_params)}.html"
+
         content = cache.get(cache_key)
         if content is None:
             with translation.override(language):
-                content = _render_footer_html(request, show_openedx_logo, include_dependencies)
+                content = _render_footer_html(
+                    request, show_openedx_logo, include_dependencies, include_language_selector, language
+                )
                 cache.set(cache_key, content, settings.FOOTER_CACHE_TIMEOUT)
         return HttpResponse(content, status=200, content_type="text/html; charset=utf-8")
 
     elif 'application/json' in accepts:
-        cache_key = u"branding.footer.{params}.json".format(
-            params=urllib.urlencode({
+        cache_key = "branding.footer.{params}.json".format(
+            params=urllib.parse.urlencode({
                 'language': language,
                 'is_secure': request.is_secure(),
             })
@@ -306,7 +305,7 @@ def footer(request):
             with translation.override(language):
                 footer_dict = branding_api.get_footer(is_secure=request.is_secure())
                 cache.set(cache_key, footer_dict, settings.FOOTER_CACHE_TIMEOUT)
-        return JsonResponse(footer_dict, 200, content_type="application/json; charset=utf-8")
+        return JsonResponse(footer_dict, 200, content_type="application/json; charset=utf-8")  # pylint: disable=redundant-content-type-for-json-response
 
     else:
         return HttpResponse(status=406)

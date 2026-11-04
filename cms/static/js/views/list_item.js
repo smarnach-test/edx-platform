@@ -12,9 +12,10 @@
  *   to the DOM.
  */
 define([
-    'js/views/baseview', 'jquery', "gettext", "common/js/components/utils/view_utils"
+    'js/views/baseview', 'jquery', 'gettext',
+    'common/js/components/utils/view_utils', 'edx-ui-toolkit/js/utils/html-utils'
 ], function(
-    BaseView, $, gettext, ViewUtils
+    BaseView, $, gettext, ViewUtils, HtmlUtils
 ) {
     'use strict';
 
@@ -22,11 +23,12 @@ define([
         canDelete: false,
 
         initialize: function() {
+            this.restrictEditing = this.options.restrictEditing || false;
             this.listenTo(this.model, 'change:editing', this.render);
             this.listenTo(this.model, 'remove', this.remove);
         },
 
-        className: function () {
+        className: function() {
             var index = this.model.collection.indexOf(this.model);
 
             return [
@@ -59,7 +61,7 @@ define([
                 function() {
                     return ViewUtils.runOperationShowingMessage(
                         gettext('Deleting'),
-                        function () {
+                        function() {
                             return model.destroy({wait: true});
                         }
                     );
@@ -80,7 +82,7 @@ define([
                 this.view = this.createDetailsView();
             }
 
-            this.$el.html(this.view.render().el);
+            this.$el.html(HtmlUtils.HTML(this.view.render().el).toString());
 
             return this;
         }

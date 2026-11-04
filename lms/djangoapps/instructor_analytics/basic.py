@@ -3,163 +3,277 @@ Student and course analytics.
 
 Serve miscellaneous course and student data
 """
+
+
+import datetime
 import json
-from shoppingcart.models import (
-    PaidCourseRegistration, CouponRedemption, CourseRegCodeItem,
-    RegistrationCodeRedemption, CourseRegistrationCodeInvoiceItem
-)
-from django.db.models import Q
+import logging
+
 from django.conf import settings
-from django.contrib.auth.models import User
 from django.core.exceptions import ObjectDoesNotExist
-from django.core.urlresolvers import reverse
-from opaque_keys.edx.keys import UsageKey
+from django.core.serializers.json import DjangoJSONEncoder
+from django.db.models import Count, F
+from django.urls import reverse
+from edx_proctoring.api import get_exam_violation_report
+from opaque_keys.edx.keys import CourseKey, UsageKey
+
 import xmodule.graders as xmgraders
-from microsite_configuration import microsite
-from student.models import CourseEnrollmentAllowed
-from edx_proctoring.api import get_all_exam_attempts
-from courseware.models import StudentModule
+from common.djangoapps.student.models import CourseEnrollment, CourseEnrollmentAllowed
+from lms.djangoapps.certificates.api import get_certificates_by_course_and_status
+from lms.djangoapps.certificates.data import CertificateStatuses
+from lms.djangoapps.courseware.models import StudentModule
+from lms.djangoapps.grades.api import context as grades_context
+from lms.djangoapps.program_enrollments.api import fetch_program_enrollments_by_students
+from lms.djangoapps.verify_student.services import IDVerificationService
+from openedx.core.djangoapps.site_configuration import helpers as configuration_helpers
+from openedx.core.djangolib.markup import HTML, Text
+
+log = logging.getLogger(__name__)
 
 
-STUDENT_FEATURES = ('id', 'username', 'first_name', 'last_name', 'is_staff', 'email')
+STUDENT_FEATURES = ('id', 'username', 'first_name', 'last_name', 'is_staff', 'email',
+                    'date_joined', 'last_login')
 PROFILE_FEATURES = ('name', 'language', 'location', 'year_of_birth', 'gender',
-                    'level_of_education', 'mailing_address', 'goals', 'meta')
+                    'level_of_education', 'mailing_address', 'goals', 'meta',
+                    'city', 'country')
+PROGRAM_ENROLLMENT_FEATURES = ('external_user_key', )
+ENROLLMENT_FEATURES = ('enrollment_date', )
 ORDER_ITEM_FEATURES = ('list_price', 'unit_cost', 'status')
 ORDER_FEATURES = ('purchase_time',)
 
 SALE_FEATURES = ('total_amount', 'company_name', 'company_contact_name', 'company_contact_email', 'recipient_name',
-                 'recipient_email', 'customer_reference_number', 'internal_reference')
+                 'recipient_email', 'customer_reference_number', 'internal_reference', 'created')
 
 SALE_ORDER_FEATURES = ('id', 'company_name', 'company_contact_name', 'company_contact_email', 'purchase_time',
                        'customer_reference_number', 'recipient_name', 'recipient_email', 'bill_to_street1',
                        'bill_to_street2', 'bill_to_city', 'bill_to_state', 'bill_to_postalcode',
-                       'bill_to_country', 'order_type',)
+                       'bill_to_country', 'order_type', 'created')
 
-AVAILABLE_FEATURES = STUDENT_FEATURES + PROFILE_FEATURES
+AVAILABLE_FEATURES = STUDENT_FEATURES + PROFILE_FEATURES + PROGRAM_ENROLLMENT_FEATURES + ENROLLMENT_FEATURES
 COURSE_REGISTRATION_FEATURES = ('code', 'course_id', 'created_by', 'created_at', 'is_valid')
 COUPON_FEATURES = ('code', 'course_id', 'percentage_discount', 'description', 'expiration_date', 'is_active')
+CERTIFICATE_FEATURES = ('course_id', 'mode', 'status', 'grade', 'created_date', 'is_active', 'error_reason')
 
 UNAVAILABLE = "[unavailable]"
 
 
-def sale_order_record_features(course_id, features):
+def issued_certificates(course_key, features):
     """
-    Return list of sale orders features as dictionaries.
+    Return list of issued certificates as dictionaries against the given course key.
 
-    sales_records(course_id, ['company_name, total_codes', total_amount])
+    issued_certificates(course_key, features)
     would return [
-        {'company_name': 'group_A', 'total_codes': '1', total_amount:'total_amount1 in decimal'.}
-        {'company_name': 'group_B', 'total_codes': '2', total_amount:'total_amount2 in decimal'.}
-        {'company_name': 'group_C', 'total_codes': '3', total_amount:'total_amount3 in decimal'.}
+        {course_id: 'abc', 'total_issued_certificate': '5', 'mode': 'honor'}
+        {course_id: 'abc', 'total_issued_certificate': '10', 'mode': 'verified'}
+        {course_id: 'abc', 'total_issued_certificate': '15', 'mode': 'Professional Education'}
     ]
     """
-    purchased_courses = PaidCourseRegistration.objects.filter(
-        Q(course_id=course_id),
-        Q(status='purchased') | Q(status='refunded')
-    ).order_by('order')
 
-    purchased_course_reg_codes = CourseRegCodeItem.objects.filter(
-        Q(course_id=course_id),
-        Q(status='purchased') | Q(status='refunded')
-    ).order_by('order')
+    report_run_date = datetime.date.today().strftime("%B %d, %Y")
+    certificate_features = [x for x in CERTIFICATE_FEATURES if x in features]
+    generated_certificates = list(
+        get_certificates_by_course_and_status(
+            course_id=course_key,
+            status=CertificateStatuses.downloadable
+        ).values(
+            *certificate_features).annotate(total_issued_certificate=Count('mode'))
+    )
 
-    def sale_order_info(purchased_course, features):
-        """
-        convert purchase transactions to dictionary
-        """
+    # Report run date
+    for data in generated_certificates:
+        data['report_run_date'] = report_run_date
+        data['course_id'] = str(data['course_id'])
 
-        sale_order_features = [x for x in SALE_ORDER_FEATURES if x in features]
-        order_item_features = [x for x in ORDER_ITEM_FEATURES if x in features]
+    return generated_certificates
 
-        # Extracting order information
-        sale_order_dict = dict((feature, getattr(purchased_course.order, feature))
-                               for feature in sale_order_features)
 
-        quantity = int(getattr(purchased_course, 'qty'))
-        unit_cost = float(getattr(purchased_course, 'unit_cost'))
-        sale_order_dict.update({"quantity": quantity})
-        sale_order_dict.update({"total_amount": quantity * unit_cost})
+def get_student_features_with_custom(course_key):
+    """
+    Allow site operators to include custom fields in student profile exports.
 
-        sale_order_dict.update({"logged_in_username": purchased_course.order.user.username})
-        sale_order_dict.update({"logged_in_email": purchased_course.order.user.email})
+    This function enables platforms with extended User models to include additional
+    fields in CSV exports by configuring site settings and adding properties to the User model.
 
-        # Extracting OrderItem information of unit_cost, list_price and status
-        order_item_dict = dict((feature, getattr(purchased_course, feature, None))
-                               for feature in order_item_features)
+    Basic example of adding age from user profile:
+    ```python
+    def get_age(self):
+        if hasattr(self, 'profile') and self.profile.year_of_birth:
+            return datetime.datetime.now().year - self.profile.year_of_birth
+        return None
+    User.age = property(get_age)
+    ```
 
-        order_item_dict['list_price'] = purchased_course.get_list_price()
+    Example with extended User model (One-To-One relationship):
+    ```python
+    def get_student_number(self):
+        try:
+            return self.userextendedmodel.student_number
+        except UserExtendedModel.DoesNotExist:
+            return None
 
-        sale_order_dict.update(
-            {"total_discount": (order_item_dict['list_price'] - order_item_dict['unit_cost']) * quantity}
+    def get_employment_status(self):
+        try:
+            return self.userextendedmodel.employment_status
+        except UserExtendedModel.DoesNotExist:
+            return None
+
+    User.student_number = property(get_student_number)
+    User.employment_status = property(get_employment_status)
+    ```
+
+    Site configuration required for these new 3 extra fields:
+    ```json
+    {
+        "additional_student_profile_attributes": [
+            "age",
+            "student_number",
+            "employment_status"
+        ],
+        "course_org_filter": ["your-org"]
+    }
+    ```
+
+    Important notes:
+    - Custom attributes are automatically added to the standard student features
+    - If the extended model is guaranteed to exist, the try/except can be omitted
+    - Properties must be added to the User model before this function is called
+
+    Args:
+        course_key: CourseKey object for the course
+
+    Returns:
+        tuple: Combined tuple of standard STUDENT_FEATURES and custom attributes
+    """
+    additional_attributes = configuration_helpers.get_value_for_org(
+        course_key.org,
+        "additional_student_profile_attributes"
+    )
+
+    if additional_attributes:
+        return STUDENT_FEATURES + tuple(additional_attributes)
+
+    return STUDENT_FEATURES
+
+
+def get_available_features(course_key):
+    """
+    Return all available features including custom student attributes for a course.
+
+    This function dynamically builds the available features list by combining
+    standard features with any custom attributes configured for the course organization.
+
+    Args:
+        course_key: CourseKey object for the course
+
+    Returns:
+        tuple: Combined tuple of all available features (standard + custom)
+    """
+    student_features = get_student_features_with_custom(course_key)
+    return student_features + PROFILE_FEATURES + PROGRAM_ENROLLMENT_FEATURES + ENROLLMENT_FEATURES
+
+
+def _extract_attr(student, feature):
+    """Helper function for extracting student attributes"""
+    try:
+        attr = getattr(student, feature)
+    except AttributeError:
+        log.warning(
+            "Custom student attribute '%s' not found on %s model. "
+            "Please ensure the attribute is properly added to the model or "
+            "remove it from the site configuration.",
+            feature,
+            student.__class__.__name__
+        )
+        return None
+
+    if attr is None:
+        return ''
+
+    try:
+        DjangoJSONEncoder().default(attr)
+        return attr
+    except TypeError:
+        return str(attr)
+
+
+def _extract_enrollment_student(enrollment, features, course_key, student_features,
+                                profile_features, external_user_key_dict):
+    """
+    Helper function for converting enrollment to dictionary.
+
+    Args:
+        enrollment: CourseEnrollment object
+        features: List of all requested features
+        course_key: CourseKey object
+        student_features: List of student model features to extract
+        profile_features: List of profile features to extract
+        external_user_key_dict: Dictionary mapping user IDs to external keys
+
+    Returns:
+        Dictionary containing student features
+    """
+    student = enrollment.user
+
+    # For data extractions on the 'meta' field
+    # the feature name should be in the format of 'meta.foo' where
+    # 'foo' is the keyname in the meta dictionary
+    meta_features = []
+    for feature in features:
+        if 'meta.' in feature:
+            meta_key = feature.split('.')[1]
+            meta_features.append((feature, meta_key))
+
+    student_dict = {feature: _extract_attr(student, feature) for feature in student_features}
+    profile = student.profile
+    if profile is not None:
+        profile_dict = {feature: _extract_attr(profile, feature) for feature in profile_features}
+        student_dict.update(profile_dict)
+
+        # now fetch the requested meta fields
+        meta_dict = json.loads(profile.meta) if profile.meta else {}
+        for meta_feature, meta_key in meta_features:
+            student_dict[meta_feature] = meta_dict.get(meta_key)
+
+        # There are two separate places where the city value can be stored,
+        # one used by account settings and the other used by the registration form.
+        # If the account settings value (meta.city) is set, it takes precedence.
+        if 'city' in features:
+            meta_city = meta_dict.get('city')
+            if meta_city:
+                student_dict['city'] = meta_city
+
+    if 'cohort' in features:
+        # Note that we use student.course_groups.all() here instead of
+        # student.course_groups.filter(). The latter creates a fresh query,
+        # therefore negating the performance gain from prefetch_related().
+        student_dict['cohort'] = next(
+            (cohort.name for cohort in student.course_groups.all() if cohort.course_id == course_key),
+            "[unassigned]"
         )
 
-        order_item_dict.update({"coupon_code": 'N/A'})
+    if 'team' in features:
+        student_dict['team'] = next(
+            (team.name for team in student.teams.all() if team.course_id == course_key),
+            UNAVAILABLE
+        )
 
-        coupon_redemption = CouponRedemption.objects.select_related('coupon').filter(order_id=purchased_course.order_id)
-        # if coupon is redeemed against the order, update the information in the order_item_dict
-        if coupon_redemption.exists():
-            coupon_codes = [redemption.coupon.code for redemption in coupon_redemption]
-            order_item_dict.update({'coupon_code': ", ".join(coupon_codes)})
+    if 'enrollment_mode' in features or 'verification_status' in features:
+        enrollment_mode = CourseEnrollment.enrollment_mode_for_user(student, course_key)[0]
+        if 'verification_status' in features:
+            student_dict['verification_status'] = IDVerificationService.verification_status_for_user(
+                student,
+                enrollment_mode
+            )
+        if 'enrollment_mode' in features:
+            student_dict['enrollment_mode'] = enrollment_mode
 
-        sale_order_dict.update(dict(order_item_dict.items()))
+    if 'external_user_key' in features:
+        student_dict['external_user_key'] = external_user_key_dict.get(student.id, '')
 
-        return sale_order_dict
+    if 'enrollment_date' in features:
+        student_dict['enrollment_date'] = enrollment.created
 
-    csv_data = [sale_order_info(purchased_course, features) for purchased_course in purchased_courses]
-    csv_data.extend(
-        [sale_order_info(purchased_course_reg_code, features)
-         for purchased_course_reg_code in purchased_course_reg_codes]
-    )
-    return csv_data
-
-
-def sale_record_features(course_id, features):
-    """
-    Return list of sales features as dictionaries.
-
-    sales_records(course_id, ['company_name, total_codes', total_amount])
-    would return [
-        {'company_name': 'group_A', 'total_codes': '1', total_amount:'total_amount1 in decimal'.}
-        {'company_name': 'group_B', 'total_codes': '2', total_amount:'total_amount2 in decimal'.}
-        {'company_name': 'group_C', 'total_codes': '3', total_amount:'total_amount3 in decimal'.}
-    ]
-    """
-    sales = CourseRegistrationCodeInvoiceItem.objects.select_related('invoice').filter(course_id=course_id)
-
-    def sale_records_info(sale, features):
-        """
-        Convert sales records to dictionary
-
-        """
-        invoice = sale.invoice
-        sale_features = [x for x in SALE_FEATURES if x in features]
-        course_reg_features = [x for x in COURSE_REGISTRATION_FEATURES if x in features]
-
-        # Extracting sale information
-        sale_dict = dict((feature, getattr(invoice, feature))
-                         for feature in sale_features)
-
-        total_used_codes = RegistrationCodeRedemption.objects.filter(
-            registration_code__in=sale.courseregistrationcode_set.all()
-        ).count()
-        sale_dict.update({"invoice_number": getattr(invoice, 'id')})
-        sale_dict.update({"total_codes": sale.courseregistrationcode_set.all().count()})
-        sale_dict.update({'total_used_codes': total_used_codes})
-
-        codes = [reg_code.code for reg_code in sale.courseregistrationcode_set.all()]
-
-        # Extracting registration code information
-        obj_course_reg_code = sale.courseregistrationcode_set.all()[:1].get()
-        course_reg_dict = dict((feature, getattr(obj_course_reg_code, feature))
-                               for feature in course_reg_features)
-
-        course_reg_dict['course_id'] = course_id.to_deprecated_string()
-        course_reg_dict.update({'codes': ", ".join(codes)})
-        sale_dict.update(dict(course_reg_dict.items()))
-
-        return sale_dict
-
-    return [sale_records_info(sale, features) for sale in sales]
+    return student_dict
 
 
 def enrolled_students_features(course_key, features):
@@ -173,64 +287,40 @@ def enrolled_students_features(course_key, features):
         {'username': 'username3', 'first_name': 'firstname3'}
     ]
     """
-    include_cohort_column = 'cohort' in features
-    include_team_column = 'team' in features
+    external_user_key_dict = {}
 
-    students = User.objects.filter(
-        courseenrollment__course_id=course_key,
-        courseenrollment__is_active=1,
-    ).order_by('username').select_related('profile')
+    enrollments = CourseEnrollment.objects.filter(
+        course_id=course_key,
+        is_active=1,
+    ).select_related('user').order_by('user__username').select_related('user__profile')
 
-    if include_cohort_column:
-        students = students.prefetch_related('course_groups')
+    if 'cohort' in features:
+        enrollments = enrollments.prefetch_related('user__course_groups')
 
-    if include_team_column:
-        students = students.prefetch_related('teams')
+    if 'team' in features:
+        enrollments = enrollments.prefetch_related('user__teams')
 
-    def extract_student(student, features):
-        """ convert student to dictionary """
-        student_features = [x for x in STUDENT_FEATURES if x in features]
-        profile_features = [x for x in PROFILE_FEATURES if x in features]
+    students = [enrollment.user for enrollment in enrollments]
 
-        # For data extractions on the 'meta' field
-        # the feature name should be in the format of 'meta.foo' where
-        # 'foo' is the keyname in the meta dictionary
-        meta_features = []
-        for feature in features:
-            if 'meta.' in feature:
-                meta_key = feature.split('.')[1]
-                meta_features.append((feature, meta_key))
+    student_features = [x for x in get_student_features_with_custom(course_key) if x in features]
+    profile_features = [x for x in PROFILE_FEATURES if x in features]
 
-        student_dict = dict((feature, getattr(student, feature))
-                            for feature in student_features)
-        profile = student.profile
-        if profile is not None:
-            profile_dict = dict((feature, getattr(profile, feature))
-                                for feature in profile_features)
-            student_dict.update(profile_dict)
+    if 'external_user_key' in features and len(students) > 0:
+        program_enrollments = fetch_program_enrollments_by_students(users=students, realized_only=True)
+        for program_enrollment in program_enrollments:
+            external_user_key_dict[program_enrollment.user_id] = program_enrollment.external_user_key
 
-            # now featch the requested meta fields
-            meta_dict = json.loads(profile.meta) if profile.meta else {}
-            for meta_feature, meta_key in meta_features:
-                student_dict[meta_feature] = meta_dict.get(meta_key)
-
-        if include_cohort_column:
-            # Note that we use student.course_groups.all() here instead of
-            # student.course_groups.filter(). The latter creates a fresh query,
-            # therefore negating the performance gain from prefetch_related().
-            student_dict['cohort'] = next(
-                (cohort.name for cohort in student.course_groups.all() if cohort.course_id == course_key),
-                "[unassigned]"
-            )
-
-        if include_team_column:
-            student_dict['team'] = next(
-                (team.name for team in student.teams.all() if team.course_id == course_key),
-                UNAVAILABLE
-            )
-        return student_dict
-
-    return [extract_student(student, features) for student in students]
+    return [
+        _extract_enrollment_student(
+            enrollment,
+            features,
+            course_key,
+            student_features,
+            profile_features,
+            external_user_key_dict
+        )
+        for enrollment in enrollments
+    ]
 
 
 def list_may_enroll(course_key, features):
@@ -253,29 +343,85 @@ def list_may_enroll(course_key, features):
         """
         Build dict containing information about a single student.
         """
-        return dict((feature, getattr(student, feature)) for feature in features)
+        return {feature: getattr(student, feature) for feature in features}
 
     return [extract_student(student, features) for student in may_enroll_and_unenrolled]
+
+
+def list_inactive_enrolled_students(course_key, features):
+    """
+    Return info about students who are enrolled in a course but have not activated their account.
+
+    list_enrolled_inactive_students(course_key, ['email'])
+    would return [
+        {'email': 'email1'}
+        {'email': 'email2'}
+        {'email': 'email3'}
+    ]
+    """
+    enrolled_inactive_user_emails = CourseEnrollment.objects.filter(
+        course_id=course_key,
+        is_active=True,
+        user__is_active=False
+    ).annotate(
+        email=F('user__email')
+    ).values('email')
+
+    def extract_student(student, features):
+        """
+        Build dict containing information about a single inactive enrolled student.
+        """
+        return {feature: student.get(feature, None) for feature in features}
+
+    return [extract_student(student, features) for student in enrolled_inactive_user_emails]
 
 
 def get_proctored_exam_results(course_key, features):
     """
     Return info about proctored exam results in a course as a dict.
     """
-    def extract_student(exam_attempt, features):
+    comment_statuses = ['Rules Violation', 'Suspicious']
+
+    def extract_details(exam_attempt, features, course_enrollments):
         """
         Build dict containing information about a single student exam_attempt.
         """
-        proctored_exam = dict(
-            (feature, exam_attempt.get(feature)) for feature in features if feature in exam_attempt
-        )
-        proctored_exam.update({'exam_name': exam_attempt.get('proctored_exam').get('exam_name')})
-        proctored_exam.update({'user_email': exam_attempt.get('user').get('email')})
+        proctored_exam = {
+            feature: exam_attempt.get(feature) for feature in features if feature in exam_attempt
+        }
 
+        for status in comment_statuses:
+            comment_list = exam_attempt.get(
+                f'{status} Comments',
+                []
+            )
+            proctored_exam.update({
+                f'{status} Count': len(comment_list),
+                f'{status} Comments': '; '.join(comment_list),
+            })
+        try:
+            proctored_exam['track'] = course_enrollments[exam_attempt['user_id']]
+        except KeyError:
+            proctored_exam['track'] = 'Unknown'
         return proctored_exam
 
-    exam_attempts = get_all_exam_attempts(course_key)
-    return [extract_student(exam_attempt, features) for exam_attempt in exam_attempts]
+    exam_attempts = get_exam_violation_report(course_key)
+    course_enrollments = get_enrollments_for_course(exam_attempts)
+    return [extract_details(exam_attempt, features, course_enrollments) for exam_attempt in exam_attempts]
+
+
+def get_enrollments_for_course(exam_attempts):
+    """
+     Returns all enrollments from a list of attempts. user_id is passed from proctoring.
+     """
+    if exam_attempts:
+        users = []
+        for e in exam_attempts:
+            users.append(e['user_id'])
+
+        enrollments = {c.user_id: c.mode for c in CourseEnrollment.objects.filter(
+            course_id=CourseKey.from_string(exam_attempts[0]['course_id']), user_id__in=users)}
+        return enrollments
 
 
 def coupon_codes_features(features, coupons_list, course_id):
@@ -296,7 +442,7 @@ def coupon_codes_features(features, coupons_list, course_id):
         """
         coupon_features = [x for x in COUPON_FEATURES if x in features]
 
-        coupon_dict = dict((feature, getattr(coupon, feature)) for feature in coupon_features)
+        coupon_dict = {feature: getattr(coupon, feature) for feature in coupon_features}
         coupon_redemptions = coupon.couponredemption_set.filter(
             order__status="purchased"
         )
@@ -306,7 +452,7 @@ def coupon_codes_features(features, coupons_list, course_id):
         seats_purchased_using_coupon = 0
         total_discounted_amount = 0
         for coupon_redemption in coupon_redemptions:
-            cart_items = coupon_redemption.order.orderitem_set.select_subclasses()
+            cart_items = coupon_redemption.order.orderitem_set.all().select_subclasses()
             found_items = []
             for item in cart_items:
                 if getattr(item, 'course_id', None):
@@ -326,12 +472,12 @@ def coupon_codes_features(features, coupons_list, course_id):
         # They have not been redeemed yet
 
         coupon_dict['expiration_date'] = coupon.display_expiry_date
-        coupon_dict['course_id'] = coupon_dict['course_id'].to_deprecated_string()
+        coupon_dict['course_id'] = str(coupon_dict['course_id'])
         return coupon_dict
     return [extract_coupon(coupon, features) for coupon in coupons_list]
 
 
-def list_problem_responses(course_key, problem_location):
+def list_problem_responses(course_key, problem_location, limit_responses=None):
     """
     Return responses to a given problem as a dict.
 
@@ -346,24 +492,93 @@ def list_problem_responses(course_key, problem_location):
     where `state` represents a student's response to the problem
     identified by `problem_location`.
     """
-    problem_key = UsageKey.from_string(problem_location)
+    if isinstance(problem_location, UsageKey):
+        problem_key = problem_location
+    else:
+        problem_key = UsageKey.from_string(problem_location)
     # Are we dealing with an "old-style" problem location?
-    run = getattr(problem_key, 'run')
+    run = problem_key.run
     if not run:
-        problem_key = course_key.make_usage_key_from_deprecated_string(problem_location)
+        problem_key = UsageKey.from_string(problem_location).map_into_course(course_key)
     if problem_key.course_key != course_key:
         return []
 
     smdat = StudentModule.objects.filter(
         course_id=course_key,
         module_state_key=problem_key
-    )
+    ).select_related('student')
     smdat = smdat.order_by('student')
+    if limit_responses is not None:
+        smdat = smdat[:limit_responses]
 
     return [
-        {'username': response.student.username, 'state': response.state}
+        {'username': response.student.username, 'state': get_response_state(response)}
         for response in smdat
     ]
+
+
+def get_response_state(response):
+    """
+    Returns state of a particular response as string.
+
+    This method also does necessary encoding for displaying unicode data correctly.
+    """
+    def get_transformer():
+        """
+        Returns state transformer depending upon the problem type.
+        """
+        problem_state_transformers = {
+            'openassessment': transform_ora_state,
+            'problem': transform_capa_state
+        }
+        problem_type = response.module_type
+        return problem_state_transformers.get(problem_type)
+
+    problem_state = response.state
+    problem_state_transformer = get_transformer()
+    if not problem_state_transformer:
+        return problem_state
+
+    state = json.loads(problem_state)
+    try:
+        transformed_state = problem_state_transformer(state)
+        return json.dumps(transformed_state, ensure_ascii=False)
+    except TypeError:
+        username = response.student.username
+        err_msg = (
+            'Error occurred while attempting to load learner state '  # noqa: UP032
+            '{username} for state {state}.'.format(
+                username=username,
+                state=problem_state
+            )
+        )
+        log.error(err_msg)
+        return problem_state
+
+
+def transform_ora_state(state):
+    """
+    ORA problem state transformer transforms the problem states.
+
+    Some state variables values are json dumped strings which needs to be loaded
+    into a python object.
+    """
+    fields_to_transform = ['saved_response', 'saved_files_descriptions']
+
+    for field in fields_to_transform:
+        field_state = state.get(field)
+        if not field_state:
+            continue
+
+        state[field] = json.loads(field_state)
+    return state
+
+
+def transform_capa_state(state):
+    """
+    Transforms the CAPA problem state.
+    """
+    return state
 
 
 def course_registration_features(features, registration_codes, csv_type):
@@ -383,13 +598,13 @@ def course_registration_features(features, registration_codes, csv_type):
         :param features:
         :param csv_type:
         """
-        site_name = microsite.get_value('SITE_NAME', settings.SITE_NAME)
+        site_name = configuration_helpers.get_value('SITE_NAME', settings.SITE_NAME)
         registration_features = [x for x in COURSE_REGISTRATION_FEATURES if x in features]
 
-        course_registration_dict = dict((feature, getattr(registration_code, feature)) for feature in registration_features)
+        course_registration_dict = {feature: getattr(registration_code, feature) for feature in registration_features}  # pylint: disable=line-too-long
         course_registration_dict['company_name'] = None
         if registration_code.invoice_item:
-            course_registration_dict['company_name'] = getattr(registration_code.invoice_item.invoice, 'company_name')
+            course_registration_dict['company_name'] = registration_code.invoice_item.invoice.company_name
         course_registration_dict['redeemed_by'] = None
         if registration_code.invoice_item:
             sale_invoice = registration_code.invoice_item.invoice
@@ -408,12 +623,13 @@ def course_registration_features(features, registration_codes, csv_type):
         #  They have not been redeemed yet
         if csv_type is not None:
             try:
-                redeemed_by = getattr(registration_code.registrationcoderedemption_set.get(registration_code=registration_code), 'redeemed_by')
-                course_registration_dict['redeemed_by'] = getattr(redeemed_by, 'email')
+                redemption_set = registration_code.registrationcoderedemption_set
+                redeemed_by = redemption_set.get(registration_code=registration_code).redeemed_by
+                course_registration_dict['redeemed_by'] = redeemed_by.email
             except ObjectDoesNotExist:
                 pass
 
-        course_registration_dict['course_id'] = course_registration_dict['course_id'].to_deprecated_string()
+        course_registration_dict['course_id'] = str(course_registration_dict['course_id'])
         return course_registration_dict
     return [extract_course_registration(code, features, csv_type) for code in registration_codes]
 
@@ -430,42 +646,42 @@ def dump_grading_context(course):
     msg = hbar
     msg += "Course grader:\n"
 
-    msg += '%s\n' % course.grader.__class__
+    msg += '%s\n' % course.grader.__class__  # noqa: UP031
     graders = {}
     if isinstance(course.grader, xmgraders.WeightedSubsectionsGrader):
         msg += '\n'
         msg += "Graded sections:\n"
-        for subgrader, category, weight in course.grader.sections:
+        for subgrader, category, weight in course.grader.subgraders:
             msg += "  subgrader=%s, type=%s, category=%s, weight=%s\n"\
-                % (subgrader.__class__, subgrader.type, category, weight)
+                % (subgrader.__class__, subgrader.type, category, weight)  # noqa: UP031
             subgrader.index = 1
             graders[subgrader.type] = subgrader
     msg += hbar
-    msg += "Listing grading context for course %s\n" % course.id.to_deprecated_string()
+    msg += "Listing grading context for course %s\n" % str(course.id)  # noqa: UP031
 
-    gcontext = course.grading_context
+    gcontext = grades_context.grading_context_for_course(course)
     msg += "graded sections:\n"
 
-    msg += '%s\n' % gcontext['graded_sections'].keys()
-    for (gsomething, gsvals) in gcontext['graded_sections'].items():
-        msg += "--> Section %s:\n" % (gsomething)
+    msg += '%s\n' % list(gcontext['all_graded_subsections_by_type'].keys())  # noqa: UP031
+    for (gsomething, gsvals) in gcontext['all_graded_subsections_by_type'].items():
+        msg += "--> Section %s:\n" % (gsomething)  # noqa: UP031
         for sec in gsvals:
-            sdesc = sec['section_descriptor']
+            sdesc = sec['subsection_block']
             frmat = getattr(sdesc, 'format', None)
             aname = ''
             if frmat in graders:
                 gform = graders[frmat]
-                aname = '%s %02d' % (gform.short_label, gform.index)
+                aname = '%s %02d' % (gform.short_label, gform.index)  # noqa: UP031
                 gform.index += 1
             elif sdesc.display_name in graders:
                 gform = graders[sdesc.display_name]
-                aname = '%s' % gform.short_label
+                aname = '%s' % gform.short_label  # noqa: UP031
             notes = ''
             if getattr(sdesc, 'score_by_attempt', False):
                 notes = ', score by attempt!'
             msg += "      %s (format=%s, Assignment=%s%s)\n"\
-                % (sdesc.display_name, frmat, aname, notes)
-    msg += "all descriptors:\n"
-    msg += "length=%d\n" % len(gcontext['all_descriptors'])
-    msg = '<pre>%s</pre>' % msg.replace('<', '&lt;')
+                % (sdesc.display_name, frmat, aname, notes)  # noqa: UP031
+    msg += "all graded blocks:\n"
+    msg += "length=%d\n" % gcontext['count_all_graded_blocks']  # noqa: UP031
+    msg = HTML('<pre>{}</pre>').format(Text(msg))
     return msg

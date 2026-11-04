@@ -1,7 +1,6 @@
 var edx = edx || {},
 
     Navigation = (function() {
-
         var navigation = {
 
             init: function() {
@@ -41,11 +40,11 @@ var edx = edx || {},
                 $('.accordion').on('click', '.button-chapter', function(event) {
                     event.preventDefault();
 
-                    var button = $(event.currentTarget),
-                        section = button.next('.chapter-content-container');
+                    var $button = $(event.currentTarget),
+                        section = $button.next('.chapter-content-container');
 
-                    navigation.closeAccordions(button, section);
-                    navigation.openAccordion(button, section);
+                    navigation.closeAccordions($button, section);
+                    navigation.openAccordion($button, section);
                 });
             },
 
@@ -64,28 +63,29 @@ var edx = edx || {},
             },
 
             closeAccordions: function(button, section) {
-                var menu = $(section).find('.chapter-menu'), toggle;
+                var menu = $(section).find('.chapter-menu'),
+                    toggle;
 
                 $('.accordion .button-chapter').each(function(index, element) {
-                    toggle = $(element);
+                    $toggle = $(element);
 
-                    toggle
+                    $toggle
                         .removeClass('is-open')
                         .attr('aria-expanded', 'false');
 
-                    toggle
+                    $toggle
                         .children('.group-heading')
                         .removeClass('active')
                         .find('.icon')
-                            .addClass('fa-caret-right')
-                            .removeClass('fa-caret-down');
+                        .addClass('fa-caret-right')
+                        .removeClass('fa-caret-down');
 
-                    toggle
+                    $toggle
                         .next('.chapter-content-container')
                         .removeClass('is-open')
                         .find('.chapter-menu').not(menu)
-                            .removeClass('is-open')
-                            .slideUp();
+                        .removeClass('is-open')
+                        .slideUp();
                 });
             },
 
@@ -96,35 +96,34 @@ var edx = edx || {},
             },
 
             openAccordion: function(button, section) {
-                var sectionEl = $(section),
-                    firstLink = sectionEl.find('.menu-item').first(),
-                    buttonEl = $(button);
+                var $sectionEl = $(section),
+                    firstLink = $sectionEl.find('.menu-item').first(),
+                    $buttonEl = $(button);
 
-                buttonEl
+                $buttonEl
                     .addClass('is-open')
                     .attr('aria-expanded', 'true');
 
-                buttonEl
+                $buttonEl
                     .children('.group-heading')
                     .addClass('active')
                     .find('.icon')
-                        .removeClass('fa-caret-right')
-                        .addClass('fa-caret-down');
+                    .removeClass('fa-caret-right')
+                    .addClass('fa-caret-down');
 
-                sectionEl
+                $sectionEl
                     .addClass('is-open')
                     .find('.chapter-menu')
-                        .addClass('is-open')
-                        .slideDown();
+                    .addClass('is-open')
+                    .slideDown();
             }
         };
 
         return {
             init: navigation.init
         };
+    }());
 
-    })();
-
-    edx.util = edx.util || {};
-    edx.util.navigation = Navigation;
-    edx.util.navigation.init();
+edx.util = edx.util || {};
+edx.util.navigation = Navigation;
+edx.util.navigation.init();

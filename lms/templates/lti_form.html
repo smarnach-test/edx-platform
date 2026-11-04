@@ -1,6 +1,8 @@
+<%page expression_filter="h"/>
 <%!
 import json
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
+from openedx.core.djangolib.js_utils import js_escaped_string
 %>
 <!DOCTYPE HTML>
 <html>
@@ -10,7 +12,7 @@ from django.utils.translation import ugettext as _
     </head>
     <body>
     ## This form will be hidden.
-    ## LTI module JavaScript will trigger a "submit" on the form, and the
+    ## LTI block JavaScript will trigger a "submit" on the form, and the
     ## result will be rendered instead.
         <form
             id="lti-${element_id}"
@@ -28,7 +30,7 @@ from django.utils.translation import ugettext as _
         </form>
         <script type="text/javascript">
             (function (d) {
-                var element = d.getElementById("lti-${element_id}");
+                var element = d.getElementById("lti-${element_id | n, js_escaped_string}");
                 if (element) {
                     element.submit();
                 }

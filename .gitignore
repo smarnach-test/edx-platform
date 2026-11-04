@@ -3,9 +3,16 @@
 
 ### Files private to developers
 
-requirements/private.txt
+# Files that should be git-ignored, but are hand-edited or otherwise valued,
+# and so should not be destroyed by "make clean".
+# start-noclean
 lms/envs/private.py
 cms/envs/private.py
+.venv/
+CLAUDE.md
+.claude/
+AGENTS.md
+# end-noclean
 
 ### Python artifacts
 *.pyc
@@ -19,6 +26,18 @@ cms/envs/private.py
 .redcar/
 codekit-config.json
 .pycharm_helpers/
+/_mac/*
+/IntelliLang.xml
+/conda_packages.xml
+/databaseSettings.xml
+/diff.xml
+/debugger.xml
+/editor.xml
+/ide.general.xml
+/inspection/Default.xml
+/other.xml
+/packages.xml
+/web-browsers.xml
 
 ### NFS artifacts
 .nfs*
@@ -38,16 +57,21 @@ codekit-config.json
 !django.mo
 !djangojs.po
 !djangojs.mo
-conf/locale/en/LC_MESSAGES/*.po
 conf/locale/en/LC_MESSAGES/*.mo
 conf/locale/fake*/LC_MESSAGES/*.po
 conf/locale/fake*/LC_MESSAGES/*.mo
+# this was a mistake in i18n_tools, now fixed.
 conf/locale/messages.mo
+conf/plugins-locale/
+conf/locale/*/LC_MESSAGES/
+/*/static/js/i18n/
+/*/static/js/xblock.v1-i18n/
 
 ### Testing artifacts
 .testids/
 .noseids
 nosetests.xml
+.cache/
 .coverage
 .coverage.*
 coverage.xml
@@ -56,9 +80,26 @@ cover_html/
 reports/
 jscover.log
 jscover.log.*
+.pytest_cache/
+pytest_task*.txt
 .tddium*
 common/test/data/test_unicode/static/
+test_root/courses/
+test_root/data/test_bare.git/
+# `test_root/data/` is `settings.GITHUB_REPO_ROOT` in the test settings;
+# course-import code (`cms/djangoapps/contentstore/.../tasks.py::import_olx`)
+# writes per-course subdirectories here named `urlsafe_b64encode(repr(course_key))`.
+# Ignore everything in that directory by default and explicitly re-include the
+# fixtures we actually want tracked. New fixture additions need an extra `!` line
+# below.
+test_root/data/*
+!test_root/data/video
+test_root/export_course_repos/
+test_root/paver_logs/
+test_root/uploads/
 django-pyfs
+.tox/
+common/test/data/badges/*.png
 
 ### Installation artifacts
 *.egg-info
@@ -66,25 +107,27 @@ django-pyfs
 .prereqs_cache
 .vagrant/
 node_modules
-.bundle/
 bin/
 
 ### Static assets pipeline artifacts
 *.scssc
-lms/static/css/
-lms/static/certificates/css/
-cms/static/css/
+lms/static/css
+lms/static/certificates/css
+cms/static/css
+common/static/common/js/vendor
+common/static/common/css/vendor
+common/static/bundles
+webpack-stats.json
 
 ### Styling generated from templates
 lms/static/sass/*.css
 lms/static/sass/*.css.map
 lms/static/certificates/sass/*.css
 lms/static/themed_sass/
-cms/static/css/
 cms/static/sass/*.css
 cms/static/sass/*.css.map
 cms/static/themed_sass/
-themes/**/css/*.css
+themes/**/css
 
 ### Logging artifacts
 log/
@@ -100,10 +143,24 @@ database.sqlite
 courseware/static/js/mathjax/*
 flushdb.sh
 build
+# Vendored pdf.js needs a build/ subdir whose name happens to collide with the
+# generic 'build' ignore above.
+!/common/static/js/vendor/pdfjs/build/
 /src/
 \#*\#
 .env/
-lms/lib/comment_client/python
+openedx/core/djangoapps/django_comment_common/comment_client/python
+openedx/core/djangoapps/cache_toolbox/__pycache__
 autodeploy.properties
 .ws_migrations_complete
 dist
+*.bak
+venv*/
+# Visual Studio Code
+.vscode
+
+# Locally generated PII reports
+pii_report
+
+# Pyenv Python version file
+.python-version

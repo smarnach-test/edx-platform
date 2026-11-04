@@ -1,33 +1,34 @@
-;(function (define) {
+(function(define) {
     'use strict';
+
     define([
-        'gettext', 'jquery', 'underscore', 'backbone', 'js/views/fields',
+        'gettext', 'jquery', 'underscore', 'backbone',
+        'edx-ui-toolkit/js/utils/html-utils', 'js/views/fields',
         'text!templates/fields/field_image.underscore',
         'backbone-super', 'jquery.fileupload'
-    ], function (gettext, $, _, Backbone, FieldViews, field_image_template) {
-
+    ], function(gettext, $, _, Backbone, HtmlUtils, FieldViews, FieldImageTemplate) {
         var ImageFieldView = FieldViews.FieldView.extend({
 
             fieldType: 'image',
 
-            fieldTemplate: field_image_template,
+            fieldTemplate: FieldImageTemplate,
             uploadButtonSelector: '.upload-button-input',
 
-            titleAdd: gettext("Upload an image"),
-            titleEdit: gettext("Change image"),
-            titleRemove: gettext("Remove"),
+            titleAdd: gettext('Upload an image'),
+            titleEdit: gettext('Change image'),
+            titleRemove: gettext('Remove'),
 
-            titleUploading: gettext("Uploading"),
-            titleRemoving: gettext("Removing"),
+            titleUploading: gettext('Uploading'),
+            titleRemoving: gettext('Removing'),
 
             titleImageAlt: '',
-            screenReaderTitle: gettext("Image"),
+            screenReaderTitle: gettext('Image'),
 
-            iconUpload: '<i class="icon fa fa-camera" aria-hidden="true"></i>',
-            iconRemove: '<i class="icon fa fa-remove" aria-hidden="true"></i>',
-            iconProgress: '<i class="icon fa fa-spinner fa-pulse fa-spin" aria-hidden="true"></i>',
+            iconUpload: '<span class="icon fa fa-camera" aria-hidden="true"></span>',
+            iconRemove: '<span class="icon fa fa-remove" aria-hidden="true"></span>',
+            iconProgress: '<span class="icon fa fa-spinner fa-pulse fa-spin" aria-hidden="true"></span>',
 
-            errorMessage: gettext("An error has occurred. Refresh the page, and then try again."),
+            errorMessage: gettext('An error has occurred. Refresh the page, and then try again.'),
 
             events: {
                 'click .u-field-upload-button': 'clickedUploadButton',
@@ -37,14 +38,15 @@
                 'blur .upload-button-input': 'hideHoverState'
             },
 
-            initialize: function (options) {
+            initialize: function(options) {
+                this.options = _.extend({}, options);
                 this._super(options);
                 _.bindAll(this, 'render', 'imageChangeSucceeded', 'imageChangeFailed', 'fileSelected',
-                          'watchForPageUnload', 'onBeforeUnload');
+                    'watchForPageUnload', 'onBeforeUnload');
             },
 
-            render: function () {
-                this.$el.html(this.template({
+            render: function() {
+                var attributes = {
                     id: this.options.valueAttribute,
                     inputName: (this.options.inputName || 'file'),
                     imageUrl: _.result(this, 'imageUrl'),
@@ -54,30 +56,31 @@
                     removeButtonIcon: _.result(this, 'iconRemove'),
                     removeButtonTitle: _.result(this, 'removeButtonTitle'),
                     screenReaderTitle: _.result(this, 'screenReaderTitle')
-                }));
+                };
+                this.$el.html(HtmlUtils.HTML(this.template(attributes)).toString());
                 this.delegateEvents();
                 this.updateButtonsVisibility();
                 this.watchForPageUnload();
                 return this;
             },
 
-            showHoverState: function () {
+            showHoverState: function() {
                 this.$('.u-field-upload-button').addClass('button-visible');
             },
 
-            hideHoverState: function () {
+            hideHoverState: function() {
                 this.$('.u-field-upload-button').removeClass('button-visible');
             },
 
-            showErrorMessage: function (message) {
+            showErrorMessage: function(message) {
                 return message;
             },
 
-            imageUrl: function () {
+            imageUrl: function() {
                 return '';
             },
 
-            uploadButtonTitle: function () {
+            uploadButtonTitle: function() {
                 if (this.isShowingPlaceholder()) {
                     return _.result(this, 'titleAdd');
                 } else {
@@ -85,27 +88,27 @@
                 }
             },
 
-            removeButtonTitle: function () {
+            removeButtonTitle: function() {
                 return this.titleRemove;
             },
 
-            isEditingAllowed: function () {
+            isEditingAllowed: function() {
                 return true;
             },
 
-            isShowingPlaceholder: function () {
+            isShowingPlaceholder: function() {
                 return false;
             },
 
-            setUploadButtonVisibility: function (state) {
+            setUploadButtonVisibility: function(state) {
                 this.$('.u-field-upload-button').css('display', state);
             },
 
-            setRemoveButtonVisibility: function (state) {
+            setRemoveButtonVisibility: function(state) {
                 this.$('.u-field-remove-button').css('display', state);
             },
 
-            updateButtonsVisibility: function () {
+            updateButtonsVisibility: function() {
                 if (!this.isEditingAllowed() || !this.options.editable) {
                     this.setUploadButtonVisibility('none');
                 }
@@ -115,7 +118,7 @@
                 }
             },
 
-            clickedUploadButton: function () {
+            clickedUploadButton: function() {
                 $(this.uploadButtonSelector).fileupload({
                     url: this.options.imageUploadUrl,
                     type: 'POST',
@@ -125,7 +128,7 @@
                 });
             },
 
-            clickedRemoveButton: function () {
+            clickedRemoveButton: function() {
                 var view = this;
                 this.setCurrentStatus('removing');
                 this.setUploadButtonVisibility('none');
@@ -133,24 +136,25 @@
                 $.ajax({
                     type: 'POST',
                     url: this.options.imageRemoveUrl
-                }).done(function () {
+                }).done(function() {
                     view.imageChangeSucceeded();
-                }).fail(function (jqXHR) {
+                }).fail(function(jqXHR) {
                     view.showImageChangeFailedMessage(jqXHR.status, jqXHR.responseText);
                 });
             },
 
-            imageChangeSucceeded: function () {
+            imageChangeSucceeded: function() {
+                this.$('.u-field-upload-button').removeClass('in-progress');
                 this.render();
             },
 
-            imageChangeFailed: function (e, data) {
+            imageChangeFailed: function(e, data) {
             },
 
-            showImageChangeFailedMessage: function (status, responseText) {
+            showImageChangeFailedMessage: function(status, responseText) {
             },
 
-            fileSelected: function (e, data) {
+            fileSelected: function(e, data) {
                 if (_.isUndefined(data.files[0].size) || this.validateImageSize(data.files[0].size)) {
                     this.setCurrentStatus('uploading');
                     this.setRemoveButtonVisibility('none');
@@ -159,13 +163,13 @@
                 }
             },
 
-            validateImageSize: function (imageBytes) {
+            validateImageSize: function(imageBytes) {
                 var humanReadableSize;
                 if (imageBytes < this.options.imageMinBytes) {
                     humanReadableSize = this.bytesToHumanReadable(this.options.imageMinBytes);
                     this.showErrorMessage(
                         interpolate_text(
-                            gettext("The file must be at least {size} in size."), {size: humanReadableSize}
+                            gettext('The file must be at least {size} in size.'), {size: humanReadableSize}
                         )
                     );
                     return false;
@@ -173,7 +177,7 @@
                     humanReadableSize = this.bytesToHumanReadable(this.options.imageMaxBytes);
                     this.showErrorMessage(
                         interpolate_text(
-                            gettext("The file must be smaller than {size} in size."), {size: humanReadableSize}
+                            gettext('The file must be smaller than {size} in size.'), {size: humanReadableSize}
                         )
                     );
                     return false;
@@ -181,47 +185,47 @@
                 return true;
             },
 
-            showUploadInProgressMessage: function () {
-                this.$('.u-field-upload-button').css('opacity', 1);
-                this.$('.upload-button-icon').html(this.iconProgress);
-                this.$('.upload-button-title').html(this.titleUploading);
+            showUploadInProgressMessage: function() {
+                this.$('.u-field-upload-button').addClass('in-progress');
+                HtmlUtils.setHtml(this.$('.upload-button-icon'), HtmlUtils.HTML(this.iconProgress));
+                HtmlUtils.setHtml(this.$('.upload-button-title'), HtmlUtils.HTML(this.titleUploading));
             },
 
-            showRemovalInProgressMessage: function () {
+            showRemovalInProgressMessage: function() {
                 this.$('.u-field-remove-button').css('opacity', 1);
-                this.$('.remove-button-icon').html(this.iconProgress);
-                this.$('.remove-button-title').html(this.titleRemoving);
+                HtmlUtils.setHtml(this.$('.remove-button-icon'), HtmlUtils.HTML(this.iconProgress));
+                HtmlUtils.setHtml(this.$('.remove-button-title'), HtmlUtils.HTML(this.titleRemoving));
             },
 
-            setCurrentStatus: function (status) {
+            setCurrentStatus: function(status) {
                 this.$('.image-wrapper').attr('data-status', status);
             },
 
-            getCurrentStatus: function () {
+            getCurrentStatus: function() {
                 return this.$('.image-wrapper').attr('data-status');
             },
 
-            watchForPageUnload: function () {
+            watchForPageUnload: function() {
                 $(window).on('beforeunload', this.onBeforeUnload);
             },
 
-            onBeforeUnload: function () {
+            onBeforeUnload: function() {
                 var status = this.getCurrentStatus();
                 if (status === 'uploading') {
-                    return gettext("Upload is in progress. To avoid errors, stay on this page until the process is complete.");
+                    return gettext('Upload is in progress. To avoid errors, stay on this page until the process is complete.');
                 } else if (status === 'removing') {
-                    return gettext("Removal is in progress. To avoid errors, stay on this page until the process is complete.");
+                    return gettext('Removal is in progress. To avoid errors, stay on this page until the process is complete.');
                 }
             },
 
-            bytesToHumanReadable: function (size) {
+            bytesToHumanReadable: function(size) {
                 var units = [gettext('bytes'), gettext('KB'), gettext('MB')];
                 var i = 0;
-                while(size >= 1024) {
+                while (size >= 1024) {
                     size /= 1024;
                     ++i;
                 }
-                return size.toFixed(1)*1 + ' ' + units[i];
+                return size.toFixed(1) * 1 + ' ' + units[i];
             }
         });
 

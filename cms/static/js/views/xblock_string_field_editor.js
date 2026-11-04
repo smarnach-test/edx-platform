@@ -5,8 +5,9 @@
  * XBlock field's value if it has been changed. If the user presses Escape, then any changes will
  * be removed and the input hidden again.
  */
-define(["js/views/baseview", "js/views/utils/xblock_utils"],
-    function (BaseView, XBlockViewUtils) {
+define(['js/views/baseview', 'js/views/utils/xblock_utils', 'edx-ui-toolkit/js/utils/html-utils'],
+    function(BaseView, XBlockViewUtils, HtmlUtils) {
+        'use strict';
 
         var XBlockStringFieldEditor = BaseView.extend({
             events: {
@@ -30,11 +31,13 @@ define(["js/views/baseview", "js/views/utils/xblock_utils"],
             },
 
             render: function() {
-                this.$el.append(this.template({
+                var attributes = {
+                    // xss-lint: disable=javascript-escape
                     value: this.model.escape(this.fieldName),
                     fieldName: this.fieldName,
                     fieldDisplayName: this.fieldDisplayName
-                }));
+                };
+                this.$el.append(HtmlUtils.HTML(this.template(attributes)).toString());
                 return this;
             },
 
@@ -42,7 +45,7 @@ define(["js/views/baseview", "js/views/utils/xblock_utils"],
                 return this.$('.xblock-field-value');
             },
 
-            getInput: function () {
+            getInput: function() {
                 return this.$('.xblock-field-input');
             },
 
@@ -116,7 +119,7 @@ define(["js/views/baseview", "js/views/utils/xblock_utils"],
             },
 
             handleKeyUp: function(event) {
-                if (event.keyCode === 27) {   // Revert the changes if the user hits escape
+                if (event.keyCode === 27) { // Revert the changes if the user hits escape
                     this.cancelInput();
                 }
             }

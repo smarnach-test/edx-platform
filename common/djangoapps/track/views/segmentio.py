@@ -1,33 +1,39 @@
 """Handle events that were forwarded from the Segment webhook integration"""
 
-import datetime
+
 import json
 import logging
 
+from dateutil import parser
 from django.conf import settings
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User  # pylint: disable=imported-auth-user
 from django.http import HttpResponse
-from django.views.decorators.http import require_POST
 from django.views.decorators.csrf import csrf_exempt
-
+from django.views.decorators.http import require_POST
+from edx_django_utils.monitoring import set_custom_attribute
 from eventtracking import tracker
-from opaque_keys.edx.keys import CourseKey
 from opaque_keys import InvalidKeyError
-from util.json_request import expect_json
+from opaque_keys.edx.keys import CourseKey
+
+from common.djangoapps.util.json_request import expect_json
 
 log = logging.getLogger(__name__)
 
 
 ERROR_UNAUTHORIZED = 'Unauthorized'
-WARNING_IGNORED_SOURCE = 'Source ignored'
-WARNING_IGNORED_TYPE = 'Type ignored'
 ERROR_MISSING_USER_ID = 'Required user_id missing from context'
 ERROR_USER_NOT_EXIST = 'Specified user does not exist'
 ERROR_INVALID_USER_ID = 'Unable to parse userId as an integer'
+ERROR_INVALID_CONTEXT_FIELD_TYPE = 'The properties.context field is not a dict.'
+ERROR_INVALID_DATA_FIELD_TYPE = 'The properties.data field is not a dict.'
 ERROR_MISSING_DATA = 'The data field must be specified in the properties dictionary'
 ERROR_MISSING_NAME = 'The name field must be specified in the properties dictionary'
 ERROR_MISSING_TIMESTAMP = 'Required timestamp field not found'
 ERROR_MISSING_RECEIVED_AT = 'Required receivedAt field not found'
+
+
+FORUM_THREAD_VIEWED_EVENT_LABEL = 'Forum: View Thread'
+BI_SCREEN_VIEWED_EVENT_NAME = 'edx.bi.app.navigation.screen'
 
 
 @require_POST
@@ -67,7 +73,7 @@ def segmentio_event(request):
     try:
         track_segmentio_event(request)
     except EventValidationError as err:
-        log.warning(
+        log.debug(
             'Unable to process event received from Segment: message="%s" event="%s"',
             str(err),
             request.body
@@ -80,7 +86,7 @@ def segmentio_event(request):
 
 class EventValidationError(Exception):
     """Raised when an invalid event is received."""
-    pass
+    pass  # pylint: disable=unnecessary-pass
 
 
 def track_segmentio_event(request):  # pylint: disable=too-many-statements
@@ -120,49 +126,58 @@ def track_segmentio_event(request):  # pylint: disable=too-many-statements
     full_segment_event = request.json
 
     # We mostly care about the properties
-    segment_properties = full_segment_event.get('properties', {})
+    segment_properties = _get_dict_value_with_default(full_segment_event, 'properties', {})
 
     # Start with the context provided by Segment in the "client" field if it exists
     # We should tightly control which fields actually get included in the event emitted.
-    segment_context = full_segment_event.get('context')
+    segment_context = _get_dict_value_with_default(full_segment_event, 'context', {})
 
     # Build up the event context by parsing fields out of the event received from Segment
     context = {}
 
-    library_name = segment_context.get('library', {}).get('name')
+    library_name = _get_dict_value_with_default(segment_context, 'library', {}).get('name')
     source_map = getattr(settings, 'TRACKING_SEGMENTIO_SOURCE_MAP', {})
     event_source = source_map.get(library_name)
     if not event_source:
-        raise EventValidationError(WARNING_IGNORED_SOURCE)
+        return
     else:
         context['event_source'] = event_source
 
-    if 'name' not in segment_properties:
-        raise EventValidationError(ERROR_MISSING_NAME)
-
-    if 'data' not in segment_properties:
-        raise EventValidationError(ERROR_MISSING_DATA)
-
-    # Ignore event types and names that are unsupported
+    # Ignore event types that are unsupported
     segment_event_type = full_segment_event.get('type')
-    segment_event_name = segment_properties['name']
     allowed_types = [a.lower() for a in getattr(settings, 'TRACKING_SEGMENTIO_ALLOWED_TYPES', [])]
+    if not segment_event_type or (segment_event_type.lower() not in allowed_types):
+        return
+
+    # Ignore event names that are unsupported
+    segment_event_name = _get_segmentio_event_name(segment_properties)
     disallowed_substring_names = [
         a.lower() for a in getattr(settings, 'TRACKING_SEGMENTIO_DISALLOWED_SUBSTRING_NAMES', [])
     ]
-    if (
-        not segment_event_type or
-        (segment_event_type.lower() not in allowed_types) or
-        any(disallowed_subs_name in segment_event_name.lower() for disallowed_subs_name in disallowed_substring_names)
-    ):
-        raise EventValidationError(WARNING_IGNORED_TYPE)
+
+    if any(disallowed_subs_name in segment_event_name.lower() for disallowed_subs_name in disallowed_substring_names):
+        return
+
+    set_custom_attribute('segment_event_name', segment_event_name)
+    set_custom_attribute('segment_event_source', event_source)
+
+    # Attempt to extract and validate the data field.
+    if 'data' not in segment_properties:
+        raise EventValidationError(ERROR_MISSING_DATA)
+    segment_event_data = segment_properties.get('data', {})
+    if type(segment_event_data) is not dict:  # pylint: disable=unidiomatic-typecheck
+        set_custom_attribute('segment_unexpected_data', str(segment_event_data))
+        raise EventValidationError(ERROR_INVALID_DATA_FIELD_TYPE)
 
     # create and populate application field if it doesn't exist
     app_context = segment_properties.get('context', {})
+    if type(app_context) is not dict:  # pylint: disable=unidiomatic-typecheck
+        set_custom_attribute('segment_unexpected_context', str(app_context))
+        raise EventValidationError(ERROR_INVALID_CONTEXT_FIELD_TYPE)
     if 'application' not in app_context:
         context['application'] = {
             'name': app_context.get('app_name', ''),
-            'version': '' if not segment_context else segment_context.get('app', {}).get('version', '')
+            'version': segment_context.get('app', {}).get('version', ''),
         }
     app_context.pop('app_name', None)
 
@@ -187,12 +202,11 @@ def track_segmentio_event(request):  # pylint: disable=too-many-statements
     try:
         user = User.objects.get(pk=user_id)
     except User.DoesNotExist:
-        raise EventValidationError(ERROR_USER_NOT_EXIST)
+        raise EventValidationError(ERROR_USER_NOT_EXIST)  # pylint: disable=raise-missing-from  # noqa: B904
     except ValueError:
-        raise EventValidationError(ERROR_INVALID_USER_ID)
-    else:
-        context['user_id'] = user.id
-        context['username'] = user.username
+        raise EventValidationError(ERROR_INVALID_USER_ID)  # pylint: disable=raise-missing-from  # noqa: B904
+    context['user_id'] = user.id
+    context['username'] = user.username
 
     # course_id is expected to be provided in the context when applicable
     course_id = context.get('course_id')
@@ -202,7 +216,7 @@ def track_segmentio_event(request):  # pylint: disable=too-many-statements
             context['org_id'] = course_key.org
         except InvalidKeyError:
             log.warning(
-                'unable to parse course_id "{course_id}" from event: {event}'.format(
+                'unable to parse course_id "{course_id}" from event: {event}'.format(  # noqa: UP032
                     course_id=course_id,
                     event=json.dumps(full_segment_event),
                 ),
@@ -221,10 +235,58 @@ def track_segmentio_event(request):  # pylint: disable=too-many-statements
 
     context['ip'] = segment_properties.get('context', {}).get('ip', '')
 
+    # For Business Intelligence events: Add label to context
+    if 'label' in segment_properties:
+        context['label'] = segment_properties['label']
+
+    # For Android-sourced Business Intelligence events: add course ID to context
+    if 'course_id' in segment_properties:
+        context['course_id'] = segment_properties['course_id']
+
     with tracker.get_tracker().context('edx.segmentio', context):
-        tracker.emit(segment_event_name, segment_properties.get('data', {}))
+        tracker.emit(segment_event_name, segment_event_data)
+
+
+def _get_segmentio_event_name(event_properties):
+    """
+    Get the name of a SegmentIO event.
+
+    Args:
+        event_properties: dict
+            The properties of the event, which should contain the event's
+            name or, in the case of an old Android screen event, its screen
+            label.
+
+    Returns: str
+        The name (or effective name) of the event.
+
+    Note:
+        In older versions of the Android app, screen-view tracking events
+        did not have a name. So, in order to capture forum-thread-viewed events
+        from those old-versioned apps, we have to accept the event based on
+        its screen label. We return an event name that matches screen-view
+        events in the iOS app and newer versions of the Android app.
+
+    Raises:
+        EventValidationError if name is missing
+    """
+    if 'name' in event_properties:
+        return event_properties['name']
+    elif event_properties.get('label') == FORUM_THREAD_VIEWED_EVENT_LABEL:
+        return BI_SCREEN_VIEWED_EVENT_NAME
+    else:
+        raise EventValidationError(ERROR_MISSING_NAME)
 
 
 def parse_iso8601_timestamp(timestamp):
     """Parse a particular type of ISO8601 formatted timestamp"""
-    return datetime.datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S.%fZ")
+    return parser.parse(timestamp)
+
+
+def _get_dict_value_with_default(dict_object, key, default):
+    """
+    Returns default if the dict doesn't have the key or if the value is Falsey.
+    Otherwise, returns the dict's value for the key.
+    """
+    value = dict_object.get(key, None)
+    return value if value else default

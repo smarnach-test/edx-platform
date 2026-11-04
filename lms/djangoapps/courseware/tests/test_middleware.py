@@ -2,53 +2,58 @@
 Tests for courseware middleware
 """
 
-from django.core.urlresolvers import reverse
-from django.test.client import RequestFactory
+
 from django.http import Http404
-from mock import patch
-from nose.plugins.attrib import attr
+from django.test.client import RequestFactory
 
-import courseware.courses as courses
-from courseware.middleware import RedirectUnenrolledMiddleware
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-from xmodule.modulestore.tests.factories import CourseFactory
+from lms.djangoapps.courseware.exceptions import Redirect
+from lms.djangoapps.courseware.middleware import RedirectMiddleware
+from xmodule.modulestore.tests.django_utils import (
+    SharedModuleStoreTestCase,  # pylint: disable=wrong-import-order
+)
+from xmodule.modulestore.tests.factories import CourseFactory  # pylint: disable=wrong-import-order
 
 
-@attr('shard_1')
-class CoursewareMiddlewareTestCase(ModuleStoreTestCase):
+class CoursewareMiddlewareTestCase(SharedModuleStoreTestCase):
     """Tests that courseware middleware is correctly redirected"""
 
-    def setUp(self):
-        super(CoursewareMiddlewareTestCase, self).setUp()
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.course = CourseFactory.create()
 
-        self.course = CourseFactory.create()
+    @staticmethod
+    def get_headers(cache_response):
+        """
+        Django 3.2 has no ._headers
+        See https://docs.djangoproject.com/en/3.2/releases/3.2/#requests-and-responses
+        """
+        if hasattr(cache_response, '_headers'):
+            headers = cache_response._headers.copy()  # pylint: disable=protected-access
+        else:
+            headers = {k.lower(): (k, v) for k, v in cache_response.items()}
 
-    def check_user_not_enrolled_redirect(self):
-        """A UserNotEnrolled exception should trigger a redirect"""
-        request = RequestFactory().get("dummy_url")
-        response = RedirectUnenrolledMiddleware().process_exception(
-            request, courses.UserNotEnrolled(self.course.id)
-        )
-        self.assertEqual(response.status_code, 302)
-        # make sure we redirect to the course about page
-        expected_url = reverse(
-            "about_course", args=[self.course.id.to_deprecated_string()]
-        )
-
-        target_url = response._headers['location'][1]
-        self.assertTrue(target_url.endswith(expected_url))
-
-    def test_user_not_enrolled_redirect(self):
-        self.check_user_not_enrolled_redirect()
-
-    @patch.dict("django.conf.settings.FEATURES", {"ENABLE_MKTG_SITE": True})
-    def test_user_not_enrolled_redirect_mktg(self):
-        self.check_user_not_enrolled_redirect()
+        return headers
 
     def test_process_404(self):
         """A 404 should not trigger anything"""
         request = RequestFactory().get("dummy_url")
-        response = RedirectUnenrolledMiddleware().process_exception(
+        response = RedirectMiddleware(get_response=lambda request: None).process_exception(
             request, Http404()
         )
-        self.assertIsNone(response)
+        assert response is None
+
+    def test_redirect_exceptions(self):
+        """
+        Unit tests for handling of Redirect exceptions.
+        """
+        request = RequestFactory().get("dummy_url")
+        test_url = '/test_url'
+        exception = Redirect(test_url)
+        response = RedirectMiddleware(get_response=lambda request: None).process_exception(
+            request, exception
+        )
+        assert response.status_code == 302
+        headers = self.get_headers(response)
+        target_url = headers['location'][1]
+        assert target_url.endswith(test_url)

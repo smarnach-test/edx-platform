@@ -1,26 +1,32 @@
 """Models for the util app. """
-import cStringIO
+
+
 import gzip
 import logging
-
-from django.db import models
-from django.utils.text import compress_string
+from io import BytesIO
 
 from config_models.models import ConfigurationModel
+from django.db import models
+from django.utils.text import compress_string
+from opaque_keys.edx.django.models import CreatorMixin
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
 
 class RateLimitConfiguration(ConfigurationModel):
-    """Configuration flag to enable/disable rate limiting.
+    """
+    Configuration flag to enable/disable rate limiting.
 
     Applies to Django Rest Framework views.
 
     This is useful for disabling rate limiting for performance tests.
     When enabled, it will disable rate limiting on any view decorated
     with the `can_disable_rate_limit` class decorator.
+
+    .. no_pii:
     """
-    pass
+    class Meta(ConfigurationModel.Meta):
+        app_label = "util"
 
 
 def decompress_string(value):
@@ -30,44 +36,38 @@ def decompress_string(value):
 
     try:
         val = value.encode('utf').decode('base64')
-        zbuf = cStringIO.StringIO(val)
+        zbuf = BytesIO(val)
         zfile = gzip.GzipFile(fileobj=zbuf)
         ret = zfile.read()
         zfile.close()
-    except Exception as e:
+    except Exception as e:  # pylint: disable=broad-except
         logger.error('String decompression failed. There may be corrupted data in the database: %s', e)
         ret = value
     return ret
 
 
-class CompressedTextField(models.TextField):
-    """ TextField that transparently compresses data when saving to the database, and decompresses the data
-    when retrieving it from the database. """
-
-    __metaclass__ = models.SubfieldBase
+class CompressedTextField(CreatorMixin, models.TextField):
+    """
+    TextField that transparently compresses data when saving to the database, and decompresses the data
+    when retrieving it from the database.
+    """
 
     def get_prep_value(self, value):
-        """ Compress the text data. """
+        """
+        Compress the text data.
+        """
         if value is not None:
-            if isinstance(value, unicode):
+            if isinstance(value, str):
                 value = value.encode('utf8')
             value = compress_string(value)
             value = value.encode('base64').decode('utf8')
         return value
 
     def to_python(self, value):
-        """ Decompresses the value from the database. """
-        if isinstance(value, unicode):
+        """
+        Decompresses the value from the database.
+        """
+        if isinstance(value, str):
             value = decompress_string(value)
 
         return value
-
-    def south_field_triple(self):
-        """Returns a suitable description of this field for South."""
-        # We'll just introspect the _actual_ field.
-        from south.modelsinspector import introspector
-
-        field_class = "django.db.models.fields.TextField"
-        args, kwargs = introspector(self)
-        # That's our definition!
-        return field_class, args, kwargs

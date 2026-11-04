@@ -1,25 +1,33 @@
 """
 Test for export all courses.
 """
+
+
 import shutil
 from tempfile import mkdtemp
+from unittest import skip
 
-from contentstore.management.commands.export_all_courses import export_courses_to_output_path
+from cms.djangoapps.contentstore.management.commands.export_all_courses import export_courses_to_output_path
+from xmodule.modulestore import ModuleStoreEnum  # pylint: disable=wrong-import-order
+from xmodule.modulestore.django import modulestore  # pylint: disable=wrong-import-order
+from xmodule.modulestore.tests.django_utils import (
+    ModuleStoreTestCase,  # pylint: disable=wrong-import-order
+)
+from xmodule.modulestore.tests.factories import CourseFactory  # pylint: disable=wrong-import-order
 
-from xmodule.modulestore import ModuleStoreEnum
-from xmodule.modulestore.django import modulestore
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-from xmodule.modulestore.tests.factories import CourseFactory
 
-
+@skip("OldMongo Deprecation")
+# This test fails for split modulestre
+# AttributeError: 'MixedModuleStore' object has no attribute 'collection'
+# split module store has no 'collection' attribute.
 class ExportAllCourses(ModuleStoreTestCase):
     """
     Tests exporting all courses.
     """
     def setUp(self):
         """ Common setup. """
-        super(ExportAllCourses, self).setUp()
-        self.store = modulestore()._get_modulestore_by_type(ModuleStoreEnum.Type.mongo)
+        super().setUp()
+        self.store = modulestore()._get_modulestore_by_type(ModuleStoreEnum.Type.mongo)  # pylint: disable=protected-access
         self.temp_dir = mkdtemp()
         self.addCleanup(shutil.rmtree, self.temp_dir)
         self.first_course = CourseFactory.create(
@@ -35,8 +43,8 @@ class ExportAllCourses(ModuleStoreTestCase):
         """
         # check that both courses exported successfully
         courses, failed_export_courses = export_courses_to_output_path(self.temp_dir)
-        self.assertEqual(len(courses), 2)
-        self.assertEqual(len(failed_export_courses), 0)
+        self.assertEqual(len(courses), 2)  # noqa: PT009
+        self.assertEqual(len(failed_export_courses), 0)  # noqa: PT009
 
         # manually make second course faulty and check that it fails on export
         second_course_id = self.second_course.id
@@ -45,6 +53,6 @@ class ExportAllCourses(ModuleStoreTestCase):
             {'$set': {'metadata.tags': 'crash'}}
         )
         courses, failed_export_courses = export_courses_to_output_path(self.temp_dir)
-        self.assertEqual(len(courses), 2)
-        self.assertEqual(len(failed_export_courses), 1)
-        self.assertEqual(failed_export_courses[0], unicode(second_course_id))
+        self.assertEqual(len(courses), 2)  # noqa: PT009
+        self.assertEqual(len(failed_export_courses), 1)  # noqa: PT009
+        self.assertEqual(failed_export_courses[0], str(second_course_id))  # noqa: PT009

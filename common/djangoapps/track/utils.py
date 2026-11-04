@@ -1,7 +1,8 @@
 """Utility functions and classes for track backends"""
 
-from datetime import datetime, date
+
 import json
+from datetime import date, datetime
 
 from pytz import UTC
 
@@ -9,7 +10,7 @@ from pytz import UTC
 class DateTimeJSONEncoder(json.JSONEncoder):
     """JSON encoder aware of datetime.datetime and datetime.date objects"""
 
-    def default(self, obj):  # pylint: disable=method-hidden
+    def default(self, obj):  # pylint: disable=arguments-differ, method-hidden
         """
         Serialize datetime and date objects of iso format.
 
@@ -19,7 +20,7 @@ class DateTimeJSONEncoder(json.JSONEncoder):
         if isinstance(obj, datetime):
             if obj.tzinfo is None:
                 # Localize to UTC naive datetime objects
-                obj = UTC.localize(obj)
+                obj = UTC.localize(obj)  # pylint: disable=no-value-for-parameter
             else:
                 # Convert to UTC datetime objects from other timezones
                 obj = obj.astimezone(UTC)
@@ -27,4 +28,4 @@ class DateTimeJSONEncoder(json.JSONEncoder):
         elif isinstance(obj, date):
             return obj.isoformat()
 
-        return super(DateTimeJSONEncoder, self).default(obj)
+        return super().default(obj)  # pylint: disable=super-with-arguments

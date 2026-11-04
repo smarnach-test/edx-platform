@@ -1,16 +1,16 @@
 """Event tracker backend that saves events to a python logger."""
 
-from __future__ import absolute_import
 
-import logging
 import json
+import logging
 
 from django.conf import settings
 
-from track.backends import BaseBackend
-from track.utils import DateTimeJSONEncoder
+from common.djangoapps.track.backends import BaseBackend
+from common.djangoapps.track.utils import DateTimeJSONEncoder
 
-log = logging.getLogger('track.backends.logger')
+log = logging.getLogger('common.djangoapps.track.backends.logger')
+application_log = logging.getLogger('common.djangoapps.track.backends.application_log')  # pylint: disable=invalid-name
 
 
 class LoggerBackend(BaseBackend):
@@ -28,12 +28,18 @@ class LoggerBackend(BaseBackend):
             been configured using the default python mechanisms.
 
         """
-        super(LoggerBackend, self).__init__(**kwargs)
+        super().__init__(**kwargs)  # pylint: disable=super-with-arguments
 
         self.event_logger = logging.getLogger(name)
 
     def send(self, event):
-        event_str = json.dumps(event, cls=DateTimeJSONEncoder)
+        try:
+            event_str = json.dumps(event, cls=DateTimeJSONEncoder)
+        except UnicodeDecodeError:
+            application_log.exception(
+                "UnicodeDecodeError Event_data: %r", event
+            )
+            raise
 
         # TODO: remove trucation of the serialized event, either at a
         # higher level during the emittion of the event, or by

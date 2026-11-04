@@ -1,4 +1,4 @@
-#   Copyright (c) 2008 Mikeal Rogers
+#   Copyright (c) 2008 Mikeal Rogers  # pylint: disable=missing-module-docstring
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -13,4 +13,19 @@
 #   limitations under the License.
 LOOKUP = {}
 
-from .paths import add_lookup, lookup_template, clear_lookups, save_lookups
+from .paths import (  # pylint: disable=wrong-import-position
+    add_lookup,  # noqa: F401
+    clear_lookups,  # noqa: F401
+    lookup_template,  # noqa: F401
+    save_lookups,  # noqa: F401
+)
+
+
+class Engines:
+    """
+    Aliases for the available template engines.
+    Note that the preview engine is only configured for cms.
+    """
+    DJANGO = 'django'
+    MAKO = 'mako'
+    PREVIEW = 'preview'

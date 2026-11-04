@@ -10,28 +10,27 @@ Test utilities for mobile API tests:
      MobileCourseAccessTestMixin - tests for APIs with mobile_course_access.
 """
 # pylint: disable=no-member
+
+
+import datetime
+
 import ddt
-from mock import patch
-from unittest import skip
-
-from django.core.urlresolvers import reverse
-
+import pytz
+from django.test.utils import override_settings
+from django.urls import reverse
+from django.utils import timezone
+from opaque_keys.edx.keys import CourseKey
 from rest_framework.test import APITestCase
 
-from opaque_keys.edx.keys import CourseKey
-
-from courseware.access_response import (
-    MobileAvailabilityError,
-    StartDateError,
-    VisibilityError
-)
-from courseware.tests.factories import UserFactory
-from student import auth
-from student.models import CourseEnrollment
+from common.djangoapps.student import auth
+from common.djangoapps.student.models import CourseEnrollment
+from common.djangoapps.student.tests.factories import UserFactory
+from lms.djangoapps.courseware.access_response import MobileAvailabilityError, StartDateError, VisibilityError
+from lms.djangoapps.mobile_api.models import IgnoreMobileAvailableFlagConfig
+from lms.djangoapps.mobile_api.tests.test_milestones import MobileAPIMilestonesMixin
+from lms.djangoapps.mobile_api.utils import API_V1
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory
-
-from mobile_api.test_milestones import MobileAPIMilestonesMixin
 
 
 class MobileAPITestCase(ModuleStoreTestCase, APITestCase):
@@ -42,14 +41,21 @@ class MobileAPITestCase(ModuleStoreTestCase, APITestCase):
     They may also override any of the methods defined in this class to control the behavior of the TestMixins.
     """
     def setUp(self):
-        super(MobileAPITestCase, self).setUp()
-        self.course = CourseFactory.create(mobile_available=True, static_asset_path="needed_for_split")
+        super().setUp()
+        self.course = CourseFactory.create(
+            mobile_available=True,
+            static_asset_path="needed_for_split",
+            end=datetime.datetime.now(pytz.UTC),
+            certificate_available_date=datetime.datetime.now(pytz.UTC)
+        )
         self.user = UserFactory.create()
-        self.password = 'test'
+        self.password = self.TEST_PASSWORD
         self.username = self.user.username
+        self.api_version = API_V1
+        IgnoreMobileAvailableFlagConfig(enabled=False).save()
 
     def tearDown(self):
-        super(MobileAPITestCase, self).tearDown()
+        super().tearDown()
         self.logout()
 
     def login(self):
@@ -73,32 +79,34 @@ class MobileAPITestCase(ModuleStoreTestCase, APITestCase):
         self.login()
         self.enroll(course_id)
 
-    def api_response(self, reverse_args=None, expected_response_code=200, **kwargs):
+    def api_response(self, reverse_args=None, expected_response_code=200, data=None, **kwargs):
         """
         Helper method for calling endpoint, verifying and returning response.
         If expected_response_code is None, doesn't verify the response' status_code.
         """
         url = self.reverse_url(reverse_args, **kwargs)
-        response = self.url_method(url, **kwargs)
+        response = self.url_method(url, data=data, **kwargs)
         if expected_response_code is not None:
-            self.assertEqual(response.status_code, expected_response_code)
+            assert response.status_code == expected_response_code
         return response
 
-    def reverse_url(self, reverse_args=None, **kwargs):  # pylint: disable=unused-argument
+    def reverse_url(self, reverse_args=None, **kwargs):
         """Base implementation that returns URL for endpoint that's being tested."""
         reverse_args = reverse_args or {}
         if 'course_id' in self.REVERSE_INFO['params']:
-            reverse_args.update({'course_id': unicode(kwargs.get('course_id', self.course.id))})
+            reverse_args.update({'course_id': str(kwargs.get('course_id', self.course.id))})
         if 'username' in self.REVERSE_INFO['params']:
             reverse_args.update({'username': kwargs.get('username', self.user.username)})
+        if 'api_version' in self.REVERSE_INFO['params']:
+            reverse_args.update({'api_version': kwargs.get('api_version', self.api_version)})
         return reverse(self.REVERSE_INFO['name'], kwargs=reverse_args)
 
-    def url_method(self, url, **kwargs):  # pylint: disable=unused-argument
+    def url_method(self, url, data=None, **kwargs):  # pylint: disable=unused-argument
         """Base implementation that returns response from the GET method of the URL."""
-        return self.client.get(url)
+        return self.client.get(url, data=data)
 
 
-class MobileAuthTestMixin(object):
+class MobileAuthTestMixin:
     """
     Test Mixin for testing APIs decorated with mobile_view.
     """
@@ -113,7 +121,7 @@ class MobileAuthUserTestMixin(MobileAuthTestMixin):
     """
     def test_invalid_user(self):
         self.login_and_enroll()
-        self.api_response(expected_response_code=404, username='no_user')
+        self.api_response(expected_response_code=403, username='no_user')
 
     def test_other_user(self):
         # login and enroll as the test user
@@ -128,7 +136,7 @@ class MobileAuthUserTestMixin(MobileAuthTestMixin):
 
         # now login and call the API as the test user
         self.login()
-        self.api_response(expected_response_code=404, username=other.username)
+        self.api_response(expected_response_code=403, username=other.username)
 
 
 @ddt.ddt
@@ -138,15 +146,18 @@ class MobileCourseAccessTestMixin(MobileAPIMilestonesMixin):
     Subclasses are expected to inherit from MobileAPITestCase.
     Subclasses can override verify_success, verify_failure, and init_course_access methods.
     """
-    ALLOW_ACCESS_TO_UNRELEASED_COURSE = False  # pylint: disable=invalid-name
+    ALLOW_ACCESS_TO_UNRELEASED_COURSE = False
+    ALLOW_ACCESS_TO_NON_VISIBLE_COURSE = False
 
     def verify_success(self, response):
         """Base implementation of verifying a successful response."""
-        self.assertEqual(response.status_code, 200)
+        assert response.status_code == 200
 
-    def verify_failure(self, response):
+    def verify_failure(self, response, error_type=None):
         """Base implementation of verifying a failed response."""
-        self.assertEqual(response.status_code, 404)
+        assert response.status_code == 404
+        if error_type:
+            assert response.data == error_type.to_json()
 
     def init_course_access(self, course_id=None):
         """Base implementation of initializing the user for each test."""
@@ -159,15 +170,17 @@ class MobileCourseAccessTestMixin(MobileAPIMilestonesMixin):
         self.verify_success(response)  # allow subclasses to override verification
 
     def test_course_not_found(self):
-        non_existent_course_id = CourseKey.from_string('a/b/c')
+        non_existent_course_id = CourseKey.from_string('course-v1:a+b+c')
         self.init_course_access(course_id=non_existent_course_id)
 
         response = self.api_response(expected_response_code=None, course_id=non_existent_course_id)
         self.verify_failure(response)  # allow subclasses to override verification
 
-    @skip  # TODO fix this, see MA-1038
-    @patch.dict('django.conf.settings.FEATURES', {'DISABLE_START_DATES': False})
+    @override_settings(DISABLE_START_DATES=False)
     def test_unreleased_course(self):
+        # ensure the course always starts in the future
+        self.course = CourseFactory.create(mobile_available=True, static_asset_path="needed_for_split")
+        self.course.start = timezone.now() + datetime.timedelta(days=365)
         self.init_course_access()
         self._verify_response(self.ALLOW_ACCESS_TO_UNRELEASED_COURSE, StartDateError(self.course.start))
 
@@ -180,11 +193,20 @@ class MobileCourseAccessTestMixin(MobileAPIMilestonesMixin):
     )
     @ddt.unpack
     def test_non_mobile_available(self, role, should_succeed):
+        """
+        Tests that the MobileAvailabilityError() is raised for certain user
+        roles when trying to access course content. Also verifies that if
+        the IgnoreMobileAvailableFlagConfig is enabled,
+        MobileAvailabilityError() will not be raised for all user roles.
+        """
         self.init_course_access()
         # set mobile_available to False for the test course
         self.course.mobile_available = False
-        self.store.update_item(self.course, self.user.id)
+        self.course = self.update_course(self.course, self.user.id)
         self._verify_response(should_succeed, MobileAvailabilityError(), role)
+
+        IgnoreMobileAvailableFlagConfig(enabled=True).save()
+        self._verify_response(True, MobileAvailabilityError(), role)
 
     def test_unenrolled_user(self):
         self.login()
@@ -200,7 +222,9 @@ class MobileCourseAccessTestMixin(MobileAPIMilestonesMixin):
     def test_visible_to_staff_only_course(self, role, should_succeed):
         self.init_course_access()
         self.course.visible_to_staff_only = True
-        self.store.update_item(self.course, self.user.id)
+        self.course = self.update_course(self.course, self.user.id)
+        if self.ALLOW_ACCESS_TO_NON_VISIBLE_COURSE:
+            should_succeed = True
         self._verify_response(should_succeed, VisibilityError(), role)
 
     def _verify_response(self, should_succeed, error_type, role=None):
@@ -216,5 +240,4 @@ class MobileCourseAccessTestMixin(MobileAPIMilestonesMixin):
         if should_succeed:
             self.verify_success(response)
         else:
-            self.verify_failure(response)
-            self.assertEqual(response.data, error_type.to_json())
+            self.verify_failure(response, error_type)

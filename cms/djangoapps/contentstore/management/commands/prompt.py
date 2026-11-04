@@ -1,3 +1,8 @@
+"""
+Takes user input.
+"""
+
+
 import sys
 
 
@@ -25,11 +30,11 @@ def query_yes_no(question, default="yes"):
     elif default == "no":
         prompt = " [y/N] "
     else:
-        raise ValueError("invalid default answer: '%s'" % default)
+        raise ValueError("invalid default answer: '%s'" % default)  # noqa: UP031
 
     while True:
         sys.stdout.write(question + prompt)
-        choice = raw_input().lower()
+        choice = input().lower()
         if default is not None and choice == '':
             return valid[default]
         elif choice in valid:

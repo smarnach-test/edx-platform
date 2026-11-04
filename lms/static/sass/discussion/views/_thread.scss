@@ -2,196 +2,307 @@
 // ====================
 // NOTE: thread = (post + (responses and comments))
 
-// Table of Contents 
+// Table of Contents
 // * +general thread layout
 // * +thread - wrapper styling
 // * +thread - elements - shared styles
 // * +post - individual element styling
 // * +post - answered question - collapsed comment area
 
-// +general thread layout
-body.discussion, .discussion-module {
+// post layout
+.discussion-post {
+  padding: 0 calc(var(--baseline) / 2);
 
-  // post layout
-  .discussion-post {
-    @include padding(($baseline*1.5), ($baseline*1.5), $baseline, ($baseline*1.5));
-    @include border-radius(3px, 3px, 0, 0);
-    background-color: $white;
+  .post-header-actions {
+    @include float(right);
+  }
+}
 
-    .wrapper-post-header {
-      padding-bottom: 0;
-      margin-bottom: ($baseline*0.75);
+// post article
+.discussion-article {
+  .posted-details {
+    @extend %t-copy-sub2;
+    @extend %t-light;
+
+    margin: calc(var(--baseline) / 5) 0;
+    color: var(--forum-color-copy-light);
+
+    .username {
+      @extend %t-strong;
+
+      display: inline;
     }
 
-    .post-header-content {
-      display: inline-block;
-      width: flex-grid(9,12); 
+    .timeago,
+    .top-post-status {
+      color: inherit;
     }
+  }
+}
 
-    .post-header-actions {
-      @include float(right);
-      width: flex-grid(3,12);
+.thread-title {
+  display: block;
+  margin-bottom: var(--baseline);
+  font-size: var(--forum-x-large-font-size);
+  color: theme-color("gray-dark");
+  font-weight: 600;
+}
+
+.thread-responses-wrapper,
+.post-extended-content {
+  padding: 0 calc(var(--baseline) / 2);
+}
+
+// response layout
+.discussion-response {
+  min-height: calc(var(--baseline) * 5);
+
+  .response-header-content {
+    display: inline-block;
+    vertical-align: top;
+    width: flex-grid(11, 12);
+  }
+
+  .response-header-actions {
+    @include float(right);
+    @include right(var(--baseline));
+
+    position: absolute;
+    top: calc(var(--baseline) / 2);
+  }
+
+  // response body
+  .response-body {
+    @extend %t-copy-sub1;
+  }
+}
+
+// comments layout
+.discussion-comment {
+  .response-body {
+    @extend %t-copy-sub2;
+
+    @include padding(calc(var(--baseline) / 2), calc(var(--baseline) * 1.5), 0, 0);
+
+    display: inline-block;
+    margin-top: calc(var(--baseline) / 2);
+    width: flex-grid(10, 12);
+
+    p + p {
+      margin-top: calc(var(--baseline) / 2);
     }
   }
 
-  // response layout
-  .discussion-response {
-    min-height: ($baseline*5);
+  .comment-actions-list {
+    @include float(right);
+    @include right(calc(var(--baseline) / 2));
 
-    .response-header-content {
-      display: inline-block;
-      vertical-align: top;
-      width: flex-grid(11,12);
-    }
-
-    .response-header-actions {
-      @include float(right);
-      @include right($baseline);
-      position: absolute;
-      top: ($baseline);
-    }
-  }
-
-  // comments layout
-  .discussion-comment {
-
-    .response-body {
-      @extend %t-copy-sub2;
-      display: inline-block;
-      margin-bottom: ($baseline/2);
-      width: flex-grid(10,12);
-
-      p + p {
-        margin-top: 12px;
-      }
-    }
-
-    .comment-actions-list {
-      @include float(right);
-    }
-
-    .posted-details {
-      margin-top: 0;
-    }
+    position: absolute;
+    top: 0;
   }
 }
 
 // +thread - wrapper styling
-.forum-thread-main-wrapper {
-  @include border-radius(3px, 3px, 0, 0);
-  border-bottom: 1px solid $white; // Prevent collapsing margins
-  background-color: $white;
+.thread-wrapper {
+  .response-btn-count-wrapper {
+    margin: var(--baseline) 0;
+  }
 }
 
 // +thread - elements - shared styles
-body.discussion {
+.discussion-post,
+.discussion-response,
+.discussion-comment {
+  @include clearfix();
 
-  .discussion-post, .discussion-response, .discussion-comment {
-    @include clearfix();
-    
-    // thread - images
-    .author-image {
-      @include margin-right($baseline/2);
-      display: inline-block;
-      vertical-align: top; 
+  // thread - images
+  .author-image {
+    @include margin-right(calc(var(--baseline) / 2));
 
-      // STATE: No profile image 
-      &:empty {
-        display: none;
-      }
+    display: inline-block;
+    vertical-align: top;
 
-      // CASE: post image
-      &.level-post {
-        height: $post-image-dimension;
-        width: $post-image-dimension;
-      }
-
-      // CASE: response image
-      &.level-response {
-        height: $response-image-dimension;
-        width: $response-image-dimension;
-      }
-
-      // CASE: comment image
-      &.level-comment {
-        height: $comment-image-dimension;
-        width: $comment-image-dimension;
-      }
-
-      img {
-        border-radius: 3px;
-      }
+    // STATE: No profile image
+    &:empty {
+      display: none;
     }
 
-    // thread - header content details
-    .posted-details {
-      @extend %t-copy-sub2;
-      margin-top: ($baseline/5);
-      color: $gray-l1;
-
-      .username {
-        @extend %t-strong;
-        display: inline;
-      }
-
-      .timeago, .top-post-status {
-        color: inherit;
-      }
+    // CASE: post image
+    &.level-post {
+      height: var(--post-image-dimension);
+      width: var(--post-image-dimension);
     }
-  }
 
-  .discussion-post .post-body, .discussion-response .response-body {
-    @include padding-right($baseline); //ensures content doesn't overlap on post or response actions.
+    // CASE: response image
+    &.level-response {
+      height: var(--response-image-dimension);
+      width: var(--response-image-dimension);
+    }
+
+    // CASE: comment image
+    &.level-comment {
+      height: var(--comment-image-dimension);
+      width: var(--comment-image-dimension);
+    }
+
+    img {
+      border-radius: var(--forum-border-radius);
+    }
   }
 }
 
+.discussion-response .response-body {
+  @include padding(calc(var(--baseline) / 2), calc(var(--baseline) * 1.5), 0, 0); //ensures content doesn't overlap on post or response actions.
+
+  margin-bottom: 0.2em;
+  font-size: var(--forum-base-font-size);
+}
+
 // +post - individual element styling
-body.discussion .discussion-post, body.discussion .discussion-article {
-  // NOTE: discussion-article is used for inline discussion modules.
+.discussion-post {
   @include clearfix();
 
   .post-header-content {
+    max-width: calc(100% - #{var(--actions-dropdown-offset)});
 
     // post title
     .post-title {
-      @extend %t-title4;
-      @extend %t-ultrastrong;
-      margin-bottom: ($baseline/4);
-      letter-spacing: 0;
+      font-size: var(--forum-x-large-font-size);
+      margin-bottom: calc(var(--baseline) / 4);
     }
   }
 
   // post body
   .post-body {
     @extend %t-copy-sub1;
-    // clear: both; //TO-DO: confirm that removing this is ok for all cases of discussion posts.
+
+    padding: calc(var(--baseline) / 2) 0;
+    max-width: calc(100% - #{var(--actions-dropdown-offset)});
   }
 
   // post context
   .post-context {
     @extend %t-copy-sub2;
-    margin-top: $baseline;
-    color: $gray-d1;
-    padding: ($baseline*0.75);
-    background-color: $gray-l6;
-    border-radius: 3px;
+    @extend %t-light;
 
-    // CASE: no courseware context or cohort visiblity rules
+    color: var(--forum-color-copy-light);
+
+    // CASE: no courseware context or cohort visibility rules
     &:empty {
       display: none;
     }
+  }
+}
 
-    // post visibility - cohorts
-    .group-visibility-label {
-      margin-top: ($baseline/4);
+// Styling for discussion threads
+.discussion-thread {
+  padding: 0;
+  margin-bottom: var(--baseline);
+
+  @include transition(all 0.25s linear 0s);
+
+  p {
+    margin-bottom: 0;
+  }
+
+  .discussion-article {
+    @include transition(all 0.2s linear 0s);
+
+    border: 1px solid var(--forum-color-border);
+    border-radius: var(--forum-border-radius);
+    min-height: 0;
+    background: var(--forum-color-background);
+    box-shadow: 0 1px 0 var(--shadow);
+
+    @include transition(all 0.2s linear 0s);
+
+    .thread-wrapper {
+      @include border-radius(var(--forum-border-radius), var(--forum-border-radius), 0, 0);
+
+      position: relative;
+      overflow-x: hidden;
+      overflow-y: auto;
+      max-height: 600px;
+      background-color: var(--forum-color-background);
+
+      .discussion-post {
+        .inline-comment-count {
+          @include margin-right(calc(var(--baseline) / 2));
+
+          @extend %ui-depth2;
+
+          @include float(right);
+
+          position: relative;
+          display: block;
+          height: 27px;
+          margin-top: 6px;
+          padding: 0 8px;
+          border-radius: var(--forum-border-radius);
+          font-size: var(--forum-small-font-size);
+          font-weight: 400;
+          line-height: 25px;
+          color: #888;
+        }
+      }
+
+      .responses {
+        header {
+          padding-bottom: 0;
+          margin-bottom: calc(var(--baseline) * 0.75);
+
+          .posted-by {
+            @include margin-right(calc(var(--baseline) / 4));
+            @include float(left);
+
+            font-size: var(--forum-large-font-size);
+          }
+        }
+      }
+
+      .discussion-reply-new {
+        .wmd-input {
+          height: 120px;
+        }
+      }
+
+      // Content that is hidden by default in the inline view
+      .post-extended-content {
+        display: none;
+      }
+    }
+
+    .post-tools {
+      box-shadow: 0 1px 1px var(--shadow) inset;
+      background: var(--white);
+
+      &:hover {
+        background: var(--forum-color-hover-thread);
+
+        .icon {
+          color: var(--link-hover);
+        }
+      }
+
+      .btn-link {
+        display: block;
+        padding: calc(var(--baseline) * 0.25) var(--baseline);
+        font-size: var(--forum-small-font-size);
+        line-height: 30px;
+
+        .icon {
+          @include margin-right(calc(var(--baseline) * 0.25));
+
+          color: var(--link-color);
+        }
+      }
     }
   }
 }
 
-// +post - answered question - collapsed comment area
-body.discussion, .discussion-thread.expanded {
-  .forum-thread-main-wrapper {
-    box-shadow: 0 1px 3px $shadow;
+.thread-wrapper,
+.forum-new-post-form {
+  img {
+    max-width: 100%;
   }
 }
-

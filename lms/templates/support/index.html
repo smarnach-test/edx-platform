@@ -1,7 +1,8 @@
 ## mako
+<%page expression_filter="h"/>
 <%!
-from django.core.urlresolvers import reverse
-from django.utils.translation import ugettext as _
+from django.urls import reverse
+from django.utils.translation import gettext as _
 %>
 <%namespace name='static' file='../static_content.html'/>
 
@@ -16,7 +17,7 @@ ${_("Student Support")}
   <h1>${_("Student Support")}</h1>
   <ul>
     % for url in urls:
-    <li><a href="${url["url"]}">${unicode(url["name"])}</a>: ${unicode(url["description"])}</li>
+    <li><a href="${url["url"]}">${str(url["name"])}</a>: ${str(url["description"])}</li>
     % endfor
   </ul>
 </section>

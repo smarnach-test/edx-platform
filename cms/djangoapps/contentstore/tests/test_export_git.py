@@ -2,6 +2,7 @@
 Test the ability to export courses to xml from studio
 """
 
+
 import copy
 import os
 import shutil
@@ -11,13 +12,14 @@ from uuid import uuid4
 from django.conf import settings
 from django.test.utils import override_settings
 
+import cms.djangoapps.contentstore.git_export_utils as git_export_utils
+from cms.djangoapps.contentstore.utils import reverse_course_url
+from xmodule.modulestore.django import modulestore  # pylint: disable=wrong-import-order
+
 from .utils import CourseTestCase
-import contentstore.git_export_utils as git_export_utils
-from xmodule.modulestore.django import modulestore
-from contentstore.utils import reverse_course_url
 
 TEST_DATA_CONTENTSTORE = copy.deepcopy(settings.CONTENTSTORE)
-TEST_DATA_CONTENTSTORE['DOC_STORE_CONFIG']['db'] = 'test_xcontent_%s' % uuid4().hex
+TEST_DATA_CONTENTSTORE['DOC_STORE_CONFIG']['db'] = 'test_xcontent_%s' % uuid4().hex  # noqa: UP031
 
 
 @override_settings(CONTENTSTORE=TEST_DATA_CONTENTSTORE)
@@ -30,8 +32,8 @@ class TestExportGit(CourseTestCase):
         """
         Setup test course, user, and url.
         """
-        super(TestExportGit, self).setUp()
-        self.course_module = modulestore().get_course(self.course.id)
+        super().setUp()
+        self.course_block = modulestore().get_course(self.course.id)
         self.test_url = reverse_course_url('export_git', self.course.id)
 
     def make_bare_repo_with_course(self, repo_name):
@@ -44,7 +46,7 @@ class TestExportGit(CourseTestCase):
         os.mkdir(repo_dir)
         self.addCleanup(shutil.rmtree, repo_dir)
 
-        bare_repo_dir = '{0}/{1}.git'.format(
+        bare_repo_dir = '{}/{}.git'.format(  # noqa: UP032
             os.path.abspath(git_export_utils.GIT_REPO_EXPORT_DIR),
             repo_name
         )
@@ -53,8 +55,8 @@ class TestExportGit(CourseTestCase):
 
         subprocess.check_output(['git', '--bare', 'init', ], cwd=bare_repo_dir)
         self.populate_course()
-        self.course_module.giturl = 'file://{}'.format(bare_repo_dir)
-        modulestore().update_item(self.course_module, self.user.id)
+        self.course_block.giturl = f'file://{bare_repo_dir}'
+        modulestore().update_item(self.course_block, self.user.id)
 
     def test_giturl_missing(self):
         """
@@ -62,40 +64,38 @@ class TestExportGit(CourseTestCase):
         if course hasn't set giturl.
         """
         response = self.client.get(self.test_url)
-        self.assertEqual(200, response.status_code)
-        self.assertIn(
+        self.assertContains(
+            response,
             ('giturl must be defined in your '
              'course settings before you can export to git.'),
-            response.content
         )
 
-        response = self.client.get('{}?action=push'.format(self.test_url))
-        self.assertEqual(200, response.status_code)
-        self.assertIn(
+        response = self.client.get(f'{self.test_url}?action=push')
+        self.assertContains(
+            response,
             ('giturl must be defined in your '
              'course settings before you can export to git.'),
-            response.content
         )
 
     def test_course_export_failures(self):
         """
         Test failed course export response.
         """
-        self.course_module.giturl = 'foobar'
-        modulestore().update_item(self.course_module, self.user.id)
+        self.course_block.giturl = 'foobar'
+        modulestore().update_item(self.course_block, self.user.id)
 
-        response = self.client.get('{}?action=push'.format(self.test_url))
-        self.assertIn('Export Failed:', response.content)
+        response = self.client.get(f'{self.test_url}?action=push')
+        self.assertContains(response, 'Export Failed:')
 
     def test_exception_translation(self):
         """
         Regression test for making sure errors are properly stringified
         """
-        self.course_module.giturl = 'foobar'
-        modulestore().update_item(self.course_module, self.user.id)
+        self.course_block.giturl = 'foobar'
+        modulestore().update_item(self.course_block, self.user.id)
 
-        response = self.client.get('{}?action=push'.format(self.test_url))
-        self.assertNotIn('django.utils.functional.__proxy__', response.content)
+        response = self.client.get(f'{self.test_url}?action=push')
+        self.assertNotContains(response, 'django.utils.functional.__proxy__')
 
     def test_course_export_success(self):
         """
@@ -103,16 +103,16 @@ class TestExportGit(CourseTestCase):
         """
 
         self.make_bare_repo_with_course('test_repo')
-        response = self.client.get('{}?action=push'.format(self.test_url))
-        self.assertIn('Export Succeeded', response.content)
+        response = self.client.get(f'{self.test_url}?action=push')
+        self.assertContains(response, 'Export Succeeded')
 
     def test_repo_with_dots(self):
         """
         Regression test for a bad directory pathing of repo's that have dots.
         """
         self.make_bare_repo_with_course('test.repo')
-        response = self.client.get('{}?action=push'.format(self.test_url))
-        self.assertIn('Export Succeeded', response.content)
+        response = self.client.get(f'{self.test_url}?action=push')
+        self.assertContains(response, 'Export Succeeded')
 
     def test_dirty_repo(self):
         """
@@ -123,11 +123,11 @@ class TestExportGit(CourseTestCase):
         repo_name = 'dirty_repo1'
         self.make_bare_repo_with_course(repo_name)
         git_export_utils.export_to_git(self.course.id,
-                                       self.course_module.giturl, self.user)
+                                       self.course_block.giturl, self.user)
 
         # Make arbitrary change to course to make diff
-        self.course_module.matlab_api_key = 'something'
-        modulestore().update_item(self.course_module, self.user.id)
+        self.course_block.matlab_api_key = 'something'
+        modulestore().update_item(self.course_block, self.user.id)
         # Touch a file in the directory, export again, and make sure
         # the test file is gone
         repo_dir = os.path.join(
@@ -136,7 +136,7 @@ class TestExportGit(CourseTestCase):
         )
         test_file = os.path.join(repo_dir, 'test.txt')
         open(test_file, 'a').close()
-        self.assertTrue(os.path.isfile(test_file))
+        self.assertTrue(os.path.isfile(test_file))  # noqa: PT009
         git_export_utils.export_to_git(self.course.id,
-                                       self.course_module.giturl, self.user)
-        self.assertFalse(os.path.isfile(test_file))
+                                       self.course_block.giturl, self.user)
+        self.assertFalse(os.path.isfile(test_file))  # noqa: PT009

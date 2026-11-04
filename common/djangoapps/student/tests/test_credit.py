@@ -1,33 +1,34 @@
 """
 Tests for credit courses on the student dashboard.
 """
-import unittest
+
 import datetime
+from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
-from mock import patch
-import pytz
-
-from django.conf import settings
-from django.core.urlresolvers import reverse
+import ddt
 from django.test.utils import override_settings
+from django.urls import reverse
 
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-from xmodule.modulestore.tests.factories import CourseFactory
-from student.models import CourseEnrollmentAttribute
-from student.tests.factories import UserFactory, CourseEnrollmentFactory
-
-from openedx.core.djangoapps.credit.models import CreditCourse, CreditProvider, CreditEligibility
+from common.djangoapps.student.models import CourseEnrollmentAttribute
+from common.djangoapps.student.tests.factories import CourseEnrollmentFactory, UserFactory
 from openedx.core.djangoapps.credit import api as credit_api
-
+from openedx.core.djangoapps.credit.models import CreditCourse, CreditEligibility, CreditProvider
+from openedx.core.djangolib.testing.utils import skip_unless_lms
+from xmodule.modulestore.tests.django_utils import (
+    ModuleStoreTestCase,  # pylint: disable=wrong-import-order
+)
+from xmodule.modulestore.tests.factories import CourseFactory  # pylint: disable=wrong-import-order
 
 TEST_CREDIT_PROVIDER_SECRET_KEY = "931433d583c84ca7ba41784bad3232e6"
 
 
-@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')
+@skip_unless_lms
 @override_settings(CREDIT_PROVIDER_SECRET_KEYS={
     "hogwarts": TEST_CREDIT_PROVIDER_SECRET_KEY,
 })
-@patch.dict(settings.FEATURES, {"ENABLE_CREDIT_ELIGIBILITY": True})
+@override_settings(ENABLE_CREDIT_ELIGIBILITY=True)
+@ddt.ddt
 class CreditCourseDashboardTest(ModuleStoreTestCase):
     """
     Tests for credit courses on the student dashboard.
@@ -42,12 +43,12 @@ class CreditCourseDashboardTest(ModuleStoreTestCase):
 
     def setUp(self):
         """Create a course and an enrollment. """
-        super(CreditCourseDashboardTest, self).setUp()
+        super().setUp()
 
         # Create a user and log in
         self.user = UserFactory.create(username=self.USERNAME, password=self.PASSWORD)
         result = self.client.login(username=self.USERNAME, password=self.PASSWORD)
-        self.assertTrue(result, msg="Could not log in")
+        assert result, 'Could not log in'
 
         # Create a course and configure it as a credit course
         self.course = CourseFactory()
@@ -101,14 +102,17 @@ class CreditCourseDashboardTest(ModuleStoreTestCase):
 
         # Move the eligibility deadline so it's within 30 days
         eligibility = CreditEligibility.objects.get(username=self.USERNAME)
-        eligibility.deadline = datetime.datetime.now(pytz.UTC) + datetime.timedelta(days=29)
+        eligibility.deadline = datetime.datetime.now(ZoneInfo("UTC")) + datetime.timedelta(days=29)
         eligibility.save()
 
         # The user should still have the option to purchase credit,
         # but there should also be a message urging the user to purchase soon.
+
         response = self._load_dashboard()
+
         self.assertContains(response, "credit-eligibility-msg")
         self.assertContains(response, "purchase-credit-btn")
+        self.assertContains(response, "You have completed this course and are eligible")
 
     def test_purchased_credit(self):
         # Simulate that the user has purchased credit, but has not
@@ -116,9 +120,8 @@ class CreditCourseDashboardTest(ModuleStoreTestCase):
         self._make_eligible()
         self._purchase_credit()
 
-        # Expect that the user's status is "pending"
         response = self._load_dashboard()
-        self.assertContains(response, "credit-request-pending-msg")
+        self.assertContains(response, "credit-request-not-started-msg")
 
     def test_purchased_credit_and_request_pending(self):
         # Simulate that the user has purchased credit and initiated a request,
@@ -174,7 +177,7 @@ class CreditCourseDashboardTest(ModuleStoreTestCase):
     def _make_eligible(self):
         """Make the user eligible for credit in the course. """
         credit_api.set_credit_requirement_status(
-            self.USERNAME,
+            self.user,
             self.course.id,  # pylint: disable=no-member
             "grade", "grade",
             status="satisfied",
@@ -186,7 +189,7 @@ class CreditCourseDashboardTest(ModuleStoreTestCase):
     def _purchase_credit(self):
         """Purchase credit from a provider in the course. """
         self.enrollment.mode = "credit"
-        self.enrollment.save()  # pylint: disable=no-member
+        self.enrollment.save()
 
         CourseEnrollmentAttribute.objects.create(
             enrollment=self.enrollment,
@@ -207,3 +210,35 @@ class CreditCourseDashboardTest(ModuleStoreTestCase):
     def _set_request_status(self, uuid, status):
         """Set the status of a request for credit, simulating the notification from the provider. """
         credit_api.update_credit_request_status(uuid, self.PROVIDER_ID, status)
+
+    @ddt.data(
+        (
+            ['Arizona State University'],
+            'You are now eligible for credit from Arizona State University'),
+        (
+            ['Arizona State University', 'Hogwarts School of Witchcraft'],
+            'You are now eligible for credit from Arizona State University and Hogwarts School of Witchcraft'
+        ),
+        (
+            ['Arizona State University', 'Hogwarts School of Witchcraft and Wizardry', 'Charter Oak'],
+            'You are now eligible for credit from Arizona State University, Hogwarts School'
+            ' of Witchcraft and Wizardry, and Charter Oak'
+        ),
+        ([], 'You have completed this course and are eligible'),
+        (None, 'You have completed this course and are eligible')
+    )
+    @ddt.unpack
+    def test_eligible_for_credit_with_providers_names(self, providers_list, credit_string):
+        """Verify the message on dashboard with different number of providers."""
+        # Simulate that the user has completed the only requirement in the course
+        # so the user is eligible for credit.
+        self._make_eligible()
+
+        # The user should have the option to purchase credit
+        with patch('common.djangoapps.student.views.dashboard.get_credit_provider_attribute_values') as mock_method:
+            mock_method.return_value = providers_list
+            response = self._load_dashboard()
+
+        self.assertContains(response, "credit-eligibility-msg")
+        self.assertContains(response, "purchase-credit-btn")
+        self.assertContains(response, credit_string)

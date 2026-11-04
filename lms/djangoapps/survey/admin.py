@@ -2,15 +2,17 @@
 Provide accessors to these models via the Django Admin pages
 """
 
+
 from django import forms
 from django.contrib import admin
-from survey.models import SurveyForm
+
+from lms.djangoapps.survey.models import SurveyForm
 
 
 class SurveyFormAdminForm(forms.ModelForm):
     """Form providing validation of SurveyForm content."""
 
-    class Meta(object):  # pylint: disable=missing-docstring
+    class Meta:
         model = SurveyForm
         fields = ('name', 'form')
 

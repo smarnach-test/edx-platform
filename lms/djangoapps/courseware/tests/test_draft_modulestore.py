@@ -1,20 +1,22 @@
-from django.test import TestCase
-from nose.plugins.attrib import attr
-
-from xmodule.modulestore.django import modulestore
-from opaque_keys.edx.locations import SlashSeparatedCourseKey
+"""
+Test the draft modulestore
+"""
 
 
-@attr('shard_1')
-class TestDraftModuleStore(TestCase):
+from opaque_keys.edx.keys import CourseKey
+
+from xmodule.modulestore.tests.django_utils import TEST_DATA_MONGO_MODULESTORE, ModuleStoreTestCase
+
+
+class TestDraftModuleStore(ModuleStoreTestCase):
     """
     Test the draft modulestore
     """
-    def test_get_items_with_course_items(self):
-        store = modulestore()
+    MODULESTORE = TEST_DATA_MONGO_MODULESTORE
 
+    def test_get_items_with_course_items(self):
         # fix was to allow get_items() to take the course_id parameter
-        store.get_items(SlashSeparatedCourseKey('a', 'b', 'c'), qualifiers={'category': 'vertical'})
+        self.store.get_items(CourseKey.from_string('a/b/c'), qualifiers={'category': 'vertical'})
 
         # test success is just getting through the above statement.
         # The bug was that 'course_id' argument was

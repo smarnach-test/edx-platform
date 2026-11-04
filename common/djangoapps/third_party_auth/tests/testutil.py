@@ -4,41 +4,66 @@ Utilities for writing third_party_auth tests.
 Used by Django and non-Django tests; must not have Django deps.
 """
 
-from contextlib import contextmanager
-from django.conf import settings
-from django.contrib.auth.models import User
-import django.test
-import mock
+
 import os.path
+from contextlib import contextmanager
+from unittest import mock
 
-from third_party_auth.models import (
-    OAuth2ProviderConfig,
-    SAMLProviderConfig,
-    SAMLConfiguration,
+import django.test
+from django.contrib.auth.models import User  # pylint: disable=imported-auth-user
+from django.contrib.sites.models import Site
+from mako.template import Template
+from oauth2_provider.models import Application
+
+from common.djangoapps.third_party_auth.models import (
     LTIProviderConfig,
-    cache as config_cache,
+    OAuth2ProviderConfig,
+    SAMLConfiguration,
+    SAMLProviderConfig,
 )
+from common.djangoapps.third_party_auth.models import cache as config_cache
+from openedx.core.djangolib.testing.utils import CacheIsolationMixin
+from openedx.core.storage import OverwriteStorage
 
 
-AUTH_FEATURES_KEY = 'ENABLE_THIRD_PARTY_AUTH'
-AUTH_FEATURE_ENABLED = AUTH_FEATURES_KEY in settings.FEATURES
+def patch_mako_templates():
+    """ Patch mako so the django test client can access template context """
+    orig_render = Template.render_unicode
+
+    def wrapped_render(*args, **kwargs):
+        """ Render the template and send the context info to any listeners that want it """
+        django.test.signals.template_rendered.send(sender=None, template=None, context=kwargs)
+        return orig_render(*args, **kwargs)
+
+    return mock.patch.multiple(Template, render_unicode=wrapped_render, render=wrapped_render)
 
 
-class FakeDjangoSettings(object):
+class FakeDjangoSettings:
     """A fake for Django settings."""
 
     def __init__(self, mappings):
         """Initializes the fake from mappings dict."""
-        for key, value in mappings.iteritems():
+        for key, value in mappings.items():
             setattr(self, key, value)
 
 
-class ThirdPartyAuthTestMixin(object):
+class ThirdPartyAuthTestMixin:
     """ Helper methods useful for testing third party auth functionality """
+
+    def setUp(self, *args, **kwargs):
+        # Django's FileSystemStorage will rename files if they already exist.
+        # This storage backend overwrites files instead, which makes it easier
+        # to make assertions about filenames.
+        icon_image_field = OAuth2ProviderConfig._meta.get_field('icon_image')
+        patch = mock.patch.object(icon_image_field, 'storage', OverwriteStorage())
+        patch.start()
+        self.addCleanup(patch.stop)
+
+        super().setUp(*args, **kwargs)
 
     def tearDown(self):
         config_cache.clear()
-        super(ThirdPartyAuthTestMixin, self).tearDown()
+        super().tearDown()
 
     def enable_saml(self, **kwargs):
         """ Enable SAML support (via SAMLConfiguration, not for any particular provider) """
@@ -48,13 +73,15 @@ class ThirdPartyAuthTestMixin(object):
     @staticmethod
     def configure_oauth_provider(**kwargs):
         """ Update the settings for an OAuth2-based third party auth provider """
+        kwargs.setdefault('slug', kwargs['backend_name'])
         obj = OAuth2ProviderConfig(**kwargs)
         obj.save()
         return obj
 
     def configure_saml_provider(self, **kwargs):
         """ Update the settings for a SAML-based third party auth provider """
-        self.assertTrue(SAMLConfiguration.is_enabled(), "SAML Provider Configuration only works if SAML is enabled.")
+        assert SAMLConfiguration.is_enabled(Site.objects.get_current(), 'default'), \
+            'SAML Provider Configuration only works if SAML is enabled.'
         obj = SAMLProviderConfig(**kwargs)
         obj.save()
         return obj
@@ -97,6 +124,16 @@ class ThirdPartyAuthTestMixin(object):
         return cls.configure_oauth_provider(**kwargs)
 
     @classmethod
+    def configure_azure_ad_provider(cls, **kwargs):
+        """ Update the settings for the Azure AD third party auth provider/backend """
+        kwargs.setdefault("name", "Azure AD")
+        kwargs.setdefault("backend_name", "azuread-oauth2")
+        kwargs.setdefault("icon_class", "fa-azuread")
+        kwargs.setdefault("key", "test")
+        kwargs.setdefault("secret", "test")
+        return cls.configure_oauth_provider(**kwargs)
+
+    @classmethod
     def configure_twitter_provider(cls, **kwargs):
         """ Update the settings for the Twitter third party auth provider/backend """
         kwargs.setdefault("name", "Twitter")
@@ -107,11 +144,29 @@ class ThirdPartyAuthTestMixin(object):
         return cls.configure_oauth_provider(**kwargs)
 
     @classmethod
+    def configure_dummy_provider(cls, **kwargs):
+        """ Update the settings for the Dummy third party auth provider/backend """
+        kwargs.setdefault("name", "Dummy")
+        kwargs.setdefault("backend_name", "dummy")
+        return cls.configure_oauth_provider(**kwargs)
+
+    @classmethod
+    def configure_identityServer3_provider(cls, **kwargs):
+        kwargs.setdefault("name", "identityServer3TestConfig")
+        kwargs.setdefault("backend_name", "identityServer3")
+        return cls.configure_oauth_provider(**kwargs)
+
+    @classmethod
     def verify_user_email(cls, email):
         """ Mark the user with the given email as verified """
         user = User.objects.get(email=email)
         user.is_active = True
         user.save()
+
+    @staticmethod
+    def configure_oauth_dot_client():
+        """ Configure an oauth DOP client for testing """
+        return Application.objects.create(client_type=Application.CLIENT_CONFIDENTIAL)
 
     @staticmethod
     def read_data_file(filename):
@@ -120,30 +175,31 @@ class ThirdPartyAuthTestMixin(object):
             return f.read()
 
 
-class TestCase(ThirdPartyAuthTestMixin, django.test.TestCase):
+class TestCase(ThirdPartyAuthTestMixin, CacheIsolationMixin, django.test.TestCase):
     """Base class for auth test cases."""
-    pass
+
+    def setUp(self):  # pylint: disable=arguments-differ
+        super().setUp()
+        # Explicitly set a server name that is compatible with all our providers:
+        # (The SAML lib we use doesn't like the default 'testserver' as a domain)
+        self.hostname = 'example.none'
+        self.client.defaults['SERVER_NAME'] = self.hostname
+        self.url_prefix = f'http://{self.hostname}'
 
 
 class SAMLTestCase(TestCase):
     """
     Base class for SAML-related third_party_auth tests
     """
-
-    def setUp(self):
-        super(SAMLTestCase, self).setUp()
-        self.client.defaults['SERVER_NAME'] = 'example.none'  # The SAML lib we use doesn't like testserver' as a domain
-        self.url_prefix = 'http://example.none'
-
     @classmethod
     def _get_public_key(cls, key_name='saml_key'):
         """ Get a public key for use in the test. """
-        return cls.read_data_file('{}.pub'.format(key_name))
+        return cls.read_data_file(f'{key_name}.pub')
 
     @classmethod
     def _get_private_key(cls, key_name='saml_key'):
         """ Get a private key for use in the test. """
-        return cls.read_data_file('{}.key'.format(key_name))
+        return cls.read_data_file(f'{key_name}.key')
 
     def enable_saml(self, **kwargs):
         """ Enable SAML support (via SAMLConfiguration, not for any particular provider) """
@@ -152,11 +208,11 @@ class SAMLTestCase(TestCase):
         if 'public_key' not in kwargs:
             kwargs['public_key'] = self._get_public_key()
         kwargs.setdefault('entity_id', "https://saml.example.none")
-        super(SAMLTestCase, self).enable_saml(**kwargs)
+        super().enable_saml(**kwargs)
 
 
 @contextmanager
-def simulate_running_pipeline(pipeline_target, backend, email=None, fullname=None, username=None):
+def simulate_running_pipeline(pipeline_target, backend, email=None, fullname=None, username=None, **kwargs):
     """Simulate that a pipeline is currently running.
 
     You can use this context manager to test packages that rely on third party auth.
@@ -165,7 +221,7 @@ def simulate_running_pipeline(pipeline_target, backend, email=None, fullname=Non
     so you will need to provide the "target" module *as it is imported*
     in the software under test.  For example, if `foo/bar.py` does this:
 
-    >>> from third_party_auth import pipeline
+    >>> from common.djangoapps.third_party_auth import pipeline
 
     then you will need to do something like this:
 
@@ -174,7 +230,7 @@ def simulate_running_pipeline(pipeline_target, backend, email=None, fullname=Non
 
     If, on the other hand, `foo/bar.py` had done this:
 
-    >>> import third_party_auth
+    >>> from common.djangoapps import third_party_auth
 
     then you would use the target "foo.bar.third_party_auth.pipeline" instead.
 
@@ -199,6 +255,9 @@ def simulate_running_pipeline(pipeline_target, backend, email=None, fullname=Non
             app generates itself and should be available by the time the user
             is authenticating with a third-party provider.
 
+        kwargs (dict): If provided, simulate that the current provider has
+            included additional user details (useful for filling in the registration form).
+
     Returns:
         None
 
@@ -206,9 +265,11 @@ def simulate_running_pipeline(pipeline_target, backend, email=None, fullname=Non
     pipeline_data = {
         "backend": backend,
         "kwargs": {
-            "details": {}
+            "details": kwargs,
+            "response": kwargs.get("response", {})
         }
     }
+
     if email is not None:
         pipeline_data["kwargs"]["details"]["email"] = email
     if fullname is not None:
@@ -216,8 +277,8 @@ def simulate_running_pipeline(pipeline_target, backend, email=None, fullname=Non
     if username is not None:
         pipeline_data["kwargs"]["username"] = username
 
-    pipeline_get = mock.patch("{pipeline}.get".format(pipeline=pipeline_target), spec=True)
-    pipeline_running = mock.patch("{pipeline}.running".format(pipeline=pipeline_target), spec=True)
+    pipeline_get = mock.patch(f"{pipeline_target}.get", spec=True)
+    pipeline_running = mock.patch(f"{pipeline_target}.running", spec=True)
 
     mock_get = pipeline_get.start()
     mock_running = pipeline_running.start()

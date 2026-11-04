@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 This config file runs the simplest dev environment using sqlite, and db-based
 sessions. Assumes structure:
@@ -13,21 +12,27 @@ sessions. Assumes structure:
 # want to import all variables from base settings files
 # pylint: disable=wildcard-import, unused-wildcard-import
 
-# Pylint gets confused by path.py instances, which report themselves as class
-# objects. As a result, pylint applies the wrong regex in validating names,
-# and throws spurious errors. Therefore, we disable invalid-name checking.
-# pylint: disable=invalid-name
 
-from .common import *
-import os
-from path import Path as path
-from uuid import uuid4
-from warnings import filterwarnings, simplefilter
+import logging  # noqa: I001 - suppresses linting for this whole block, sort imports manually as needed
+from collections import OrderedDict
 
+from edx_django_utils.plugins import add_plugins
+
+from openedx.core.djangoapps.plugins.constants import ProjectType, SettingsType
+from openedx.core.lib.derived import derive_settings
+from openedx.core.lib.features_setting_proxy import FeaturesProxy
 from openedx.core.lib.tempdir import mkdtemp_clean
+from xmodule.modulestore.modulestore_settings import (
+    update_module_store_settings,  # pylint: disable=wrong-import-order
+)
+
+from .common import *  # noqa: F403
+from openedx.envs.test import *  # must come after .common to override Derived values with literals  # noqa: F403
+
+# A proxy for feature flags stored in the settings namespace
+FEATURES = FeaturesProxy(globals())
 
 # Silence noisy logs to make troubleshooting easier when tests fail.
-import logging
 LOG_OVERRIDES = [
     ('factory.generate', logging.ERROR),
     ('factory.containers', logging.ERROR),
@@ -35,82 +40,28 @@ LOG_OVERRIDES = [
 for log_name, log_level in LOG_OVERRIDES:
     logging.getLogger(log_name).setLevel(log_level)
 
-# mongo connection settings
-MONGO_PORT_NUM = int(os.environ.get('EDXAPP_TEST_MONGO_PORT', '27017'))
-MONGO_HOST = os.environ.get('EDXAPP_TEST_MONGO_HOST', 'localhost')
-
-os.environ['DJANGO_LIVE_TEST_SERVER_ADDRESS'] = 'localhost:8000-9000'
-
-THIS_UUID = uuid4().hex[:5]
-
 # can't test start dates with this True, but on the other hand,
 # can test everything else :)
-FEATURES['DISABLE_START_DATES'] = True
+DISABLE_START_DATES = True
 
-# Most tests don't use the discussion service, so we turn it off to speed them up.
-# Tests that do can enable this flag, but must use the UrlResetMixin class to force urls.py
-# to reload. For consistency in user-experience, keep the value of this setting in sync with
-# the one in cms/envs/test.py
-FEATURES['ENABLE_DISCUSSION_SERVICE'] = False
+ENABLE_VERIFIED_CERTIFICATES = True
 
-FEATURES['ENABLE_SERVICE_STATUS'] = True
+ENABLE_BULK_ENROLLMENT_VIEW = True
 
-FEATURES['ENABLE_HINTER_INSTRUCTOR_VIEW'] = True
+ENABLE_BULK_USER_RETIREMENT = True
 
-FEATURES['ENABLE_INSTRUCTOR_LEGACY_DASHBOARD'] = True
+COMMON_TEST_DATA_ROOT = COMMON_ROOT / "test" / "data"  # noqa: F405
 
-FEATURES['ENABLE_SHOPPING_CART'] = True
+COMPREHENSIVE_THEME_DIRS = [REPO_ROOT / "themes", REPO_ROOT / "common/test"]  # noqa: F405
 
-FEATURES['ENABLE_VERIFIED_CERTIFICATES'] = True
+WEBPACK_LOADER['DEFAULT']['LOADER_CLASS'] = 'webpack_loader.loader.FakeWebpackLoader'  # noqa: F405
 
-FEATURES['ENABLE_CREDIT_API'] = True
+STATUS_MESSAGE_PATH = TEST_ROOT / "status_message.json"  # noqa: F405
 
-# Enable this feature for course staff grade downloads, to enable acceptance tests
-FEATURES['ENABLE_S3_GRADE_DOWNLOADS'] = True
-FEATURES['ALLOW_COURSE_STAFF_GRADE_DOWNLOADS'] = True
+COURSES_ROOT = TEST_ROOT / "data"  # noqa: F405
 
-# Toggles embargo on for testing
-FEATURES['EMBARGO'] = True
-
-FEATURES['ENABLE_COMBINED_LOGIN_REGISTRATION'] = True
-
-# Need wiki for courseware views to work. TODO (vshnayder): shouldn't need it.
-WIKI_ENABLED = True
-
-# Enable a parental consent age limit for testing
-PARENTAL_CONSENT_AGE_LIMIT = 13
-
-# Makes the tests run much faster...
-SOUTH_TESTS_MIGRATE = False  # To disable migrations and use syncdb instead
-
-# Nose Test Runner
-TEST_RUNNER = 'django_nose.NoseTestSuiteRunner'
-
-_SYSTEM = 'lms'
-
-_REPORT_DIR = REPO_ROOT / 'reports' / _SYSTEM
-_REPORT_DIR.makedirs_p()
-_NOSEID_DIR = REPO_ROOT / '.testids' / _SYSTEM
-_NOSEID_DIR.makedirs_p()
-
-NOSE_ARGS = [
-    '--id-file', _NOSEID_DIR / 'noseids',
-    '--xunit-file', _REPORT_DIR / 'nosetests.xml',
-]
-
-# Local Directories
-TEST_ROOT = path("test_root")
-# Want static files in the same dir for running on jenkins.
-STATIC_ROOT = TEST_ROOT / "staticfiles"
-
-STATUS_MESSAGE_PATH = TEST_ROOT / "status_message.json"
-
-COURSES_ROOT = TEST_ROOT / "data"
-DATA_DIR = COURSES_ROOT
-
-COMMON_TEST_DATA_ROOT = COMMON_ROOT / "test" / "data"
-# Where the content data is checked out.  This may not exist on jenkins.
-GITHUB_REPO_ROOT = ENV_ROOT / "data"
+# Where the content data is checked out.
+GITHUB_REPO_ROOT = ENV_ROOT / "data"  # noqa: F405
 
 USE_I18N = True
 LANGUAGE_CODE = 'en'  # tests assume they will get English.
@@ -129,69 +80,67 @@ XQUEUE_WAITTIME_BETWEEN_REQUESTS = 5  # seconds
 MOCK_STAFF_GRADING = True
 MOCK_PEER_GRADING = True
 
-############################ STATIC FILES #############################
+COMMENTS_SERVICE_URL = 'http://localhost:4567'
 
-# TODO (cpennington): We need to figure out how envs/test.py can inject things
-# into common.py so that we don't have to repeat this sort of thing
-STATICFILES_DIRS = [
-    COMMON_ROOT / "static",
-    PROJECT_ROOT / "static",
-]
-STATICFILES_DIRS += [
-    (course_dir, COMMON_TEST_DATA_ROOT / course_dir)
-    for course_dir in os.listdir(COMMON_TEST_DATA_ROOT)
-    if os.path.isdir(COMMON_TEST_DATA_ROOT / course_dir)
-]
+DJFS = {
+    'type': 'osfs',
+    'directory_root': f'{DATA_DIR}/django-pyfs/static/django-pyfs',  # noqa: F405
+    'url_root': '/static/django-pyfs',
+}
+
+API_ACCESS_MANAGER_EMAIL = 'api-access@example.com'
+
+############################ STATIC FILES #############################
 
 # Avoid having to run collectstatic before the unit test suite
 # If we don't add these settings, then Django templates that can't
 # find pipelined assets will raise a ValueError.
 # http://stackoverflow.com/questions/12816941/unit-testing-with-django-pipeline
-STATICFILES_STORAGE = 'pipeline.storage.NonPackagingPipelineStorage'
+STORAGES['staticfiles']['BACKEND'] = 'pipeline.storage.NonPackagingPipelineStorage'  # noqa: F405
 
 # Don't use compression during tests
-PIPELINE_JS_COMPRESSOR = None
+PIPELINE['JS_COMPRESSOR'] = None  # noqa: F405
 
 update_module_store_settings(
-    MODULESTORE,
+    MODULESTORE,  # noqa: F405
     module_store_options={
-        'fs_root': TEST_ROOT / "data",
+        'fs_root': TEST_ROOT / "data",  # noqa: F405
     },
     xml_store_options={
-        'data_dir': mkdtemp_clean(dir=TEST_ROOT),  # never inadvertently load all the XML courses
+        'data_dir': mkdtemp_clean(dir=TEST_ROOT),  # never inadvertently load all the XML courses  # noqa: F405
     },
     doc_store_settings={
-        'host': MONGO_HOST,
-        'port': MONGO_PORT_NUM,
-        'db': 'test_xmodule',
-        'collection': 'test_modulestore{0}'.format(THIS_UUID),
+        'host': MONGO_HOST,  # noqa: F405
+        'port': MONGO_PORT_NUM,  # noqa: F405
+        'db': f'test_xmodule_{THIS_UUID}',  # noqa: F405
+        'collection': 'test_modulestore',
     },
 )
 
 CONTENTSTORE = {
     'ENGINE': 'xmodule.contentstore.mongo.MongoContentStore',
     'DOC_STORE_CONFIG': {
-        'host': MONGO_HOST,
-        'db': 'xcontent',
-        'port': MONGO_PORT_NUM,
+        'host': MONGO_HOST,  # noqa: F405
+        'db': f'test_xcontent_{THIS_UUID}',  # noqa: F405
+        'port': MONGO_PORT_NUM,  # noqa: F405
     }
 }
 
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': TEST_ROOT / 'db' / 'edx.db'
+        'ATOMIC_REQUESTS': True,
     },
-
+    'student_module_history': {
+        'ENGINE': 'django.db.backends.sqlite3',
+    },
 }
 
 CACHES = {
     # This is the cache used for most things.
     # In staging/prod envs, the sessions also live here.
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'edx_loc_mem_cache',
-        'KEY_FUNCTION': 'util.memcache.safe_key',
+        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
     },
 
     # The general cache is what you get if you use our util.cache. It's used for
@@ -201,334 +150,354 @@ CACHES = {
     # push process.
     'general': {
         'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
-        'KEY_PREFIX': 'general',
-        'VERSION': 4,
-        'KEY_FUNCTION': 'util.memcache.safe_key',
     },
 
     'mongo_metadata_inheritance': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': os.path.join(tempfile.gettempdir(), 'mongo_metadata_inheritance'),
-        'TIMEOUT': 300,
-        'KEY_FUNCTION': 'util.memcache.safe_key',
+        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
     },
     'loc_cache': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'edx_location_mem_cache',
+        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
     },
     'course_structure_cache': {
         'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
     },
 }
 
-# Dummy secret key for dev
-SECRET_KEY = '85920908f28904ed733fe576320db18cabd7b6cd'
-
-# hide ratelimit warnings while running tests
-filterwarnings('ignore', message='No request passed to the backend, unable to rate-limit')
-
-# Ignore deprecation warnings (so we don't clutter Jenkins builds/production)
-# https://docs.python.org/2/library/warnings.html#the-warnings-filter
-# Change to "default" to see the first instance of each hit
-# or "error" to convert all into errors
-simplefilter('ignore')
-
 ############################# SECURITY SETTINGS ################################
 # Default to advanced security in common.py, so tests can reset here to use
 # a simpler security model
-FEATURES['ENFORCE_PASSWORD_POLICY'] = False
-FEATURES['ENABLE_MAX_FAILED_LOGIN_ATTEMPTS'] = False
-FEATURES['SQUELCH_PII_IN_LOGS'] = False
-FEATURES['PREVENT_CONCURRENT_LOGINS'] = False
-FEATURES['ADVANCED_SECURITY'] = False
-PASSWORD_MIN_LENGTH = None
-PASSWORD_COMPLEXITY = {}
+ENFORCE_PASSWORD_POLICY = False
+ENABLE_MAX_FAILED_LOGIN_ATTEMPTS = False
+SQUELCH_PII_IN_LOGS = False
+PREVENT_CONCURRENT_LOGINS = False
 
 ######### Third-party auth ##########
-FEATURES['ENABLE_THIRD_PARTY_AUTH'] = True
+ENABLE_THIRD_PARTY_AUTH = True
 
-AUTHENTICATION_BACKENDS = (
-    'social.backends.google.GoogleOAuth2',
-    'social.backends.linkedin.LinkedinOAuth2',
-    'social.backends.facebook.FacebookOAuth2',
-    'social.backends.twitter.TwitterOAuth',
-    'third_party_auth.dummy.DummyBackend',
-    'third_party_auth.saml.SAMLAuthBackend',
-    'third_party_auth.lti.LTIAuthBackend',
-) + AUTHENTICATION_BACKENDS
+AUTHENTICATION_BACKENDS = [
+    'social_core.backends.google.GoogleOAuth2',
+    'social_core.backends.linkedin.LinkedinOAuth2',
+    'social_core.backends.facebook.FacebookOAuth2',
+    'social_core.backends.azuread.AzureADOAuth2',
+    'social_core.backends.twitter.TwitterOAuth',
+    'common.djangoapps.third_party_auth.identityserver3.IdentityServer3',
+    'common.djangoapps.third_party_auth.dummy.DummyBackend',
+    'common.djangoapps.third_party_auth.saml.SAMLAuthBackend',
+    'common.djangoapps.third_party_auth.lti.LTIAuthBackend',
+] + AUTHENTICATION_BACKENDS  # noqa: F405
 
-################################## OPENID #####################################
-FEATURES['AUTH_USE_OPENID'] = True
-FEATURES['AUTH_USE_OPENID_PROVIDER'] = True
-
-################################## SHIB #######################################
-FEATURES['AUTH_USE_SHIB'] = True
-FEATURES['SHIB_DISABLE_TOS'] = True
-FEATURES['RESTRICT_ENROLL_BY_REG_METHOD'] = True
-
-OPENID_CREATE_USERS = False
-OPENID_UPDATE_DETAILS_FROM_SREG = True
-OPENID_USE_AS_ADMIN_LOGIN = False
-OPENID_PROVIDER_TRUSTED_ROOTS = ['*']
-
-############################## OAUTH2 Provider ################################
-FEATURES['ENABLE_OAUTH2_PROVIDER'] = True
-# don't cache courses for testing
-OIDC_COURSE_HANDLER_CACHE_TIMEOUT = 0
-
-########################### External REST APIs #################################
-FEATURES['ENABLE_MOBILE_REST_API'] = True
-FEATURES['ENABLE_MOBILE_SOCIAL_FACEBOOK_FEATURES'] = True
-FEATURES['ENABLE_VIDEO_ABSTRACTION_LAYER_API'] = True
-FEATURES['ENABLE_COURSE_BLOCKS_NAVIGATION_API'] = True
-
-###################### Payment ##############################3
-# Enable fake payment processing page
-FEATURES['ENABLE_PAYMENT_FAKE'] = True
-
-# Configure the payment processor to use the fake processing page
-# Since both the fake payment page and the shoppingcart app are using
-# the same settings, we can generate this randomly and guarantee
-# that they are using the same secret.
-from random import choice
-from string import letters, digits, punctuation  # pylint: disable=deprecated-module
-RANDOM_SHARED_SECRET = ''.join(
-    choice(letters + digits + punctuation)
-    for x in range(250)
-)
-
-CC_PROCESSOR_NAME = 'CyberSource2'
-CC_PROCESSOR['CyberSource2']['SECRET_KEY'] = RANDOM_SHARED_SECRET
-CC_PROCESSOR['CyberSource2']['ACCESS_KEY'] = "0123456789012345678901"
-CC_PROCESSOR['CyberSource2']['PROFILE_ID'] = "edx"
-CC_PROCESSOR['CyberSource2']['PURCHASE_ENDPOINT'] = "/shoppingcart/payment_fake"
-
-FEATURES['STORE_BILLING_INFO'] = True
-
-########################### SYSADMIN DASHBOARD ################################
-FEATURES['ENABLE_SYSADMIN_DASHBOARD'] = True
-GIT_REPO_DIR = TEST_ROOT / "course_repos"
-
-################################# CELERY ######################################
-
-CELERY_ALWAYS_EAGER = True
-CELERY_RESULT_BACKEND = 'djcelery.backends.cache:CacheBackend'
-
-######################### MARKETING SITE ###############################
-
-MKTG_URL_LINK_MAP = {
-    'ABOUT': 'about',
-    'CONTACT': 'contact',
-    'FAQ': 'help',
-    'COURSES': 'courses',
-    'ROOT': 'root',
-    'TOS': 'tos',
-    'HONOR': 'honor',
-    'PRIVACY': 'privacy',
-    'JOBS': 'jobs',
-    'NEWS': 'news',
-    'PRESS': 'press',
-    'BLOG': 'blog',
-    'DONATE': 'donate',
-
-    # Verified Certificates
-    'WHAT_IS_VERIFIED_CERT': 'verified-certificate',
+THIRD_PARTY_AUTH_CUSTOM_AUTH_FORMS = {
+    'custom1': {
+        'secret_key': 'opensesame',
+        'url': '/misc/my-custom-registration-form',
+        'error_url': '/misc/my-custom-sso-error-page'
+    },
 }
 
+############################## OAUTH2 Provider ################################
+OAUTH_ENFORCE_SECURE = False
+
+########################### External REST APIs #################################
+ENABLE_MOBILE_REST_API = True
+ENABLE_VIDEO_ABSTRACTION_LAYER_API = True
+
+SUPPORT_SITE_LINK = 'https://example.support.edx.org'
+PASSWORD_RESET_SUPPORT_LINK = 'https://support.example.com/password-reset-help.html'
+ACTIVATION_EMAIL_SUPPORT_LINK = 'https://support.example.com/activation-email-help.html'
+SEND_ACTIVATION_EMAIL_URL = 'https://courses.example.edx.org/api/send_account_activation_email'
+ENTERPRISE_MARKETING_FOOTER_QUERY_PARAMS = OrderedDict([
+    ("utm_campaign", "edX.org Referral"),
+    ("utm_source", "edX.org"),
+    ("utm_medium", "Footer"),
+])
+
+############### Module Store Items ##########
+HOSTNAME_MODULESTORE_DEFAULT_MAPPINGS = {}
+
+### This enables the Metrics tab for the Instructor dashboard ###########
+CLASS_DASHBOARD = True
+
+# add extra template directory for test-only templates
+MAKO_TEMPLATE_DIRS_BASE.extend([  # noqa: F405
+    COMMON_ROOT / 'test' / 'templates',  # noqa: F405
+    COMMON_ROOT / 'test' / 'test_sites',  # noqa: F405
+    REPO_ROOT / 'openedx' / 'core' / 'djangolib' / 'tests' / 'templates',  # noqa: F405
+])
+
+# Setting for the testing of Software Secure Result Callback
+VERIFY_STUDENT["SOFTWARE_SECURE"] = {  # noqa: F405
+    "API_ACCESS_KEY": "BBBBBBBBBBBBBBBBBBBB",
+    "API_SECRET_KEY": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+}
+
+######### dashboard git log settings #########
+MONGODB_LOG = {
+    'host': MONGO_HOST,  # noqa: F405
+    'port': MONGO_PORT_NUM,  # noqa: F405
+    'user': '',
+    'password': '',
+    'db': 'xlog',
+}
+
+NOTES_DISABLED_TABS = []
+
+# Enable courseware search for tests
+ENABLE_COURSEWARE_SEARCH = True
+
+# Enable dashboard search for tests
+ENABLE_DASHBOARD_SEARCH = True
+
+FACEBOOK_APP_SECRET = "Test"
+FACEBOOK_APP_ID = "Test"
+FACEBOOK_API_VERSION = "v2.8"
+
+######### custom courses #########
+INSTALLED_APPS += ['lms.djangoapps.ccx', 'openedx.core.djangoapps.ccxcon.apps.CCXConnectorConfig']  # noqa: F405
+
+# Set dummy values for profile image settings.
+PROFILE_IMAGE_BACKEND = {
+    'class': 'openedx.core.storage.OverwriteStorage',
+    'options': {
+        'location': MEDIA_ROOT,  # noqa: F405
+        'base_url': 'http://example-storage.com/profile-images/',
+    },
+}
+PROFILE_IMAGE_DEFAULT_FILENAME = 'default'
+PROFILE_IMAGE_DEFAULT_FILE_EXTENSION = 'png'
+PROFILE_IMAGE_HASH_SEED = 'secret'
+PROFILE_IMAGE_MAX_BYTES = 1024 * 1024
+PROFILE_IMAGE_MIN_BYTES = 100
+
+# Enable the LTI provider feature for testing
+ENABLE_LTI_PROVIDER = True
+INSTALLED_APPS.append('lms.djangoapps.lti_provider.apps.LtiProviderConfig')
+AUTHENTICATION_BACKENDS.append('lms.djangoapps.lti_provider.users.LtiBackend')
+
+# Financial assistance page
+ENABLE_FINANCIAL_ASSISTANCE_FORM = True
+
+COURSE_BLOCKS_API_EXTRA_FIELDS = [
+    ('course', 'course_visibility'),
+    ('course', 'other_course_settings'),
+]
+
+COURSE_CATALOG_URL_ROOT = 'https://catalog.example.com'
+COURSE_CATALOG_API_URL = f'{COURSE_CATALOG_URL_ROOT}/api/v1'
+
+COMPREHENSIVE_THEME_LOCALE_PATHS = [REPO_ROOT / "themes/conf/locale", ]  # noqa: F405
+
+PREPEND_LOCALE_PATHS = []
+
+LMS_ROOT_URL = "http://localhost:8000"
+
+# Needed for derived settings used by cms only.
+FRONTEND_LOGIN_URL = '/login'
+FRONTEND_LOGOUT_URL = '/logout'
+FRONTEND_REGISTER_URL = '/register'
+
+# Programs Learner Portal URL
+LEARNER_PORTAL_URL_ROOT = 'http://localhost:8734'
+
+ECOMMERCE_PUBLIC_URL_ROOT = None
+ENTERPRISE_API_URL = 'http://enterprise.example.com/enterprise/api/v1/'
+ENTERPRISE_CONSENT_API_URL = 'http://enterprise.example.com/consent/api/v1/'
+
+########################## ENTERPRISE LEARNER PORTAL ##############################
+ENTERPRISE_LEARNER_PORTAL_NETLOC = 'example.com:8734'
+ENTERPRISE_LEARNER_PORTAL_BASE_URL = 'http://' + ENTERPRISE_LEARNER_PORTAL_NETLOC
+
+ACTIVATION_EMAIL_FROM_ADDRESS = 'test_activate@edx.org'
+
+TEMPLATES[0]['OPTIONS']['debug'] = True  # noqa: F405
+TEMPLATES.append(  # noqa: F405
+    {
+        # This separate copy of the Mako backend is used to test rendering previews in the 'lms.main' namespace
+        'NAME': 'preview',
+        'BACKEND': 'common.djangoapps.edxmako.backend.Mako',
+        'APP_DIRS': False,
+        'DIRS': MAKO_TEMPLATE_DIRS_BASE,  # noqa: F405
+        'OPTIONS': {
+            'context_processors': CONTEXT_PROCESSORS,  # noqa: F405
+            'debug': False,
+            'namespace': 'lms.main',
+        }
+    }
+)
+
+############################## Authentication ##############################
+
+# Most of the JWT_AUTH settings come from lms/envs/common.py (from openedx/envs/common.py),
+# but here we update to use JWKS values from openedx/envs/test.py for testing.
+JWT_AUTH.update(jwt_jwks_values)  # noqa: F405
+
+####################### Plugin Settings ##########################
+
+add_plugins(__name__, ProjectType.LMS, SettingsType.TEST)
+
+########################## Derive Any Derived Settings  #######################
+
+derive_settings(__name__)
 
 ############################ STATIC FILES #############################
-DEFAULT_FILE_STORAGE = 'django.core.files.storage.FileSystemStorage'
-MEDIA_ROOT = TEST_ROOT / "uploads"
-MEDIA_URL = "/static/uploads/"
-STATICFILES_DIRS.append(("uploads", MEDIA_ROOT))
+STATICFILES_DIRS.append(("uploads", MEDIA_ROOT))  # noqa: F405
 
 _NEW_STATICFILES_DIRS = []
 # Strip out any static files that aren't in the repository root
 # so that the tests can run with only the edx-platform directory checked out
-for static_dir in STATICFILES_DIRS:
+for static_dir in STATICFILES_DIRS:  # pylint: disable=not-an-iterable  # noqa: F405
     # Handle both tuples and non-tuple directory definitions
     try:
         _, data_dir = static_dir
     except ValueError:
         data_dir = static_dir
 
-    if data_dir.startswith(REPO_ROOT):
+    if data_dir.startswith(REPO_ROOT):  # noqa: F405
         _NEW_STATICFILES_DIRS.append(static_dir)
 STATICFILES_DIRS = _NEW_STATICFILES_DIRS
 
-FILE_UPLOAD_TEMP_DIR = TEST_ROOT / "uploads"
-FILE_UPLOAD_HANDLERS = (
+FILE_UPLOAD_TEMP_DIR = TEST_ROOT / "uploads"  # noqa: F405
+FILE_UPLOAD_HANDLERS = [
     'django.core.files.uploadhandler.MemoryFileUploadHandler',
     'django.core.files.uploadhandler.TemporaryFileUploadHandler',
-)
+]
 
-########################### Server Ports ###################################
+# Configuration used for generating PDF Receipts/Invoices
 
-# These ports are carefully chosen so that if the browser needs to
-# access them, they will be available through the SauceLabs SSH tunnel
-LETTUCE_SERVER_PORT = 8003
-XQUEUE_PORT = 8040
-YOUTUBE_PORT = 8031
-LTI_PORT = 8765
-VIDEO_SOURCE_PORT = 8777
+PDF_RECEIPT_TAX_ID = 'add here'
+PDF_RECEIPT_FOOTER_TEXT = 'add your own specific footer text here'
+PDF_RECEIPT_DISCLAIMER_TEXT = 'add your own specific disclaimer text here'
+PDF_RECEIPT_BILLING_ADDRESS = 'add your own billing address here with appropriate line feed characters'
+PDF_RECEIPT_TERMS_AND_CONDITIONS = 'add your own terms and conditions'
+PDF_RECEIPT_TAX_ID_LABEL = 'Tax ID'
 
-################### Make tests faster
+AUTHN_MICROFRONTEND_URL = "http://authn-mfe"
+AUTHN_MICROFRONTEND_DOMAIN = "authn-mfe"
+LEARNER_HOME_MICROFRONTEND_URL = "http://learner-home-mfe"
+ORA_GRADING_MICROFRONTEND_URL = "http://ora-grading-mfe"
+ORA_MICROFRONTEND_URL = "http://ora-mfe"
 
-#http://slacy.com/blog/2012/04/make-your-tests-faster-in-django-1-4/
-PASSWORD_HASHERS = (
-    # 'django.contrib.auth.hashers.PBKDF2PasswordHasher',
-    # 'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',
-    # 'django.contrib.auth.hashers.BCryptPasswordHasher',
-    'django.contrib.auth.hashers.SHA1PasswordHasher',
-    'django.contrib.auth.hashers.MD5PasswordHasher',
-    # 'django.contrib.auth.hashers.CryptPasswordHasher',
-)
+########################## limiting dashboard courses ######################
 
-### This enables the Metrics tab for the Instructor dashboard ###########
-FEATURES['CLASS_DASHBOARD'] = True
+DASHBOARD_COURSE_LIMIT = 250
 
-################### Make tests quieter
-
-# OpenID spews messages like this to stderr, we don't need to see them:
-#   Generated checkid_setup request to http://testserver/openid/provider/login/ with assocication {HMAC-SHA1}{51d49995}{s/kRmA==}
-
-import openid.oidutil
-openid.oidutil.log = lambda message, level=0: None
-
-PLATFORM_NAME = "edX"
-SITE_NAME = "edx.org"
-
-# set up some testing for microsites
-MICROSITE_CONFIGURATION = {
-    "test_microsite": {
-        "domain_prefix": "testmicrosite",
-        "university": "test_microsite",
-        "platform_name": "Test Microsite",
-        "logo_image_url": "test_microsite/images/header-logo.png",
-        "email_from_address": "test_microsite@edx.org",
-        "payment_support_email": "test_microsite@edx.org",
-        "ENABLE_MKTG_SITE": False,
-        "SITE_NAME": "test_microsite.localhost",
-        "course_org_filter": "TestMicrositeX",
-        "course_about_show_social_links": False,
-        "css_overrides_file": "test_microsite/css/test_microsite.css",
-        "show_partners": False,
-        "show_homepage_promo_video": False,
-        "course_index_overlay_text": "This is a Test Microsite Overlay Text.",
-        "course_index_overlay_logo_file": "test_microsite/images/header-logo.png",
-        "homepage_overlay_html": "<h1>This is a Test Microsite Overlay HTML</h1>",
-        "ALWAYS_REDIRECT_HOMEPAGE_TO_DASHBOARD_FOR_AUTHENTICATED_USER": False,
-        "COURSE_CATALOG_VISIBILITY_PERMISSION": "see_in_catalog",
-        "COURSE_ABOUT_VISIBILITY_PERMISSION": "see_about_page",
-        "ENABLE_SHOPPING_CART": True,
-        "ENABLE_PAID_COURSE_REGISTRATION": True,
-        "SESSION_COOKIE_DOMAIN": "test_microsite.localhost",
-    },
-    "microsite_with_logistration": {
-        "domain_prefix": "logistration",
-        "university": "logistration",
-        "platform_name": "Test logistration",
-        "logo_image_url": "test_microsite/images/header-logo.png",
-        "email_from_address": "test_microsite@edx.org",
-        "payment_support_email": "test_microsite@edx.org",
-        "ENABLE_MKTG_SITE": False,
-        "ENABLE_COMBINED_LOGIN_REGISTRATION": True,
-        "SITE_NAME": "test_microsite.localhost",
-        "course_org_filter": "LogistrationX",
-        "course_about_show_social_links": False,
-        "css_overrides_file": "test_microsite/css/test_microsite.css",
-        "show_partners": False,
-        "show_homepage_promo_video": False,
-        "course_index_overlay_text": "Logistration.",
-        "course_index_overlay_logo_file": "test_microsite/images/header-logo.png",
-        "homepage_overlay_html": "<h1>This is a Logistration HTML</h1>",
-        "ALWAYS_REDIRECT_HOMEPAGE_TO_DASHBOARD_FOR_AUTHENTICATED_USER": False,
-        "COURSE_CATALOG_VISIBILITY_PERMISSION": "see_in_catalog",
-        "COURSE_ABOUT_VISIBILITY_PERMISSION": "see_about_page",
-        "ENABLE_SHOPPING_CART": True,
-        "ENABLE_PAID_COURSE_REGISTRATION": True,
-        "SESSION_COOKIE_DOMAIN": "test_logistration.localhost",
-    },
-    "default": {
-        "university": "default_university",
-        "domain_prefix": "www",
+########################## Settings for proctoring ######################
+PROCTORING_SETTINGS = {
+    'LINK_URLS': {
+        'faq': 'https://support.example.com/proctoring-faq.html'
     }
 }
-MICROSITE_ROOT_DIR = COMMON_ROOT / 'test' / 'test_microsites'
-MICROSITE_TEST_HOSTNAME = 'testmicrosite.testserver'
-MICROSITE_LOGISTRATION_HOSTNAME = 'logistration.testserver'
 
-FEATURES['USE_MICROSITES'] = True
+############## Exams CONFIGURATION SETTINGS ####################
+EXAMS_SERVICE_URL = 'http://exams.example.com/api/v1'
 
-# add extra template directory for test-only templates
-MAKO_TEMPLATES['main'].extend([
-    COMMON_ROOT / 'test' / 'templates'
-])
+############### Settings for Django Rate limit #####################
 
+RATELIMIT_RATE = '2/m'
 
-# Setting for the testing of Software Secure Result Callback
-VERIFY_STUDENT["SOFTWARE_SECURE"] = {
-    "API_ACCESS_KEY": "BBBBBBBBBBBBBBBBBBBB",
-    "API_SECRET_KEY": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+##### LOGISTRATION RATE LIMIT SETTINGS #####
+LOGIN_AND_REGISTER_FORM_RATELIMIT = '5/5m'
+
+CORS_ORIGIN_WHITELIST = ['https://sandbox.edx.org']
+
+################## MFE API ####################
+MFE_CONFIG = {
+    "BASE_URL": "https://name_of_mfe.example.com",
+    "LANGUAGE_PREFERENCE_COOKIE_NAME": "example-language-preference",
+    "LOGO_URL": "https://courses.example.com/logo.png"
 }
 
-VIDEO_CDN_URL = {
-    'CN': 'http://api.xuetangx.com/edx/video?s3_url='
-}
-
-######### dashboard git log settings #########
-MONGODB_LOG = {
-    'host': MONGO_HOST,
-    'port': MONGO_PORT_NUM,
-    'user': '',
-    'password': '',
-    'db': 'xlog',
-}
-
-# Enable EdxNotes for tests.
-FEATURES['ENABLE_EDXNOTES'] = True
-
-# Enable teams feature for tests.
-FEATURES['ENABLE_TEAMS'] = True
-
-# Add milestones to Installed apps for testing
-INSTALLED_APPS += ('milestones', 'openedx.core.djangoapps.call_stack_manager')
-
-# Enable courseware search for tests
-FEATURES['ENABLE_COURSEWARE_SEARCH'] = True
-
-# Enable dashboard search for tests
-FEATURES['ENABLE_DASHBOARD_SEARCH'] = True
-
-# Use MockSearchEngine as the search engine for test scenario
-SEARCH_ENGINE = "search.tests.mock_search_engine.MockSearchEngine"
-
-FACEBOOK_APP_SECRET = "Test"
-FACEBOOK_APP_ID = "Test"
-FACEBOOK_API_VERSION = "v2.2"
-
-######### custom courses #########
-INSTALLED_APPS += ('ccx',)
-FEATURES['CUSTOM_COURSES_EDX'] = True
-
-# Set dummy values for profile image settings.
-PROFILE_IMAGE_BACKEND = {
-    'class': 'storages.backends.overwrite.OverwriteStorage',
-    'options': {
-        'location': MEDIA_ROOT,
-        'base_url': 'http://example-storage.com/profile-images/',
+MFE_CONFIG_OVERRIDES = {
+    "mymfe": {
+        "LANGUAGE_PREFERENCE_COOKIE_NAME": "mymfe-language-preference",
+        "LOGO_URL": "https://courses.example.com/mymfe-logo.png",
+    },
+    "yourmfe": {
+        "LANGUAGE_PREFERENCE_COOKIE_NAME": "yourmfe-language-preference",
+        "LOGO_URL": "https://courses.example.com/yourmfe-logo.png",
     },
 }
-PROFILE_IMAGE_DEFAULT_FILENAME = 'default'
-PROFILE_IMAGE_DEFAULT_FILE_EXTENSION = 'png'
-PROFILE_IMAGE_SECRET_KEY = 'secret'
-PROFILE_IMAGE_MAX_BYTES = 1024 * 1024
-PROFILE_IMAGE_MIN_BYTES = 100
 
-# Enable the LTI provider feature for testing
-FEATURES['ENABLE_LTI_PROVIDER'] = True
-INSTALLED_APPS += ('lti_provider',)
-AUTHENTICATION_BACKENDS += ('lti_provider.users.LtiBackend',)
+############## Settings for survey report ##############
+SURVEY_REPORT_EXTRA_DATA = {}
+SURVEY_REPORT_ENDPOINT = "https://example.com/survey_report"
+SURVEY_REPORT_CHECK_THRESHOLD = 6
+SURVEY_REPORT_ENABLE = True
+ANONYMOUS_SURVEY_REPORT = False
 
-# ORGANIZATIONS
-FEATURES['ORGANIZATIONS_APP'] = True
+CSRF_TRUSTED_ORIGINS = ['https://*.example.com']
+
+############## Settings for JWT token handling ##############
+TOKEN_SIGNING = {
+    'JWT_ISSUER': 'token-test-issuer',
+    'JWT_SIGNING_ALGORITHM': 'RS512',
+    'JWT_SUPPORTED_VERSION': '1.2.0',
+    'JWT_PRIVATE_SIGNING_JWK': """
+        {
+            "kid": "token-test-sign",
+            "kty": "RSA",
+            "key_ops": [
+                "sign"
+            ],
+            "n": "o5cn3ljSRi6FaDEKTn0PS-oL9EFyv1pI7dRgffQLD1qf5D6sprmYfWWokSsrWig8u2y0HChSygR6Jn5KXBqQn6FpM0dDJLnWQDRXHLl3Ey1iPYgDSmOIsIGrV9ZyNCQwk03wAgWbfdBTig3QSDYD-sTNOs3pc4UD_PqAvU2nz_1SS2ZiOwOn5F6gulE1L0iE3KEUEvOIagfHNVhz0oxa_VRZILkzV-zr6R_TW1m97h4H8jXl_VJyQGyhMGGypuDrQ9_vaY_RLEulLCyY0INglHWQ7pckxBtI5q55-Vio2wgewe2_qYcGsnBGaDNbySAsvYcWRrqDiFyzrJYivodqTQ",
+            "e": "AQAB",
+            "d": "HIiV7KNjcdhVbpn3KT-I9n3JPf5YbGXsCIedmPqDH1d4QhBofuAqZ9zebQuxkRUpmqtYMv0Zi6ECSUqH387GYQF_XvFUFcjQRPycISd8TH0DAKaDpGr-AYNshnKiEtQpINhcP44I1AYNPCwyoxXA1fGTtmkKChsuWea7o8kytwU5xSejvh5-jiqu2SF4GEl0BEXIAPZsgbzoPIWNxgO4_RzNnWs6nJZeszcaDD0CyezVSuH9QcI6g5QFzAC_YuykSsaaFJhZ05DocBsLczShJ9Omf6PnK9xlm26I84xrEh_7x4fVmNBg3xWTLh8qOnHqGko93A1diLRCrKHOvnpvgQ",
+            "p": "3T3DEtBUka7hLGdIsDlC96Uadx_q_E4Vb1cxx_4Ss_wGp1Loz3N3ZngGyInsKlmbBgLo1Ykd6T9TRvRNEWEtFSOcm2INIBoVoXk7W5RuPa8Cgq2tjQj9ziGQ08JMejrPlj3Q1wmALJr5VTfvSYBu0WkljhKNCy1KB6fCby0C9WE",
+            "q": "vUqzWPZnDG4IXyo-k5F0bHV0BNL_pVhQoLW7eyFHnw74IOEfSbdsMspNcPSFIrtgPsn7981qv3lN_staZ6JflKfHayjB_lvltHyZxfl0dvruShZOx1N6ykEo7YrAskC_qxUyrIvqmJ64zPW3jkuOYrFs7Ykj3zFx3Zq1H5568G0",
+            "dp": "Azh08H8r2_sJuBXAzx_mQ6iZnAZQ619PnJFOXjTqnMgcaK8iSHLL2CgDIUQwteUcBphgP0uBrfWIBs5jmM8rUtVz4CcrPb5jdjhHjuu4NxmnFbPlhNoOp8OBUjPP3S-h-fPoaFjxDrUqz_zCdPVzp4S6UTkf6Hu-SiI9CFVFZ8E",
+            "dq": "WQ44_KTIbIej9qnYUPMA1DoaAF8ImVDIdiOp9c79dC7FvCpN3w-lnuugrYDM1j9Tk5bRrY7-JuE6OaKQgOtajoS1BIxjYHj5xAVPD15CVevOihqeq5Zx0ZAAYmmCKRrfUe0iLx2QnIcoKH1-Azs23OXeeo6nysznZjvv9NVJv60",
+            "qi": "KSWGH607H1kNG2okjYdmVdNgLxTUB-Wye9a9FNFE49UmQIOJeZYXtDzcjk8IiK3g-EU3CqBeDKVUgHvHFu4_Wj3IrIhKYizS4BeFmOcPDvylDQCmJcC9tXLQgHkxM_MEJ7iLn9FOLRshh7GPgZphXxMhezM26Cz-8r3_mACHu84"
+        }
+    """,  # noqa: E501,
+
+    'JWT_PUBLIC_SIGNING_JWK_SET': """
+        {
+          "keys": [
+            {
+              "kid": "token-test-sign",
+              "kty": "RSA",
+              "n": "o5cn3ljSRi6FaDEKTn0PS-oL9EFyv1pI7dRgffQLD1qf5D6sprmYfWWokSsrWig8u2y0HChSygR6Jn5KXBqQn6FpM0dDJLnWQDRXHLl3Ey1iPYgDSmOIsIGrV9ZyNCQwk03wAgWbfdBTig3QSDYD-sTNOs3pc4UD_PqAvU2nz_1SS2ZiOwOn5F6gulE1L0iE3KEUEvOIagfHNVhz0oxa_VRZILkzV-zr6R_TW1m97h4H8jXl_VJyQGyhMGGypuDrQ9_vaY_RLEulLCyY0INglHWQ7pckxBtI5q55-Vio2wgewe2_qYcGsnBGaDNbySAsvYcWRrqDiFyzrJYivodqTQ",
+              "e": "AQAB"
+            },
+            {
+              "kid": "token-test-wrong-key",
+              "kty": "RSA",
+              "n": "o5cn3ljSRi6FaDEKTn0PS-oL9EFyv1pI7dRgffQLD1qf5D6sprmYfWWokSsrWig8u2y0HChSygR6Jn5KXBqQn6FpM0dDJLnWQDRXHLl3Ey1iPYgDSmOIsIGrV9ZyNCQwk03wAgWbfdBTig3QSDYD-sTNOs3pc4UD_PqAvU2nz_1SS2ZiOwOn5F6gulE1L0iE3KEUEvOIagfHNVhz0oxa_VRZILkzV-zr6R_TW1m97h4H8jXl_VJyQGyhMGGypuDrQ9_vaY_RLEulLCyY0INglHWQ7pckxBtI5q55-Vio2wgewe2_qYcGsnBGaDNbySAsvYcWRrqDiFyzrJYivodqTQ",
+              "e": "AQAB"
+            }
+          ]
+        }
+    """,  # noqa: E501
+}
+
+### Course Live
+COURSE_LIVE_GLOBAL_CREDENTIALS["BIG_BLUE_BUTTON"] = big_blue_button_credentials  # noqa: F405
+
+### Override default production settings for testing purposes
+
+API_ACCESS_FROM_EMAIL = "api-requests@example.com"
+BRANCH_IO_KEY = ""
+CC_MERCHANT_NAME = "Your Platform Name Here"
+CERT_QUEUE = "certificates"
+CMS_BASE = "localhost:18010"
+COMMENTS_SERVICE_KEY = "password"
+del BROKER_HEARTBEAT  # noqa: F821
+del BROKER_HEARTBEAT_CHECKRATE  # noqa: F821
+del BROKER_USE_SSL  # noqa: F821
+del DEFAULT_ENTERPRISE_API_URL  # noqa: F821
+del DEFAULT_ENTERPRISE_CONSENT_API_URL  # noqa: F821
+del EMAIL_FILE_PATH  # noqa: F821
+del ENABLE_REQUIRE_THIRD_PARTY_AUTH  # noqa: F821
+del ENTITLEMENTS_EXPIRATION_ROUTING_KEY  # noqa: F821
+del PYTHON_LIB_FILENAME  # noqa: F821
+del REGISTRATION_CODE_LENGTH  # noqa: F821
+del SESSION_INACTIVITY_TIMEOUT_IN_SECONDS  # noqa: F821
+del SSL_AUTH_DN_FORMAT_STRING  # noqa: F821
+del SSL_AUTH_EMAIL_DOMAIN  # noqa: F821
+EDX_API_KEY = "PUT_YOUR_API_KEY_HERE"
+ENTERPRISE_PUBLIC_ENROLLMENT_API_URL = "https://localhost:18000/api/enrollment/v1/"
+GOOGLE_ANALYTICS_LINKEDIN = "GOOGLE_ANALYTICS_LINKEDIN_DUMMY"
+GOOGLE_SITE_VERIFICATION_ID = ""
+ID_VERIFICATION_SUPPORT_LINK = ""
+MAINTENANCE_BANNER_TEXT = "Sample banner message"
+ZENDESK_API_KEY = ""
+ZENDESK_USER = ""

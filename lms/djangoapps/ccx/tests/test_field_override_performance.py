@@ -1,51 +1,53 @@
-# coding=UTF-8
 """
 Performance tests for field overrides.
 """
-import ddt
-import itertools
-import mock
-from nose.plugins.skip import SkipTest
 
-from courseware.views import progress  # pylint: disable=import-error
-from courseware.field_overrides import OverrideFieldData
+
+import itertools
 from datetime import datetime
+from unittest import mock
+
+import ddt
+import pytest
+from ccx_keys.locator import CCXLocator
 from django.conf import settings
-from django.core.cache import get_cache
+from django.contrib.messages.storage.fallback import FallbackStorage
+from django.core.cache import caches
+from django.db import connections
 from django.test.client import RequestFactory
 from django.test.utils import override_settings
-from edxmako.middleware import MakoMiddleware  # pylint: disable=import-error
-from nose.plugins.attrib import attr
+from edx_django_utils.cache import RequestCache
+from opaque_keys.edx.keys import CourseKey
 from pytz import UTC
-from request_cache.middleware import RequestCache
-from student.models import CourseEnrollment
-from student.tests.factories import UserFactory  # pylint: disable=import-error
 from xblock.core import XBlock
-from xmodule.modulestore.django import modulestore
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase, \
-    TEST_DATA_SPLIT_MODULESTORE, TEST_DATA_MONGO_MODULESTORE
-from xmodule.modulestore.tests.factories import check_mongo_calls_range, CourseFactory, check_sum_of_calls
+
+from common.djangoapps.student.models import CourseEnrollment
+from common.djangoapps.student.tests.factories import UserFactory
+from lms.djangoapps.ccx.tests.factories import CcxFactory
+from lms.djangoapps.courseware.field_overrides import OverrideFieldData
+from lms.djangoapps.courseware.testutils import FieldOverrideTestMixin
+from lms.djangoapps.courseware.views.views import progress
+from openedx.core.djangoapps.content.block_structure.api import get_course_in_cache
+from openedx.core.djangoapps.waffle_utils.testutils import WAFFLE_TABLES
+from openedx.core.djangolib.testing.utils import AUTHZ_TABLES
+from openedx.features.content_type_gating.models import ContentTypeGatingConfig
+from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
+from xmodule.modulestore.tests.factories import CourseFactory, check_mongo_calls, check_sum_of_calls
 from xmodule.modulestore.tests.utils import ProceduralCourseTestMixin
-from ccx_keys.locator import CCXLocator
-from ccx.tests.factories import CcxFactory
+
+QUERY_COUNT_TABLE_IGNORELIST = WAFFLE_TABLES + AUTHZ_TABLES
 
 
-@attr('shard_1')
-@mock.patch.dict(
-    'django.conf.settings.FEATURES',
-    {
-        'ENABLE_XBLOCK_VIEW_ENDPOINT': True,
-        'ENABLE_MAX_SCORE_CACHE': False,
-    }
-)
+@override_settings(ENABLE_XBLOCK_VIEW_ENDPOINT=True)
 @ddt.ddt
-class FieldOverridePerformanceTestCase(ProceduralCourseTestMixin,
-                                       ModuleStoreTestCase):
+class FieldOverridePerformanceTestCase(FieldOverrideTestMixin, ProceduralCourseTestMixin, ModuleStoreTestCase):
     """
     Base class for instrumenting SQL queries and Mongo reads for field override
     providers.
     """
     __test__ = False
+    # Tell Django to clean out all databases, not just default
+    databases = set(connections)
 
     # TEST_DATA must be overridden by subclasses
     TEST_DATA = None
@@ -54,16 +56,21 @@ class FieldOverridePerformanceTestCase(ProceduralCourseTestMixin,
         """
         Create a test client, course, and user.
         """
-        super(FieldOverridePerformanceTestCase, self).setUp()
+        super().setUp()
 
         self.request_factory = RequestFactory()
         self.student = UserFactory.create()
         self.request = self.request_factory.get("foo")
+        self.request.session = {}
         self.request.user = self.student
+        messages = FallbackStorage(self.request)
+        self.request._messages = messages  # pylint: disable=protected-access
+
+        patcher = mock.patch('common.djangoapps.edxmako.request_context.get_current_request', return_value=self.request)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.course = None
         self.ccx = None
-
-        MakoMiddleware().process_request(self.request)
 
     def setup_course(self, size, enable_ccx, view_as_ccx):
         """
@@ -122,18 +129,15 @@ class FieldOverridePerformanceTestCase(ProceduralCourseTestMixin,
             self.student,
             course_key
         )
+        return CourseKey.from_string(str(course_key))
 
-    def grade_course(self, course, view_as_ccx):
+    def grade_course(self, course_key):
         """
         Renders the progress page for the given course.
         """
-        course_key = course.id
-        if view_as_ccx:
-            course_key = CCXLocator.from_course_locator(course_key, self.ccx.id)
-
         return progress(
             self.request,
-            course_id=unicode(course_key),
+            course_id=str(course_key),
             student_id=self.student.id
         )
 
@@ -142,7 +146,7 @@ class FieldOverridePerformanceTestCase(ProceduralCourseTestMixin,
         Assert that mongodb is queried ``calls`` times in the surrounded
         context.
         """
-        return check_mongo_calls_range(max_finds=calls)
+        return check_mongo_calls(calls)
 
     def assertXBlockInstantiations(self, instantiations):
         """
@@ -151,114 +155,97 @@ class FieldOverridePerformanceTestCase(ProceduralCourseTestMixin,
         """
         return check_sum_of_calls(XBlock, ['__init__'], instantiations, instantiations, include_arguments=False)
 
-    def instrument_course_progress_render(self, course_width, enable_ccx, view_as_ccx, queries, reads, xblocks):
+    def instrument_course_progress_render(
+            self, course_width, enable_ccx, view_as_ccx,
+            sql_queries, mongo_reads,
+    ):
         """
         Renders the progress page, instrumenting Mongo reads and SQL queries.
         """
-        self.setup_course(course_width, enable_ccx, view_as_ccx)
+        course_key = self.setup_course(course_width, enable_ccx, view_as_ccx)
 
         # Switch to published-only mode to simulate the LMS
         with self.settings(MODULESTORE_BRANCH='published-only'):
             # Clear all caches before measuring
             for cache in settings.CACHES:
-                get_cache(cache).clear()
+                caches[cache].clear()
 
             # Refill the metadata inheritance cache
-            modulestore().get_course(self.course.id, depth=None)
+            get_course_in_cache(course_key)
 
             # We clear the request cache to simulate a new request in the LMS.
-            RequestCache.clear_request_cache()
+            RequestCache.clear_all_namespaces()
 
             # Reset the list of provider classes, so that our django settings changes
             # can actually take affect.
             OverrideFieldData.provider_classes = None
 
-            with self.assertNumQueries(queries):
-                with self.assertMongoCallCount(reads):
-                    with self.assertXBlockInstantiations(xblocks):
-                        self.grade_course(self.course, view_as_ccx)
+            with self.assertNumQueries(sql_queries, using='default', table_ignorelist=QUERY_COUNT_TABLE_IGNORELIST):
+                with self.assertNumQueries(0, using='student_module_history'):
+                    with self.assertMongoCallCount(mongo_reads):
+                        with self.assertXBlockInstantiations(1):
+                            self.grade_course(course_key)
 
-    @ddt.data(*itertools.product(('no_overrides', 'ccx'), range(1, 4), (True, False), (True, False)))
+    @ddt.data(*itertools.product(('no_overrides', 'ccx'), list(range(1, 4)), (True, False), (True, False)))
     @ddt.unpack
     @override_settings(
-        FIELD_OVERRIDE_PROVIDERS=(),
+        XBLOCK_FIELD_DATA_WRAPPERS=[],
+        MODULESTORE_FIELD_OVERRIDE_PROVIDERS=[],
     )
     def test_field_overrides(self, overrides, course_width, enable_ccx, view_as_ccx):
         """
         Test without any field overrides.
         """
+        ContentTypeGatingConfig.objects.create(
+            enabled=True,
+            enabled_as_of=datetime(2018, 1, 1),
+        )
+
         providers = {
             'no_overrides': (),
-            'ccx': ('ccx.overrides.CustomCoursesForEdxOverrideProvider',)
+            'ccx': ('lms.djangoapps.ccx.overrides.CustomCoursesForEdxOverrideProvider',)
         }
         if overrides == 'no_overrides' and view_as_ccx:
-            raise SkipTest("Can't view a ccx course if field overrides are disabled.")
+            pytest.skip("Can't view a ccx course if field overrides are disabled.")
 
         if not enable_ccx and view_as_ccx:
-            raise SkipTest("Can't view a ccx course if ccx is disabled on the course")
+            pytest.skip("Can't view a ccx course if ccx is disabled on the course")
 
-        if self.MODULESTORE == TEST_DATA_MONGO_MODULESTORE and view_as_ccx:
-            raise SkipTest("Can't use a MongoModulestore test as a CCX course")
-
-        with self.settings(FIELD_OVERRIDE_PROVIDERS=providers[overrides]):
-            queries, reads, xblocks = self.TEST_DATA[(overrides, course_width, enable_ccx, view_as_ccx)]
-            self.instrument_course_progress_render(course_width, enable_ccx, view_as_ccx, queries, reads, xblocks)
-
-
-class TestFieldOverrideMongoPerformance(FieldOverridePerformanceTestCase):
-    """
-    Test cases for instrumenting field overrides against the Mongo modulestore.
-    """
-    MODULESTORE = TEST_DATA_MONGO_MODULESTORE
-    __test__ = True
-
-    TEST_DATA = {
-        # (providers, course_width, enable_ccx, view_as_ccx): # of sql queries, # of mongo queries, # of xblocks
-        ('no_overrides', 1, True, False): (24, 6, 13),
-        ('no_overrides', 2, True, False): (69, 6, 84),
-        ('no_overrides', 3, True, False): (264, 6, 335),
-        ('ccx', 1, True, False): (24, 6, 13),
-        ('ccx', 2, True, False): (69, 6, 84),
-        ('ccx', 3, True, False): (264, 6, 335),
-        ('ccx', 1, True, True): (24, 6, 13),
-        ('ccx', 2, True, True): (69, 6, 84),
-        ('ccx', 3, True, True): (264, 6, 335),
-        ('no_overrides', 1, False, False): (24, 6, 13),
-        ('no_overrides', 2, False, False): (69, 6, 84),
-        ('no_overrides', 3, False, False): (264, 6, 335),
-        ('ccx', 1, False, False): (24, 6, 13),
-        ('ccx', 2, False, False): (69, 6, 84),
-        ('ccx', 3, False, False): (264, 6, 335),
-        ('ccx', 1, False, True): (24, 6, 13),
-        ('ccx', 2, False, True): (69, 6, 84),
-        ('ccx', 3, False, True): (264, 6, 335),
-    }
+        with self.settings(
+            XBLOCK_FIELD_DATA_WRAPPERS=['lms.djangoapps.courseware.field_overrides:OverrideModulestoreFieldData.wrap'],
+            MODULESTORE_FIELD_OVERRIDE_PROVIDERS=providers[overrides],
+        ):
+            sql_queries, mongo_reads = self.TEST_DATA[  # pylint: disable=unsubscriptable-object
+                (overrides, course_width, enable_ccx, view_as_ccx)
+            ]
+            self.instrument_course_progress_render(
+                course_width, enable_ccx, view_as_ccx, sql_queries, mongo_reads,
+            )
 
 
 class TestFieldOverrideSplitPerformance(FieldOverridePerformanceTestCase):
     """
     Test cases for instrumenting field overrides against the Split modulestore.
     """
-    MODULESTORE = TEST_DATA_SPLIT_MODULESTORE
     __test__ = True
 
+    # TODO: decrease query count as part of REVO-28
+    QUERY_COUNT = 36
+
     TEST_DATA = {
-        ('no_overrides', 1, True, False): (24, 4, 9),
-        ('no_overrides', 2, True, False): (69, 19, 54),
-        ('no_overrides', 3, True, False): (264, 84, 215),
-        ('ccx', 1, True, False): (24, 4, 9),
-        ('ccx', 2, True, False): (69, 19, 54),
-        ('ccx', 3, True, False): (264, 84, 215),
-        ('ccx', 1, True, True): (26, 4, 13),
-        ('ccx', 2, True, True): (71, 19, 84),
-        ('ccx', 3, True, True): (266, 84, 335),
-        ('no_overrides', 1, False, False): (24, 4, 9),
-        ('no_overrides', 2, False, False): (69, 19, 54),
-        ('no_overrides', 3, False, False): (264, 84, 215),
-        ('ccx', 1, False, False): (24, 4, 9),
-        ('ccx', 2, False, False): (69, 19, 54),
-        ('ccx', 3, False, False): (264, 84, 215),
-        ('ccx', 1, False, True): (24, 4, 9),
-        ('ccx', 2, False, True): (69, 19, 54),
-        ('ccx', 3, False, True): (264, 84, 215),
+        ('no_overrides', 1, True, False): (QUERY_COUNT, 2),
+        ('no_overrides', 2, True, False): (QUERY_COUNT, 2),
+        ('no_overrides', 3, True, False): (QUERY_COUNT, 2),
+        ('ccx', 1, True, False): (QUERY_COUNT, 2),
+        ('ccx', 2, True, False): (QUERY_COUNT, 2),
+        ('ccx', 3, True, False): (QUERY_COUNT, 2),
+        ('ccx', 1, True, True): (QUERY_COUNT + 2, 2),
+        ('ccx', 2, True, True): (QUERY_COUNT + 2, 2),
+        ('ccx', 3, True, True): (QUERY_COUNT + 2, 2),
+        ('no_overrides', 1, False, False): (QUERY_COUNT, 2),
+        ('no_overrides', 2, False, False): (QUERY_COUNT, 2),
+        ('no_overrides', 3, False, False): (QUERY_COUNT, 2),
+        ('ccx', 1, False, False): (QUERY_COUNT, 2),
+        ('ccx', 2, False, False): (QUERY_COUNT, 2),
+        ('ccx', 3, False, False): (QUERY_COUNT, 2),
     }

@@ -1,20 +1,29 @@
-;(function (define) {
+(function(define) {
     'use strict';
-    define(['jquery', 'underscore', 'backbone', 'gettext'], function($, _, Backbone, gettext) {
 
+    define([
+        'jquery',
+        'underscore',
+        'backbone',
+        'gettext',
+        'edx-ui-toolkit/js/utils/html-utils'
+    ], function($, _, Backbone, gettext, HtmlUtils) {
         var CourseCohortSettingsNotificationView = Backbone.View.extend({
             initialize: function(options) {
-                this.template = _.template($('#cohort-state-tpl').text());
+                this.template = HtmlUtils.template($('#cohort-state-tpl').text());
                 this.cohortEnabled = options.cohortEnabled;
             },
 
             render: function() {
-                this.$el.html(this.template({}));
+                HtmlUtils.setHtml(
+                    this.$el,
+                    this.template({})
+                );
                 this.showCohortStateMessage();
                 return this;
             },
 
-            showCohortStateMessage: function () {
+            showCohortStateMessage: function() {
                 var actionToggleMessage = this.$('.action-toggle-message');
 
                 AnimationUtil.triggerAnimation(actionToggleMessage);

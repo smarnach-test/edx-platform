@@ -1,16 +1,16 @@
 """
 Tests for the plugin API
 """
-
+import pytest
 from django.test import TestCase
+from edx_django_utils.plugins import PluginError
 
-from openedx.core.lib.api.plugins import PluginError
 from openedx.core.lib.course_tabs import CourseTabPluginManager
 
 
-class TestPluginApi(TestCase):
+class TestCourseTabApi(TestCase):
     """
-    Unit tests for the plugin API
+    Unit tests for the course tab plugin API
     """
 
     def test_get_plugin(self):
@@ -18,7 +18,7 @@ class TestPluginApi(TestCase):
         Verify that get_plugin works as expected.
         """
         tab_type = CourseTabPluginManager.get_plugin("instructor")
-        self.assertEqual(tab_type.title, "Instructor")
+        assert tab_type.title == 'Instructor'
 
-        with self.assertRaises(PluginError):
+        with pytest.raises(PluginError):
             CourseTabPluginManager.get_plugin("no_such_type")

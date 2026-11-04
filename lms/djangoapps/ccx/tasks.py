@@ -2,16 +2,17 @@
 Asynchronous tasks for the CCX app.
 """
 
-from django.dispatch import receiver
+
 import logging
 
+from ccx_keys.locator import CCXLocator
+from django.dispatch import receiver
 from opaque_keys import InvalidKeyError
 from opaque_keys.edx.locator import CourseLocator
-from ccx_keys.locator import CCXLocator
-from xmodule.modulestore.django import SignalHandler
-from lms import CELERY_APP
 
-from .models import CustomCourseForEdX
+from lms import CELERY_APP
+from lms.djangoapps.ccx.models import CustomCourseForEdX
+from xmodule.modulestore.django import SignalHandler  # pylint: disable=wrong-import-order
 
 log = logging.getLogger("edx.ccx")
 
@@ -22,7 +23,7 @@ def course_published_handler(sender, course_key, **kwargs):  # pylint: disable=u
     Consume signals that indicate course published. If course already a CCX, do nothing.
     """
     if not isinstance(course_key, CCXLocator):
-        send_ccx_course_published.delay(unicode(course_key))
+        send_ccx_course_published.delay(str(course_key))
 
 
 @CELERY_APP.task
@@ -33,7 +34,7 @@ def send_ccx_course_published(course_key):
     course_key = CourseLocator.from_string(course_key)
     for ccx in CustomCourseForEdX.objects.filter(course_id=course_key):
         try:
-            ccx_key = CCXLocator.from_course_locator(course_key, ccx.id)
+            ccx_key = CCXLocator.from_course_locator(course_key, str(ccx.id))
         except InvalidKeyError:
             log.info('Attempt to publish course with deprecated id. Course: %s. CCX: %s', course_key, ccx.id)
             continue

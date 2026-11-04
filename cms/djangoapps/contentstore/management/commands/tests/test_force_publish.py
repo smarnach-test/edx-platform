@@ -1,13 +1,23 @@
 """
 Tests for the force_publish management command
 """
-import mock
-from django.core.management.base import CommandError
-from xmodule.modulestore import ModuleStoreEnum
-from xmodule.modulestore.tests.django_utils import SharedModuleStoreTestCase
-from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory
-from contentstore.management.commands.force_publish import Command
-from contentstore.management.commands.utils import get_course_versions
+
+
+from unittest import mock
+
+from django.core.management import CommandError, call_command
+
+from cms.djangoapps.contentstore.management.commands.force_publish import Command
+from cms.djangoapps.contentstore.management.commands.utils import get_course_versions
+from xmodule.modulestore import ModuleStoreEnum  # pylint: disable=wrong-import-order
+from xmodule.modulestore.tests.django_utils import (  # pylint: disable=wrong-import-order
+    ModuleStoreTestCase,
+    SharedModuleStoreTestCase,
+)
+from xmodule.modulestore.tests.factories import (  # pylint: disable=wrong-import-order
+    BlockFactory,
+    CourseFactory,
+)
 
 
 class TestForcePublish(SharedModuleStoreTestCase):
@@ -16,7 +26,7 @@ class TestForcePublish(SharedModuleStoreTestCase):
     """
     @classmethod
     def setUpClass(cls):
-        super(TestForcePublish, cls).setUpClass()
+        super().setUpClass()
         cls.course = CourseFactory.create(default_store=ModuleStoreEnum.Type.split)
         cls.test_user_id = ModuleStoreEnum.UserID.test
         cls.command = Command()
@@ -25,50 +35,54 @@ class TestForcePublish(SharedModuleStoreTestCase):
         """
         Test 'force_publish' command with no arguments
         """
-        errstring = "force_publish requires 1 or more argument: <course_id> |commit"
-        with self.assertRaisesRegexp(CommandError, errstring):
-            self.command.handle()
+        errstring = "Error: the following arguments are required: course_key"
+
+        with self.assertRaisesRegex(CommandError, errstring):  # noqa: PT027
+            call_command('force_publish')
 
     def test_invalid_course_key(self):
         """
         Test 'force_publish' command with invalid course key
         """
         errstring = "Invalid course key."
-        with self.assertRaisesRegexp(CommandError, errstring):
-            self.command.handle('TestX/TS01')
+        with self.assertRaisesRegex(CommandError, errstring):  # noqa: PT027
+            call_command('force_publish', 'TestX/TS01')
 
     def test_too_many_arguments(self):
         """
         Test 'force_publish' command with more than 2 arguments
         """
-        errstring = "force_publish requires 1 or more argument: <course_id> |commit"
-        with self.assertRaisesRegexp(CommandError, errstring):
-            self.command.handle(unicode(self.course.id), 'commit', 'invalid-arg')
+        errstring = "Error: unrecognized arguments: invalid-arg"
+        with self.assertRaisesRegex(CommandError, errstring):  # noqa: PT027
+            call_command('force_publish', str(self.course.id), '--commit', 'invalid-arg')
 
     def test_course_key_not_found(self):
         """
         Test 'force_publish' command with non-existing course key
         """
         errstring = "Course not found."
-        with self.assertRaisesRegexp(CommandError, errstring):
-            self.command.handle(unicode('course-v1:org+course+run'))
+        with self.assertRaisesRegex(CommandError, errstring):  # noqa: PT027
+            call_command('force_publish', 'course-v1:org+course+run')
 
-    def test_force_publish_non_split(self):
-        """
-        Test 'force_publish' command doesn't work on non split courses
-        """
-        course = CourseFactory.create(default_store=ModuleStoreEnum.Type.mongo)
-        errstring = 'The owning modulestore does not support this command.'
-        with self.assertRaisesRegexp(CommandError, errstring):
-            self.command.handle(unicode(course.id))
 
-    @SharedModuleStoreTestCase.modifies_courseware
+class TestForcePublishModifications(ModuleStoreTestCase):
+    """
+    Tests for the force_publish management command that modify the courseware
+    during the test.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.course = CourseFactory.create(default_store=ModuleStoreEnum.Type.split)
+        self.test_user_id = ModuleStoreEnum.UserID.test
+        self.command = Command()
+
     def test_force_publish(self):
         """
         Test 'force_publish' command
         """
         # Add some changes to course
-        chapter = ItemFactory.create(category='chapter', parent_location=self.course.location)
+        chapter = BlockFactory.create(category='chapter', parent_location=self.course.location)
         self.store.create_child(
             self.test_user_id,
             chapter.location,
@@ -77,33 +91,33 @@ class TestForcePublish(SharedModuleStoreTestCase):
         )
 
         # verify that course has changes.
-        self.assertTrue(self.store.has_changes(self.store.get_item(self.course.location)))
+        self.assertTrue(self.store.has_changes(self.store.get_item(self.course.location)))  # noqa: PT009
 
         # get draft and publish branch versions
-        versions = get_course_versions(unicode(self.course.id))
+        versions = get_course_versions(str(self.course.id))
         draft_version = versions['draft-branch']
         published_version = versions['published-branch']
 
         # verify that draft and publish point to different versions
-        self.assertNotEqual(draft_version, published_version)
+        self.assertNotEqual(draft_version, published_version)  # noqa: PT009
 
-        with mock.patch('contentstore.management.commands.force_publish.query_yes_no') as patched_yes_no:
+        with mock.patch('cms.djangoapps.contentstore.management.commands.force_publish.query_yes_no') as patched_yes_no:
             patched_yes_no.return_value = True
 
             # force publish course
-            self.command.handle(unicode(self.course.id), 'commit')
+            call_command('force_publish', str(self.course.id), '--commit')
 
             # verify that course has no changes
-            self.assertFalse(self.store.has_changes(self.store.get_item(self.course.location)))
+            self.assertFalse(self.store.has_changes(self.store.get_item(self.course.location)))  # noqa: PT009
 
             # get new draft and publish branch versions
-            versions = get_course_versions(unicode(self.course.id))
+            versions = get_course_versions(str(self.course.id))
             new_draft_version = versions['draft-branch']
             new_published_version = versions['published-branch']
 
             # verify that the draft branch didn't change while the published branch did
-            self.assertEqual(draft_version, new_draft_version)
-            self.assertNotEqual(published_version, new_published_version)
+            self.assertEqual(draft_version, new_draft_version)  # noqa: PT009
+            self.assertNotEqual(published_version, new_published_version)  # noqa: PT009
 
             # verify that draft and publish point to same versions now
-            self.assertEqual(new_draft_version, new_published_version)
+            self.assertEqual(new_draft_version, new_published_version)  # noqa: PT009

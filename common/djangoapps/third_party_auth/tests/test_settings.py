@@ -1,56 +1,69 @@
-"""Unit tests for settings.py."""
+"""Unit tests for third-party auth settings in lms/envs/common.py."""
 
-from third_party_auth import provider, settings
-from third_party_auth.tests import testutil
-import unittest
+from django.conf import settings
+from django.test import TestCase, override_settings
 
-
-_ORIGINAL_AUTHENTICATION_BACKENDS = ('first_authentication_backend',)
-_ORIGINAL_INSTALLED_APPS = ('first_installed_app',)
-_ORIGINAL_MIDDLEWARE_CLASSES = ('first_middleware_class',)
-_ORIGINAL_TEMPLATE_CONTEXT_PROCESSORS = ('first_template_context_preprocessor',)
-_SETTINGS_MAP = {
-    'AUTHENTICATION_BACKENDS': _ORIGINAL_AUTHENTICATION_BACKENDS,
-    'INSTALLED_APPS': _ORIGINAL_INSTALLED_APPS,
-    'MIDDLEWARE_CLASSES': _ORIGINAL_MIDDLEWARE_CLASSES,
-    'TEMPLATE_CONTEXT_PROCESSORS': _ORIGINAL_TEMPLATE_CONTEXT_PROCESSORS,
-    'FEATURES': {},
-}
+from common.djangoapps.third_party_auth import provider
+from openedx.core.djangolib.testing.utils import skip_unless_lms
 
 
-class SettingsUnitTest(testutil.TestCase):
-    """Unit tests for settings management code."""
+@skip_unless_lms
+class SettingsUnitTest(TestCase):
+    """Unit tests for third-party auth settings defined in lms/envs/common.py."""
 
-    # Allow access to protected methods (or module-protected methods) under test.
-    # pylint: disable=protected-access
-    # Suppress sprurious no-member warning on fakes.
-    # pylint: disable=no-member
+    def test_exception_middleware_in_middleware_list(self):
+        """Verify ExceptionMiddleware is included in MIDDLEWARE."""
+        assert 'common.djangoapps.third_party_auth.middleware.ExceptionMiddleware' in settings.MIDDLEWARE
 
-    def setUp(self):
-        super(SettingsUnitTest, self).setUp()
-        self.settings = testutil.FakeDjangoSettings(_SETTINGS_MAP)
+    def test_fields_stored_in_session_defined(self):
+        """Verify FIELDS_STORED_IN_SESSION is defined with expected values."""
+        assert settings.FIELDS_STORED_IN_SESSION == ['auth_entry', 'next']
 
-    def test_apply_settings_adds_exception_middleware(self):
-        settings.apply_settings(self.settings)
-        for middleware_name in settings._MIDDLEWARE_CLASSES:
-            self.assertIn(middleware_name, self.settings.MIDDLEWARE_CLASSES)
+    @skip_unless_lms
+    def test_no_providers_enabled_by_default(self):
+        """Providers are only enabled via ConfigurationModels in the database."""
+        assert provider.Registry.enabled() == []
 
-    def test_apply_settings_adds_fields_stored_in_session(self):
-        settings.apply_settings(self.settings)
-        self.assertEqual(settings._FIELDS_STORED_IN_SESSION, self.settings.FIELDS_STORED_IN_SESSION)
+    def test_social_auth_raise_exceptions_is_false(self):
+        """Guard against submitting a conf change that's convenient in dev but bad in prod."""
+        assert settings.SOCIAL_AUTH_RAISE_EXCEPTIONS is False
 
-    def test_apply_settings_adds_third_party_auth_to_installed_apps(self):
-        settings.apply_settings(self.settings)
-        self.assertIn('third_party_auth', self.settings.INSTALLED_APPS)
+    def test_social_auth_sanitize_redirects_is_false(self):
+        """Verify redirect sanitization is disabled (platform does its own)."""
+        assert settings.SOCIAL_AUTH_SANITIZE_REDIRECTS is False
 
-    @unittest.skipUnless(testutil.AUTH_FEATURE_ENABLED, 'third_party_auth not enabled')
-    def test_apply_settings_enables_no_providers_by_default(self):
-        # Providers are only enabled via ConfigurationModels in the database
-        settings.apply_settings(self.settings)
-        self.assertEqual([], provider.Registry.enabled())
+    def test_social_auth_login_error_url(self):
+        """Verify SOCIAL_AUTH_LOGIN_ERROR_URL is set."""
+        assert settings.SOCIAL_AUTH_LOGIN_ERROR_URL == '/'
 
-    def test_apply_settings_turns_off_raising_social_exceptions(self):
-        # Guard against submitting a conf change that's convenient in dev but
-        # bad in prod.
-        settings.apply_settings(self.settings)
-        self.assertFalse(self.settings.SOCIAL_AUTH_RAISE_EXCEPTIONS)
+    def test_social_auth_login_redirect_url(self):
+        """Verify SOCIAL_AUTH_LOGIN_REDIRECT_URL is set."""
+        assert settings.SOCIAL_AUTH_LOGIN_REDIRECT_URL == '/dashboard'
+
+    def test_social_auth_strategy(self):
+        """Verify SOCIAL_AUTH_STRATEGY is set to use ConfigurationModelStrategy."""
+        assert settings.SOCIAL_AUTH_STRATEGY == 'common.djangoapps.third_party_auth.strategy.ConfigurationModelStrategy'
+
+    def test_social_auth_pipeline_defined(self):
+        """Verify SOCIAL_AUTH_PIPELINE is defined and includes expected steps."""
+        pipeline = settings.SOCIAL_AUTH_PIPELINE
+        assert isinstance(pipeline, list)
+        assert len(pipeline) > 0
+        # Verify some key pipeline steps are present
+        assert 'common.djangoapps.third_party_auth.pipeline.parse_query_params' in pipeline
+        assert 'social_core.pipeline.user.create_user' in pipeline
+        assert 'common.djangoapps.third_party_auth.pipeline.ensure_redirect_url_is_safe' in pipeline
+
+    def test_social_auth_context_processors(self):
+        """Verify social_django context processors are included."""
+        # CONTEXT_PROCESSORS is used to build TEMPLATES, so check there
+        context_processors = settings.TEMPLATES[0]['OPTIONS']['context_processors']
+        assert 'social_django.context_processors.backends' in context_processors
+        assert 'social_django.context_processors.login_redirect' in context_processors
+
+    @override_settings(ENABLE_UNICODE_USERNAME=False)
+    def test_social_auth_clean_usernames_default(self):
+        """Verify SOCIAL_AUTH_CLEAN_USERNAMES is True when unicode usernames disabled."""
+        # Note: SOCIAL_AUTH_CLEAN_USERNAMES is a Derived setting, computed at settings load time.
+        # This test verifies the default behavior (unicode usernames disabled).
+        assert settings.SOCIAL_AUTH_CLEAN_USERNAMES is True

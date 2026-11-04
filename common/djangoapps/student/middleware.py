@@ -2,18 +2,23 @@
 Middleware that checks user standing for the purpose of keeping users with
 disabled accounts from accessing the site.
 """
-from django.http import HttpResponseForbidden
-from django.utils.translation import ugettext as _
+
+
 from django.conf import settings
-from student.models import UserStanding
+from django.http import HttpResponseForbidden
+from django.utils.deprecation import MiddlewareMixin
+from django.utils.translation import gettext as _
+
+from common.djangoapps.student.models import UserStanding
+from openedx.core.djangolib.markup import HTML, Text
 
 
-class UserStandingMiddleware(object):
+class UserStandingMiddleware(MiddlewareMixin):
     """
     Checks a user's standing on request. Returns a 403 if the user's
     status is 'disabled'.
     """
-    def process_request(self, request):
+    def process_request(self, request):  # pylint: disable=missing-function-docstring
         user = request.user
         try:
             user_account = UserStanding.objects.get(user=user.id)
@@ -23,12 +28,12 @@ class UserStandingMiddleware(object):
             pass
         else:
             if user_account.account_status == UserStanding.ACCOUNT_DISABLED:
-                msg = _(
+                msg = Text(_(
                     'Your account has been disabled. If you believe '
                     'this was done in error, please contact us at '
                     '{support_email}'
-                ).format(
-                    support_email=u'<a href="mailto:{address}?subject={subject_line}">{address}</a>'.format(
+                )).format(
+                    support_email=HTML('<a href="mailto:{address}?subject={subject_line}">{address}</a>').format(
                         address=settings.DEFAULT_FEEDBACK_EMAIL,
                         subject_line=_('Disabled Account'),
                     ),

@@ -1,8 +1,9 @@
 define([
     'underscore', 'underscore.string', 'backbone', 'gettext', 'js/models/group'
 ],
-function (_, str, Backbone, gettext, GroupModel) {
+function(_, str, Backbone, gettext, GroupModel) {
     'use strict';
+
     var GroupCollection = Backbone.Collection.extend({
         model: GroupModel,
         comparator: 'order',
@@ -11,7 +12,7 @@ function (_, str, Backbone, gettext, GroupModel) {
          * @return {Number}
          */
         nextOrder: function() {
-            if(!this.length) {
+            if (!this.length) {
                 return 0;
             }
 
@@ -20,7 +21,7 @@ function (_, str, Backbone, gettext, GroupModel) {
         /**
          * Indicates if the collection is empty when all the models are empty
          * or the collection does not include any models.
-         **/
+         * */
         isEmpty: function() {
             return this.length === 0 || this.every(function(m) {
                 return m.isEmpty();
@@ -33,14 +34,14 @@ function (_, str, Backbone, gettext, GroupModel) {
          * @examples
          * Group A, Group B, Group AA, Group ZZZ etc.
          */
-        getNextDefaultGroupName: function () {
+        getNextDefaultGroupName: function() {
             var index = this.nextOrder(),
                 usedNames = _.pluck(this.toJSON(), 'name'),
                 name = '';
 
             do {
                 name = str.sprintf(gettext('Group %s'), this.getGroupId(index));
-                index ++;
+                index++;
             } while (_.contains(usedNames, name));
 
             return name;
@@ -53,7 +54,7 @@ function (_, str, Backbone, gettext, GroupModel) {
          * @examples
          * A, B, AA in Group A, Group B, ..., Group AA, etc.
          */
-        getGroupId: (function () {
+        getGroupId: (function() {
             /*
                 Translators: Dictionary used for creation ids that are used in
                 default group names. For example: A, B, AA in Group A,

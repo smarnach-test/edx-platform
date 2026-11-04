@@ -4,52 +4,63 @@ Certificate end-points used by the student support UI.
 See lms/djangoapps/support for more details.
 
 """
+
+
 import logging
+import urllib
 from functools import wraps
 
-from django.http import (
-    HttpResponse,
-    HttpResponseBadRequest,
-    HttpResponseForbidden,
-    HttpResponseServerError
-)
-from django.views.decorators.http import require_GET, require_POST
+import nh3
+from django.db import transaction
 from django.db.models import Q
-from django.utils.translation import ugettext as _
-
+from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpResponseServerError
+from django.utils.translation import gettext as _
+from django.views.decorators.http import require_GET, require_POST
 from opaque_keys import InvalidKeyError
 from opaque_keys.edx.keys import CourseKey
-from xmodule.modulestore.django import modulestore
-from student.models import User, CourseEnrollment
-from courseware.access import has_access
-from util.json_request import JsonResponse
-from certificates import api
 
+from common.djangoapps.student.models import CourseEnrollment, User
+from common.djangoapps.util.json_request import JsonResponse
+from lms.djangoapps.certificates.api import generate_certificate_task, get_certificates_for_user
+from lms.djangoapps.certificates.generation_handler import CertificateGenerationNotAllowed
+from lms.djangoapps.certificates.permissions import GENERATE_ALL_CERTIFICATES, VIEW_ALL_CERTIFICATES
+from lms.djangoapps.instructor_task.api import generate_certificates_for_students
+from openedx.core.djangoapps.content.course_overviews.api import get_course_overview_or_none
 
 log = logging.getLogger(__name__)
 
 
-def require_certificate_permission(func):
+def require_certificate_permission(permission):
     """
     View decorator that requires permission to view and regenerate certificates.
     """
-    @wraps(func)
-    def inner(request, *args, **kwargs):  # pylint:disable=missing-docstring
-        if has_access(request.user, "certificates", "global"):
-            return func(request, *args, **kwargs)
-        else:
+    def inner(func):
+        """
+        The outer wrapper, used to allow the decorator to take optional arguments.
+        """
+        @wraps(func)
+        def wrapper(request, *args, **kwargs):
+            """
+            The inner wrapper, which wraps the view function.
+            """
+            if request.user.has_perm(permission, 'global'):
+                return func(request, *args, **kwargs)
             return HttpResponseForbidden()
-
+        return wrapper
     return inner
 
 
 @require_GET
-@require_certificate_permission
-def search_by_user(request):
+@require_certificate_permission(VIEW_ALL_CERTIFICATES)
+def search_certificates(request):
     """
-    Search for certificates for a particular user.
+    Search for certificates for a particular user OR along with the given course.
 
-    Supports search by either username or email address.
+    Supports search by either username or email address along with course id.
+
+    First filter the records for the given username/email and then filter against the given course id (if given).
+    Show the 'Regenerate' button if a record found in 'generatedcertificate' model otherwise it will show the Generate
+    button.
 
     Arguments:
         request (HttpRequest): The request object.
@@ -58,7 +69,8 @@ def search_by_user(request):
         JsonResponse
 
     Example Usage:
-        GET /certificates/search?query=bob@example.com
+        GET /certificates/search?user=bob@example.com
+        GET /certificates/search?user=bob@example.com&course_id=xyz
 
         Response: 200 OK
         Content-Type: application/json
@@ -76,27 +88,47 @@ def search_by_user(request):
         ]
 
     """
-    query = request.GET.get("query")
-    if not query:
-        return JsonResponse([])
+    uncleaned_filter = urllib.parse.unquote(urllib.parse.quote_plus(request.GET.get("user", "")))
+    user_filter = nh3.clean(uncleaned_filter)
+    if not user_filter:
+        msg = _("user is not given.")
+        return HttpResponseBadRequest(msg)
 
     try:
-        user = User.objects.get(Q(email=query) | Q(username=query))
+        user = User.objects.get(Q(email=user_filter) | Q(username=user_filter))
     except User.DoesNotExist:
-        return JsonResponse([])
+        return HttpResponseBadRequest(_("user '{user}' does not exist").format(user=user_filter))
 
-    certificates = api.get_certificates_for_user(user.username)
+    certificates = get_certificates_for_user(user.username)
     for cert in certificates:
-        cert["course_key"] = unicode(cert["course_key"])
+        cert["course_key"] = str(cert["course_key"])
         cert["created"] = cert["created"].isoformat()
         cert["modified"] = cert["modified"].isoformat()
+        cert["regenerate"] = not cert['is_pdf_certificate']
+
+    course_id = urllib.parse.quote_plus(request.GET.get("course_id", ""), safe=':/')
+    if course_id:
+        try:
+            course_key = CourseKey.from_string(course_id)
+        except InvalidKeyError:
+            return HttpResponseBadRequest(_("Course id '{course_id}' is not valid").format(course_id=course_id))
+        else:
+            course_overview = get_course_overview_or_none(course_key)
+            if not course_overview:
+                msg = _("The course does not exist against the given key '{course_key}'").format(course_key=course_key)
+                return HttpResponseBadRequest(msg)
+
+            certificates = [certificate for certificate in certificates
+                            if certificate['course_key'] == course_id]
+            if not certificates:
+                return JsonResponse([{'username': user.username, 'course_key': course_id, 'regenerate': False}])
 
     return JsonResponse(certificates)
 
 
-def _validate_regen_post_params(params):
+def _validate_post_params(params):
     """
-    Validate request POST parameters to the regenerate certificates end-point.
+    Validate request POST parameters to the generate and regenerate certificates end-point.
 
     Arguments:
         params (QueryDict): Request parameters.
@@ -122,8 +154,10 @@ def _validate_regen_post_params(params):
     return {"user": user, "course_key": course_key}, None
 
 
+# Grades can potentially be written - if so, let grading manage the transaction.
+@transaction.non_atomic_requests
 @require_POST
-@require_certificate_permission
+@require_certificate_permission(GENERATE_ALL_CERTIFICATES)
 def regenerate_certificate_for_user(request):
     """
     Regenerate certificates for a user.
@@ -146,13 +180,80 @@ def regenerate_certificate_for_user(request):
 
     """
     # Check the POST parameters, returning a 400 response if they're not valid.
-    params, response = _validate_regen_post_params(request.POST)
+    params, response = _validate_post_params(request.POST)
     if response is not None:
         return response
 
-    # Check that the course exists
-    course = modulestore().get_course(params["course_key"])
-    if course is None:
+    user = params["user"]
+    course_key = params["course_key"]
+
+    course_overview = get_course_overview_or_none(course_key)
+    if not course_overview:
+        msg = _("The course {course_key} does not exist").format(course_key=course_key)
+        return HttpResponseBadRequest(msg)
+
+    # Check that the user is enrolled in the course
+    if not CourseEnrollment.is_enrolled(user, course_key):
+        msg = _("User {user_id} is not enrolled in the course {course_key}").format(
+            user_id=user.id,
+            course_key=course_key
+        )
+        return HttpResponseBadRequest(msg)
+
+    # Attempt to regenerate certificates
+    try:
+        generate_certificate_task(user, course_key)
+    except CertificateGenerationNotAllowed as e:
+        log.exception(
+            "Certificate generation not allowed for user %s in course %s",
+            str(user),
+            course_key,
+        )
+        return HttpResponseBadRequest(str(e))
+    except:  # pylint: disable=bare-except
+        # We are pessimistic about the kinds of errors that might get thrown by the
+        # certificates API.  This may be overkill, but we're logging everything so we can
+        # track down unexpected errors.
+        log.exception(f"Could not regenerate certificate for user {user.id} in course {course_key}")
+        return HttpResponseServerError(_("An unexpected error occurred while regenerating certificates."))
+
+    log.info(
+        f"Started regenerating certificates for user {user.id} in course {course_key} from the support page."
+    )
+    return HttpResponse(200)
+
+
+@transaction.non_atomic_requests
+@require_POST
+@require_certificate_permission(GENERATE_ALL_CERTIFICATES)
+def generate_certificate_for_user(request):
+    """
+    Generate certificates for a user.
+
+    This is meant to be used by support staff through the UI in lms/djangoapps/support
+
+    Arguments:
+        request (HttpRequest): The request object
+
+    Returns:
+        HttpResponse
+
+    Example Usage:
+
+        POST /certificates/generate
+            * username: "bob"
+            * course_key: "edX/DemoX/Demo_Course"
+
+        Response: 200 OK
+
+    """
+    # Check the POST parameters, returning a 400 response if they're not valid.
+    params, response = _validate_post_params(request.POST)
+    if response is not None:
+        return response
+
+    course_overview = get_course_overview_or_none(params["course_key"])
+    if not course_overview:
         msg = _("The course {course_key} does not exist").format(course_key=params["course_key"])
         return HttpResponseBadRequest(msg)
 
@@ -164,22 +265,11 @@ def regenerate_certificate_for_user(request):
         )
         return HttpResponseBadRequest(msg)
 
-    # Attempt to regenerate certificates
-    try:
-        api.regenerate_user_certificates(params["user"], params["course_key"], course=course)
-    except:  # pylint: disable=bare-except
-        # We are pessimistic about the kinds of errors that might get thrown by the
-        # certificates API.  This may be overkill, but we're logging everything so we can
-        # track down unexpected errors.
-        log.exception(
-            "Could not regenerate certificates for user %s in course %s",
-            params["user"].id,
-            params["course_key"]
-        )
-        return HttpResponseServerError(_("An unexpected error occurred while regenerating certificates."))
-
-    log.info(
-        "Started regenerating certificates for user %s in course %s from the support page.",
-        params["user"].id, params["course_key"]
+    # Attempt to generate certificate
+    generate_certificates_for_students(
+        request,
+        params["course_key"],
+        student_set="specific_student",
+        specific_student_id=params["user"].id
     )
     return HttpResponse(200)

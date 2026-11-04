@@ -3,24 +3,23 @@ This test file will run through some XBlock test scenarios regarding the
 recommender system
 """
 
-from copy import deepcopy
-import json
+
+import codecs
 import itertools
-import StringIO
 import unittest
+from copy import deepcopy
+from io import BytesIO
 
-from ddt import ddt, data
-from nose.plugins.attrib import attr
-
+import simplejson as json
+from ddt import data, ddt
 from django.conf import settings
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 
-from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory
-from xmodule.modulestore.tests.django_utils import SharedModuleStoreTestCase
-
+from common.djangoapps.student.tests.factories import GlobalStaffFactory
 from lms.djangoapps.courseware.tests.helpers import LoginEnrollmentTestCase
-from lms.djangoapps.courseware.tests.factories import GlobalStaffFactory
-from lms.djangoapps.lms_xblock.runtime import quote_slashes
+from openedx.core.lib.url_utils import quote_slashes
+from xmodule.modulestore.tests.django_utils import SharedModuleStoreTestCase
+from xmodule.modulestore.tests.factories import BlockFactory, CourseFactory
 
 
 class TestRecommender(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
@@ -28,8 +27,8 @@ class TestRecommender(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
     Check that Recommender state is saved properly
     """
     STUDENTS = [
-        {'email': 'view@test.com', 'password': 'foo'},
-        {'email': 'view2@test.com', 'password': 'foo'}
+        {'email': 'view@test.com', 'password': 'Password1234'},
+        {'email': 'view2@test.com', 'password': 'Password1234'}
     ]
     XBLOCK_NAMES = ['recommender', 'recommender_second']
 
@@ -41,39 +40,32 @@ class TestRecommender(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         if settings.ROOT_URLCONF != 'lms.urls':
             raise unittest.SkipTest('Test only valid in lms')
 
-        super(TestRecommender, cls).setUpClass()
+        super().setUpClass()
         cls.course = CourseFactory.create(
             display_name='Recommender_Test_Course'
         )
         with cls.store.bulk_operations(cls.course.id, emit_signals=False):
-            cls.chapter = ItemFactory.create(
+            cls.chapter = BlockFactory.create(
                 parent=cls.course, display_name='Overview'
             )
-            cls.section = ItemFactory.create(
+            cls.section = BlockFactory.create(
                 parent=cls.chapter, display_name='Welcome'
             )
-            cls.unit = ItemFactory.create(
+            cls.unit = BlockFactory.create(
                 parent=cls.section, display_name='New Unit'
             )
-            cls.xblock = ItemFactory.create(
+            cls.xblock = BlockFactory.create(
                 parent=cls.unit,
                 category='recommender',
                 display_name='recommender'
             )
-            cls.xblock2 = ItemFactory.create(
+            cls.xblock2 = BlockFactory.create(
                 parent=cls.unit,
                 category='recommender',
                 display_name='recommender_second'
             )
 
-        cls.course_url = reverse(
-            'courseware_section',
-            kwargs={
-                'course_id': cls.course.id.to_deprecated_string(),
-                'chapter': 'Overview',
-                'section': 'Welcome',
-            }
-        )
+        cls.course_url = reverse('render_xblock', args=[str(cls.section.location)])
 
         cls.resource_urls = [
             (
@@ -115,11 +107,12 @@ class TestRecommender(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         }
 
     def setUp(self):
-        super(TestRecommender, self).setUp()
+        super().setUp()
         for idx, student in enumerate(self.STUDENTS):
-            username = "u{}".format(idx)
+            username = f"u{idx}"
             self.create_account(username, student['email'], student['password'])
             self.activate_user(student['email'])
+            self.logout()
 
         self.staff_user = GlobalStaffFactory()
 
@@ -130,8 +123,8 @@ class TestRecommender(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         if xblock_name is None:
             xblock_name = TestRecommender.XBLOCK_NAMES[0]
         return reverse('xblock_handler', kwargs={
-            'course_id': self.course.id.to_deprecated_string(),
-            'usage_id': quote_slashes(self.course.id.make_usage_key('recommender', xblock_name).to_deprecated_string()),
+            'course_id': str(self.course.id),
+            'usage_id': quote_slashes(str(self.course.id.make_usage_key('recommender', xblock_name))),
             'handler': handler,
             'suffix': ''
         })
@@ -148,7 +141,7 @@ class TestRecommender(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         Staff login and enroll for the course
         """
         email = staff.email
-        password = 'test'
+        password = self.TEST_PASSWORD
         self.login(email, password)
         self.enroll(self.course, verify=True)
 
@@ -181,7 +174,7 @@ class TestRecommender(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         if xblock_name is None:
             xblock_name = TestRecommender.XBLOCK_NAMES[0]
         resp = json.loads(self.call_event(handler, resource, xblock_name).content)
-        self.assertEqual(resp[resp_key], resp_val)
+        assert resp[resp_key] == resp_val
         self.assert_request_status_code(200, self.course_url)
 
     def check_event_response_by_http_status(self, handler, resource, http_status_code, xblock_name=None):
@@ -192,11 +185,10 @@ class TestRecommender(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         if xblock_name is None:
             xblock_name = TestRecommender.XBLOCK_NAMES[0]
         resp = self.call_event(handler, resource, xblock_name)
-        self.assertEqual(resp.status_code, http_status_code)
+        assert resp.status_code == http_status_code
         self.assert_request_status_code(200, self.course_url)
 
 
-@attr('shard_1')
 class TestRecommenderCreateFromEmpty(TestRecommender):
     """
     Check whether we can add resources to an empty database correctly
@@ -207,7 +199,7 @@ class TestRecommenderCreateFromEmpty(TestRecommender):
         """
         self.enroll_student(self.STUDENTS[0]['email'], self.STUDENTS[0]['password'])
         # Check whether adding new resource is successful
-        for resource_id, resource in self.test_recommendations.iteritems():
+        for resource_id, resource in self.test_recommendations.items():
             for xblock_name in self.XBLOCK_NAMES:
                 result = self.call_event('add_resource', resource, xblock_name)
 
@@ -219,15 +211,14 @@ class TestRecommenderCreateFromEmpty(TestRecommender):
                 for field in resource:
                     expected_result[field] = resource[field]
 
-                self.assertDictEqual(json.loads(result.content), expected_result)
+                self.assertDictEqual(json.loads(result.content), expected_result)  # noqa: PT009
                 self.assert_request_status_code(200, self.course_url)
 
 
-@attr('shard_1')
 class TestRecommenderResourceBase(TestRecommender):
     """Base helper class for tests with resources."""
     def setUp(self):
-        super(TestRecommenderResourceBase, self).setUp()
+        super().setUp()
         self.resource_id = self.resource_urls[0]
         self.resource_id_second = self.resource_urls[1]
         self.non_existing_resource_id = 'An non-existing id'
@@ -240,7 +231,7 @@ class TestRecommenderResourceBase(TestRecommender):
         self.logout()
         self.enroll_staff(self.staff_user)
         # Add resources, assume correct here, tested in test_add_resource
-        for resource, xblock_name in itertools.product(self.test_recommendations.values(), self.XBLOCK_NAMES):
+        for resource, xblock_name in itertools.product(list(self.test_recommendations.values()), self.XBLOCK_NAMES):
             self.call_event('add_resource', resource, xblock_name)
 
     def generate_edit_resource(self, resource_id):
@@ -250,13 +241,12 @@ class TestRecommenderResourceBase(TestRecommender):
         """
         resource = {"id": resource_id}
         edited_recommendations = {
-            key: value + " edited" for key, value in self.test_recommendations[self.resource_id].iteritems()
+            key: value + "edited" for key, value in self.test_recommendations[self.resource_id].items()
         }
         resource.update(edited_recommendations)
         return resource
 
 
-@attr('shard_1')
 class TestRecommenderWithResources(TestRecommenderResourceBase):
     """
     Check whether we can add/edit/flag/export resources correctly
@@ -377,8 +367,8 @@ class TestRecommenderWithResources(TestRecommenderResourceBase):
         # Test
         resource['reason'] = 'reason 1'
         resp = json.loads(self.call_event('flag_resource', resource).content)
-        self.assertEqual(resp['oldReason'], 'reason 0')
-        self.assertEqual(resp['reason'], 'reason 1')
+        assert resp['oldReason'] == 'reason 0'
+        assert resp['reason'] == 'reason 1'
         self.assert_request_status_code(200, self.course_url)
 
     def test_flag_resources_in_different_xblocks(self):
@@ -401,8 +391,8 @@ class TestRecommenderWithResources(TestRecommenderResourceBase):
         # Test
         resp = json.loads(self.call_event('flag_resource', resource).content)
         # The second user won't see the reason provided by the first user
-        self.assertNotIn('oldReason', resp)
-        self.assertEqual(resp['reason'], 'reason 0')
+        assert 'oldReason' not in resp
+        assert resp['reason'] == 'reason 0'
         self.assert_request_status_code(200, self.course_url)
 
     def test_export_resources(self):
@@ -414,14 +404,13 @@ class TestRecommenderWithResources(TestRecommenderResourceBase):
         # Test
         resp = json.loads(self.call_event('export_resources', {}).content)
 
-        self.assertIn(self.resource_id_second, resp['export']['recommendations'])
-        self.assertNotIn(self.resource_id, resp['export']['recommendations'])
-        self.assertIn(self.resource_id_second, resp['export']['endorsed_recommendation_ids'])
-        self.assertIn(self.resource_id, resp['export']['removed_recommendations'])
+        assert self.resource_id_second in resp['export']['recommendations']
+        assert self.resource_id not in resp['export']['recommendations']
+        assert self.resource_id_second in resp['export']['endorsed_recommendation_ids']
+        assert self.resource_id in resp['export']['removed_recommendations']
         self.assert_request_status_code(200, self.course_url)
 
 
-@attr('shard_1')
 @ddt
 class TestRecommenderVoteWithResources(TestRecommenderResourceBase):
     """
@@ -535,7 +524,6 @@ class TestRecommenderVoteWithResources(TestRecommenderResourceBase):
         self.check_event_response_by_key('handle_vote', resource, 'newVotes', test_case['new_votes'])
 
 
-@attr('shard_1')
 @ddt
 class TestRecommenderStaffFeedbackWithResources(TestRecommenderResourceBase):
     """
@@ -630,14 +618,13 @@ class TestRecommenderStaffFeedbackWithResources(TestRecommenderResourceBase):
         self.check_event_response_by_http_status(test_case['handler'], resource, test_case['status'])
 
 
-@attr('shard_1')
 @ddt
 class TestRecommenderFileUploading(TestRecommender):
     """
     Check whether we can handle file uploading correctly
     """
     def setUp(self):
-        super(TestRecommenderFileUploading, self).setUp()
+        super().setUp()
         self.initial_configuration = {
             'flagged_accum_resources': {},
             'endorsed_recommendation_reasons': [],
@@ -653,18 +640,18 @@ class TestRecommenderFileUploading(TestRecommender):
         happens or is rejected as expected.
         """
         if 'magic_number' in test_case:
-            f_handler = StringIO.StringIO(test_case['magic_number'].decode('hex'))
+            f_handler = BytesIO(codecs.decode(test_case['magic_number'], 'hex_codec'))
         elif content is not None:
-            f_handler = StringIO.StringIO(json.dumps(content, sort_keys=True))
+            f_handler = BytesIO(
+                json.dumps(content, sort_keys=True).encode('utf-8'))
         else:
-            f_handler = StringIO.StringIO('')
+            f_handler = BytesIO(b'')
 
         f_handler.content_type = test_case['mimetypes']
         f_handler.name = 'file' + test_case['suffixes']
         url = self.get_handler_url(event_name)
         resp = self.client.post(url, {'file': f_handler})
-        self.assertEqual(resp.status_code, test_case['status'])
-        self.assert_request_status_code(200, self.course_url)
+        assert resp.status_code == test_case['status']
 
     @data(
         {

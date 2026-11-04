@@ -1,30 +1,42 @@
-;(function (define) {
+(function(define) {
     'use strict';
+
     define([
         'backbone',
         'gettext',
         'teams/js/views/team_card',
         'common/js/components/views/paginated_view',
         'teams/js/views/team_utils'
-    ], function (Backbone, gettext, TeamCardView, PaginatedView, TeamUtils) {
+    ], function(Backbone, gettext, TeamCardView, PaginatedView, TeamUtils) {
         var TeamsView = PaginatedView.extend({
             type: 'teams',
 
             srInfo: {
-                id: "heading-browse-teams",
+                id: 'heading-browse-teams',
                 text: gettext('All teams')
             },
 
-            initialize: function (options) {
+            paginationLabel: gettext('Teams Pagination'),
+
+            initialize: function(options) {
+                var view = this;
                 this.context = options.context;
                 this.itemViewClass = TeamCardView.extend({
                     router: options.router,
-                    maxTeamSize: this.context.maxTeamSize,
+                    courseMaxTeamSize: this.context.courseMaxTeamSize,
                     srInfo: this.srInfo,
+                    showTeamset: options.showTeamset,
                     countries: TeamUtils.selectorOptionsArrayToHashWithBlank(this.context.countries),
-                    languages: TeamUtils.selectorOptionsArrayToHashWithBlank(this.context.languages)
+                    languages: TeamUtils.selectorOptionsArrayToHashWithBlank(this.context.languages),
+                    getTopic: function(topicId) { return view.getTopic(topicId); }
                 });
                 PaginatedView.prototype.initialize.call(this);
+            },
+
+            // eslint-disable-next-line no-unused-vars
+            getTopic: function(topicId) {
+                // This must be overwritten in extending classes.
+                return null;
             }
         });
         return TeamsView;

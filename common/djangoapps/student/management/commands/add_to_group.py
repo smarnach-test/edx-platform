@@ -1,45 +1,39 @@
-from optparse import make_option
+# pylint: disable=missing-module-docstring
 
+from django.contrib.auth.models import Group, User  # pylint: disable=imported-auth-user
 from django.core.management.base import BaseCommand, CommandError
-from django.contrib.auth.models import User, Group
 
 
-class Command(BaseCommand):
-    option_list = BaseCommand.option_list + (
-        make_option('--list',
-                    action='store_true',
-                    dest='list',
-                    default=False,
-                    help='List available groups'),
-        make_option('--create',
-                    action='store_true',
-                    dest='create',
-                    default=False,
-                    help='Create the group if it does not exist'),
-        make_option('--remove',
-                    action='store_true',
-                    dest='remove',
-                    default=False,
-                    help='Remove the user from the group instead of adding it'),
-    )
+class Command(BaseCommand):  # pylint: disable=missing-class-docstring
+    def add_arguments(self, parser):
+        parser.add_argument('name_or_email',
+                            help='Username or email address of the user to add or remove')
+        parser.add_argument('group_name',
+                            help='Name of the group to change')
+        parser.add_argument('--list',
+                            action='store_true',
+                            help='List available groups')
+        parser.add_argument('--create',
+                            action='store_true',
+                            help='Create the group if it does not exist')
+        parser.add_argument('--remove',
+                            action='store_true',
+                            help='Remove the user from the group instead of adding it')
 
-    args = '<user|email> <group>'
     help = 'Add a user to a group'
 
     def print_groups(self):
-        print 'Groups available:'
+        print('Groups available:')
         for group in Group.objects.all().distinct():
-            print '  ', group.name
+            print(f'   {group.name}')
 
     def handle(self, *args, **options):
         if options['list']:
             self.print_groups()
             return
 
-        if len(args) != 2:
-            raise CommandError('Usage is add_to_group {0}'.format(self.args))
-
-        name_or_email, group_name = args
+        name_or_email = options['name_or_email']
+        group_name = options['group_name']
 
         if '@' in name_or_email:
             user = User.objects.get(email=name_or_email)
@@ -53,11 +47,11 @@ class Command(BaseCommand):
                 group = Group(name=group_name)
                 group.save()
             else:
-                raise CommandError('Group {} does not exist'.format(group_name))
+                raise CommandError(f'Group {group_name} does not exist')  # pylint: disable=raise-missing-from  # noqa: B904
 
         if options['remove']:
             user.groups.remove(group)
         else:
             user.groups.add(group)
 
-        print 'Success!'
+        print('Success!')

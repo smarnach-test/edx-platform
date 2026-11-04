@@ -2,10 +2,12 @@
 Utility functions related to urls.
 """
 
+
 import sys
+from importlib import import_module, reload
+
 from django.conf import settings
-from django.core.urlresolvers import set_urlconf
-from django.utils.importlib import import_module
+from django.urls import set_urlconf
 
 
 def reload_django_url_config():
@@ -18,5 +20,12 @@ def reload_django_url_config():
     if urlconf and urlconf in sys.modules:
         reload(sys.modules[urlconf])
     reloaded = import_module(urlconf)
-    reloaded_urls = getattr(reloaded, 'urlpatterns')
+    reloaded_urls = reloaded.urlpatterns
     set_urlconf(tuple(reloaded_urls))
+
+
+def strip_port_from_host(host):
+    """
+    Strips port number from host
+    """
+    return host.split(':')[0]

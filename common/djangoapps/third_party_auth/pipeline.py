@@ -54,33 +54,58 @@ This is surprising but important behavior, since it allows a single function in
 the pipeline to consolidate all the operations needed to establish invariants
 rather than spreading them across two functions in the pipeline.
 
-See http://psa.matiasaguirre.net/docs/pipeline.html for more docs.
+See https://python-social-auth.readthedocs.io/en/latest/pipeline.html for more docs.
 """
 
-import random
-import string  # pylint: disable=deprecated-module
-from collections import OrderedDict
-import urllib
-import analytics
-from eventtracking import tracker
 
+import base64
+import hashlib
+import hmac
+import json
+from collections import OrderedDict
+from logging import getLogger
+from random import randint
+from smtplib import SMTPException
+from uuid import uuid4
+
+import six
+import social_django
 from django.conf import settings
-from django.contrib.auth.models import User
-from django.core.urlresolvers import reverse
+from django.contrib.auth import REDIRECT_FIELD_NAME, logout
+from django.contrib.auth.models import User  # pylint: disable=imported-auth-user
+from django.core.mail.message import EmailMessage
 from django.http import HttpResponseBadRequest
 from django.shortcuts import redirect
-from django.utils.translation import ugettext as _
-from social.apps.django_app.default import models
-from social.exceptions import AuthException
-from social.pipeline import partial
-from social.pipeline.social_auth import associate_by_email
+from django.urls import reverse
+from edx_django_utils.monitoring import set_custom_attribute
+from openedx_filters.authentication.types import RunningPipeline
+from social_core.exceptions import AuthException
+from social_core.pipeline import partial
+from social_core.utils import module_member, slugify
 
-import student
-
-from logging import getLogger
+from common.djangoapps import third_party_auth
+from common.djangoapps.edxmako.shortcuts import render_to_string
+from common.djangoapps.third_party_auth.utils import (
+    get_associated_user_by_email_response,
+    is_oauth_provider,
+    user_exists,
+)
+from common.djangoapps.track import segment
+from common.djangoapps.util.json_request import JsonResponse
+from lms.djangoapps.verify_student.models import SSOVerification
+from lms.djangoapps.verify_student.utils import earliest_allowed_verification_date
+from openedx.core.djangoapps.site_configuration import helpers as configuration_helpers
+from openedx.core.djangoapps.user_api import accounts
+from openedx.core.djangoapps.user_api.accounts.utils import username_suffix_generator
+from openedx.core.djangoapps.user_authn import cookies as user_authn_cookies
+from openedx.core.djangoapps.user_authn.toggles import is_auto_generated_username_enabled
+from openedx.core.djangoapps.user_authn.utils import is_safe_login_or_logout_redirect
+from openedx.core.lib.log_utils import (
+    get_standalone_pii_or_redacted_for_log,
+    get_username_or_pii_safe_user_id_for_log,
+)
 
 from . import provider
-
 
 # These are the query string params you can pass
 # to the URL that starts the authentication process.
@@ -104,10 +129,22 @@ AUTH_ENTRY_ACCOUNT_SETTINGS = 'account_settings'
 AUTH_ENTRY_LOGIN_API = 'login_api'
 AUTH_ENTRY_REGISTER_API = 'register_api'
 
+# AUTH_ENTRY_CUSTOM: Custom auth entry point for post-auth integrations.
+# This should be a dict where the key is a word passed via ?auth_entry=, and the
+# value is a dict with an arbitrary 'secret_key' and a 'url'.
+# This can be used as an extension point to inject custom behavior into the auth
+# process, replacing the registration/login form that would normally be seen
+# immediately after the user has authenticated with the third party provider.
+# If a custom 'auth_entry' query parameter is used, then once the user has
+# authenticated with a specific backend/provider, they will be redirected to the
+# URL specified with this setting, rather than to the built-in
+# registration/login form/logic.
+AUTH_ENTRY_CUSTOM = getattr(settings, 'THIRD_PARTY_AUTH_CUSTOM_AUTH_FORMS', {})
+
 
 def is_api(auth_entry):
     """Returns whether the auth entry point is via an API call."""
-    return (auth_entry == AUTH_ENTRY_LOGIN_API) or (auth_entry == AUTH_ENTRY_REGISTER_API)
+    return (auth_entry == AUTH_ENTRY_LOGIN_API) or (auth_entry == AUTH_ENTRY_REGISTER_API)  # pylint: disable=consider-using-in
 
 # URLs associated with auth entry points
 # These are used to request additional user information
@@ -128,16 +165,16 @@ _AUTH_ENTRY_CHOICES = frozenset([
     AUTH_ENTRY_ACCOUNT_SETTINGS,
     AUTH_ENTRY_LOGIN_API,
     AUTH_ENTRY_REGISTER_API,
-])
+] + list(AUTH_ENTRY_CUSTOM.keys()))
 
-_DEFAULT_RANDOM_PASSWORD_LENGTH = 12
-_PASSWORD_CHARSET = string.letters + string.digits
+USER_FIELDS = ['username', 'email']
+
 
 logger = getLogger(__name__)
 
 
 class AuthEntryError(AuthException):
-    """Raised when auth_entry is missing or invalid on URLs.
+    """Raised when auth_entry is invalid on URLs.
 
     auth_entry tells us whether the auth flow was initiated to register a new
     user (in which case it has the value of AUTH_ENTRY_REGISTER) or log in an
@@ -151,20 +188,7 @@ class AuthEntryError(AuthException):
     """
 
 
-class NotActivatedException(AuthException):
-    """ Raised when a user tries to login to an unverified account """
-    def __init__(self, backend, email):
-        self.email = email
-        super(NotActivatedException, self).__init__(backend, email)
-
-    def __str__(self):
-        return (
-            _('This account has not yet been activated. An activation email has been re-sent to {email_address}.')
-            .format(email_address=self.email)
-        )
-
-
-class ProviderUserState(object):
+class ProviderUserState:
     """Object representing the provider state (attached or not) for a user.
 
     This is intended only for use when rendering templates. See for example
@@ -193,9 +217,74 @@ class ProviderUserState(object):
         return self.provider.provider_id + '_unlink_form'
 
 
-def get(request):
-    """Gets the running pipeline from the passed request."""
-    return request.session.get('partial_pipeline')
+def get(request) -> RunningPipeline | None:
+    """Gets the running pipeline's data from the passed request.
+
+    The returned mapping is the shared cross-repository contract for third-party auth
+    pipeline state: it is handed to pipeline steps of the login and registration form
+    filters, which may live in other repositories. See
+    ``openedx_filters.authentication.types.RunningPipeline`` for the declared shape, and
+    keep this function's dict literal in agreement with it.
+    """
+    strategy = social_django.utils.load_strategy(request)
+    token = strategy.session_get('partial_pipeline_token')
+
+    if not token:
+        strategy.session_set('partial_pipeline_token', strategy.session_get('partial_pipeline_token_'))
+        token = strategy.session_get('partial_pipeline_token')
+
+    partial_object = strategy.partial_load(token)
+    pipeline_data: RunningPipeline | None = None
+    if partial_object:
+        pipeline_data = {'kwargs': partial_object.kwargs, 'backend': partial_object.backend}
+    return pipeline_data
+
+
+def get_idp_logout_url_from_running_pipeline(request):
+    """
+    Returns: IdP's logout url associated with running pipeline
+    """
+    if third_party_auth.is_enabled():
+        running_pipeline = get(request)
+        if running_pipeline:
+            tpa_provider = provider.Registry.get_from_pipeline(running_pipeline)
+            if tpa_provider:
+                try:
+                    return tpa_provider.get_setting('logout_url')
+                except KeyError:
+                    logger.info('[THIRD_PARTY_AUTH] idP [%s] logout_url setting not defined', tpa_provider.name)
+
+
+def get_real_social_auth_object(request):
+    """
+    At times, the pipeline will have a "social" kwarg that contains a dictionary
+    rather than an actual DB-backed UserSocialAuth object. We need the real thing,
+    so this method allows us to get that by passing in the relevant request.
+    """
+    running_pipeline = get(request)
+    if running_pipeline and 'social' in running_pipeline['kwargs']:
+        social = running_pipeline['kwargs']['social']
+        if isinstance(social, dict):
+            social = social_django.models.UserSocialAuth.objects.get(**social)
+        return social
+
+
+def quarantine_session(request, locations):
+    """
+    Set a session variable indicating that the session is restricted
+    to being used in views contained in the modules listed by string
+    in the `locations` argument.
+
+    Example: ``quarantine_session(request, ('enterprise.views',))``
+    """
+    request.session['third_party_auth_quarantined_modules'] = locations
+
+
+def lift_quarantine(request):
+    """
+    Remove the session quarantine variable.
+    """
+    request.session.pop('third_party_auth_quarantined_modules', None)
 
 
 def get_authenticated_user(auth_provider, username, uid):
@@ -220,7 +309,7 @@ def get_authenticated_user(auth_provider, username, uid):
         user has no social auth associated with the given backend.
         AssertionError: if the user is not authenticated.
     """
-    match = models.DjangoStorage.user.get_social_auth(provider=auth_provider.backend_name, uid=uid)
+    match = social_django.models.DjangoStorage.user.get_social_auth(provider=auth_provider.backend_name, uid=uid)
 
     if not match or match.user.username != username:
         raise User.DoesNotExist
@@ -235,7 +324,7 @@ def _get_enabled_provider(provider_id):
     enabled_provider = provider.Registry.get(provider_id)
 
     if not enabled_provider:
-        raise ValueError('Provider %s not enabled' % provider_id)
+        raise ValueError('Provider %s not enabled' % provider_id)  # noqa: UP031
 
     return enabled_provider
 
@@ -257,9 +346,9 @@ def _get_url(view_name, backend_name, auth_entry=None, redirect_url=None,
     if extra_params:
         query_params.update(extra_params)
 
-    return u"{url}?{params}".format(
+    return "{url}?{params}".format(  # noqa: UP032
         url=url,
-        params=urllib.urlencode(query_params)
+        params=six.moves.urllib.parse.urlencode(query_params)
     )
 
 
@@ -277,7 +366,7 @@ def get_complete_url(backend_name):
         ValueError: if no provider is enabled with the given backend_name.
     """
     if not any(provider.Registry.get_enabled_by_backend_name(backend_name)):
-        raise ValueError('Provider with backend %s not enabled' % backend_name)
+        raise ValueError('Provider with backend %s not enabled' % backend_name)  # noqa: UP031
 
     return _get_url('social:complete', backend_name)
 
@@ -286,7 +375,7 @@ def get_disconnect_url(provider_id, association_id):
     """Gets URL for the endpoint that starts the disconnect pipeline.
 
     Args:
-        provider_id: string identifier of the models.ProviderConfig child you want
+        provider_id: string identifier of the social_django.models.ProviderConfig child you want
             to disconnect from.
         association_id: int. Optional ID of a specific row in the UserSocialAuth
             table to disconnect (useful if multiple providers use a common backend)
@@ -298,17 +387,20 @@ def get_disconnect_url(provider_id, association_id):
         ValueError: if no provider is enabled with the given ID.
     """
     backend_name = _get_enabled_provider(provider_id).backend_name
+    # Use custom JSON disconnect endpoint to avoid CORS issues
     if association_id:
-        return _get_url('social:disconnect_individual', backend_name, url_params={'association_id': association_id})
+        return _get_url(
+            'custom_disconnect_json_individual', backend_name, url_params={'association_id': association_id}
+        )
     else:
-        return _get_url('social:disconnect', backend_name)
+        return _get_url('custom_disconnect_json', backend_name)
 
 
 def get_login_url(provider_id, auth_entry, redirect_url=None):
     """Gets the login URL for the endpoint that kicks off auth with a provider.
 
     Args:
-        provider_id: string identifier of the models.ProviderConfig child you want
+        provider_id: string identifier of the social_django.models.ProviderConfig child you want
             to disconnect from.
         auth_entry: string. Query argument specifying the desired entry point
             for the auth pipeline. Used by the pipeline for later branching.
@@ -371,7 +463,7 @@ def get_provider_user_states(user):
             each enabled provider.
     """
     states = []
-    found_user_auths = list(models.DjangoStorage.user.get_social_auth_for_user(user))
+    found_user_auths = list(social_django.models.DjangoStorage.user.get_social_auth_for_user(user))
 
     for enabled_provider in provider.Registry.enabled():
         association = None
@@ -387,30 +479,9 @@ def get_provider_user_states(user):
     return states
 
 
-def make_random_password(length=None, choice_fn=random.SystemRandom().choice):
-    """Makes a random password.
-
-    When a user creates an account via a social provider, we need to create a
-    placeholder password for them to satisfy the ORM's consistency and
-    validation requirements. Users don't know (and hence cannot sign in with)
-    this password; that's OK because they can always use the reset password
-    flow to set it to a known value.
-
-    Args:
-        choice_fn: function or method. Takes an iterable and returns a random
-            element.
-        length: int. Number of chars in the returned value. None to use default.
-
-    Returns:
-        String. The resulting password.
-    """
-    length = length if length is not None else _DEFAULT_RANDOM_PASSWORD_LENGTH
-    return ''.join(choice_fn(_PASSWORD_CHARSET) for _ in xrange(length))
-
-
 def running(request):
     """Returns True iff request is running a third-party auth pipeline."""
-    return request.session.get('partial_pipeline') is not None  # Avoid False for {}.
+    return get(request) is not None  # Avoid False for {}.
 
 
 # Pipeline functions.
@@ -421,10 +492,14 @@ def running(request):
 
 def parse_query_params(strategy, response, *args, **kwargs):
     """Reads whitelisted query params, transforms them into pipeline args."""
-    auth_entry = strategy.session.get(AUTH_ENTRY_KEY)
-    if not (auth_entry and auth_entry in _AUTH_ENTRY_CHOICES):
-        raise AuthEntryError(strategy.request.backend, 'auth_entry missing or invalid')
+    # If auth_entry is not in the session, we got here by a non-standard workflow.
+    # We simply assume 'login' in that case.
+    auth_entry = strategy.request.session.get(AUTH_ENTRY_KEY) or AUTH_ENTRY_LOGIN
+    if auth_entry not in _AUTH_ENTRY_CHOICES:
+        raise AuthEntryError(strategy.request.backend, 'auth_entry invalid')
 
+    # Enable monitoring of the third-party-auth auth_entry value.
+    set_custom_attribute('tpa_pipeline.auth_entry', auth_entry)
     return {'auth_entry': auth_entry}
 
 
@@ -458,9 +533,41 @@ def set_pipeline_timeout(strategy, user, *args, **kwargs):
         # choice of the user.
 
 
+def redirect_to_custom_form(request, auth_entry, details, kwargs):
+    """
+    If auth_entry is found in AUTH_ENTRY_CUSTOM, this is used to send provider
+    data to an external server's registration/login page.
+
+    The data is sent as a base64-encoded values in a POST request and includes
+    a cryptographic checksum in case the integrity of the data is important.
+    """
+    backend_name = request.backend.name
+    provider_id = provider.Registry.get_from_pipeline({'backend': backend_name, 'kwargs': kwargs}).provider_id
+    form_info = AUTH_ENTRY_CUSTOM[auth_entry]
+    secret_key = form_info['secret_key']
+    if isinstance(secret_key, str):
+        secret_key = secret_key.encode('utf-8')
+    custom_form_url = form_info['url']
+    data_bytes = json.dumps({
+        "auth_entry": auth_entry,
+        "backend_name": backend_name,
+        "provider_id": provider_id,
+        "user_details": details,
+    }).encode('utf-8')
+    digest = hmac.new(secret_key, msg=data_bytes, digestmod=hashlib.sha256).digest()
+    # Store the data in the session temporarily, then redirect to a page that will POST it to
+    # the custom login/register page.
+    request.session['tpa_custom_auth_entry_data'] = {
+        'data': base64.b64encode(data_bytes),
+        'hmac': base64.b64encode(digest),
+        'post_url': custom_form_url,
+    }
+    return redirect(reverse('tpa_post_to_custom_auth_form'))
+
+
 @partial.partial
-def ensure_user_information(strategy, auth_entry, backend=None, user=None, social=None,
-                            allow_inactive_user=False, *args, **kwargs):
+def ensure_user_information(strategy, auth_entry, backend=None, user=None, social=None, current_partial=None,  # pylint: disable=keyword-arg-before-vararg
+                            allow_inactive_user=False, details=None, *args, **kwargs):
     """
     Ensure that we have the necessary information about a user (either an
     existing account or registration data) to proceed with the pipeline.
@@ -487,11 +594,33 @@ def ensure_user_information(strategy, auth_entry, backend=None, user=None, socia
 
     def should_force_account_creation():
         """ For some third party providers, we auto-create user accounts """
-        current_provider = provider.Registry.get_from_pipeline({'backend': backend.name, 'kwargs': kwargs})
-        return current_provider and current_provider.skip_email_verification
+        current_provider = provider.Registry.get_from_pipeline({'backend': current_partial.backend, 'kwargs': kwargs})
+        return (current_provider and
+                (current_provider.skip_email_verification or current_provider.send_to_registration_first))
+
+    def is_provider_saml():
+        """ Verify that the third party provider uses SAML """
+        current_provider = provider.Registry.get_from_pipeline({'backend': current_partial.backend, 'kwargs': kwargs})
+        saml_providers_list = list(provider.Registry.get_enabled_by_backend_name('tpa-saml'))
+        return (current_provider and
+                current_provider.slug in [saml_provider.slug for saml_provider in saml_providers_list])
+
+    if current_partial:
+        strategy.session_set('partial_pipeline_token_', current_partial.token)
+        strategy.storage.partial.store(current_partial)
 
     if not user:
-        if auth_entry in [AUTH_ENTRY_LOGIN_API, AUTH_ENTRY_REGISTER_API]:
+        # Use only email for user existence check in case of saml provider
+        if is_provider_saml():
+            user_details = {'email': details.get('email')} if details else None
+        else:
+            user_details = details
+        if user_exists(user_details or {}):
+            # User has not already authenticated and the details sent over from
+            # identity provider belong to an existing user.
+            return dispatch_to_login()
+
+        if is_api(auth_entry):
             return HttpResponseBadRequest()
         elif auth_entry == AUTH_ENTRY_LOGIN:
             # User has authenticated with the third party provider but we don't know which edX
@@ -505,6 +634,9 @@ def ensure_user_information(strategy, auth_entry, backend=None, user=None, socia
             return dispatch_to_register()
         elif auth_entry == AUTH_ENTRY_ACCOUNT_SETTINGS:
             raise AuthEntryError(backend, 'auth_entry is wrong. Settings requires a user.')
+        elif auth_entry in AUTH_ENTRY_CUSTOM:
+            # Pass the username, email, etc. via query params to the custom entry page:
+            return redirect_to_custom_form(strategy.request, auth_entry, details or {}, kwargs)
         else:
             raise AuthEntryError(backend, 'auth_entry invalid')
 
@@ -514,30 +646,32 @@ def ensure_user_information(strategy, auth_entry, backend=None, user=None, socia
             # This parameter is used by the auth_exchange app, which always allows users to
             # login, whether or not their account is validated.
             pass
-        # IF the user has just registered a new account as part of this pipeline, that is fine
-        # and we allow the login to continue this once, because if we pause again to force the
-        # user to activate their account via email, the pipeline may get lost (e.g. email takes
-        # too long to arrive, user opens the activation email on a different device, etc.).
-        # This is consistent with first party auth and ensures that the pipeline completes
-        # fully, which is critical.
-        # But if this is an existing account, we refuse to allow them to login again until they
-        # check their email and activate the account.
-        elif social is not None:
-            # This third party account is already linked to a user account. That means that the
-            # user's account existed before this pipeline originally began (since the creation
-            # of the 'social' link entry occurs in one of the following pipeline steps).
-            # Reject this login attempt and tell the user to validate their account first.
-
-            # Send them another activation email:
-            student.views.reactivation_email_for_user(user)
-
-            raise NotActivatedException(backend, user.email)
-        # else: The user must have just successfully registered their account, so we proceed.
-        # We know they did not just login, because the login process rejects unverified users.
+        elif social is None:
+            # The user has just registered a new account as part of this pipeline. Their account
+            # is inactive but we allow the login to continue, because if we pause again to force
+            # the user to activate their account via email, the pipeline may get lost (e.g.
+            # email takes too long to arrive, user opens the activation email on a different
+            # device, etc.). This is consistent with first party auth and ensures that the
+            # pipeline completes fully, which is critical.
+            pass
+        else:
+            # This is an existing account, linked to a third party provider but not activated.
+            # Double-check these criteria:
+            assert user is not None
+            assert social is not None
+            # We now also allow them to login again, because if they had entered their email
+            # incorrectly then there would be no way for them to recover the account, nor
+            # register anew via SSO. See SOL-1324 in JIRA.
+            # However, we will log a warning for this case:
+            logger.warning(
+                '[THIRD_PARTY_AUTH] User is using third_party_auth to login but has not yet activated their account. '  # noqa: UP032  # pylint: disable=line-too-long
+                'User: {user}'.format(user=get_username_or_pii_safe_user_id_for_log(user))
+            )
 
 
 @partial.partial
-def set_logged_in_cookies(backend=None, user=None, strategy=None, auth_entry=None, *args, **kwargs):
+def set_logged_in_cookies(backend=None, user=None, strategy=None, auth_entry=None, current_partial=None,  # pylint: disable=keyword-arg-before-vararg
+                          *args, **kwargs):
     """This pipeline step sets the "logged in" cookie for authenticated users.
 
     Some installations have a marketing site front-end separate from
@@ -562,17 +696,21 @@ def set_logged_in_cookies(backend=None, user=None, strategy=None, auth_entry=Non
     to the next pipeline step.
 
     """
-    if not is_api(auth_entry) and user is not None and user.is_authenticated():
+    if not is_api(auth_entry) and user is not None and user.is_authenticated:
         request = strategy.request if strategy else None
+        if not user.has_usable_password():
+            msg = "Your account is disabled"
+            logout(request)
+            return JsonResponse(msg, status=403)
         # n.b. for new users, user.is_active may be False at this point; set the cookie anyways.
         if request is not None:
             # Check that the cookie isn't already set.
             # This ensures that we allow the user to continue to the next
             # pipeline step once he/she has the cookie set by this step.
-            has_cookie = student.cookies.is_logged_in_cookie_set(request)
+            has_cookie = user_authn_cookies.are_logged_in_cookies_set(request)
             if not has_cookie:
                 try:
-                    redirect_url = get_complete_url(backend.name)
+                    redirect_url = get_complete_url(current_partial.backend)
                 except ValueError:
                     # If for some reason we can't get the URL, just skip this step
                     # This may be overly paranoid, but it's far more important that
@@ -580,40 +718,40 @@ def set_logged_in_cookies(backend=None, user=None, strategy=None, auth_entry=Non
                     pass
                 else:
                     response = redirect(redirect_url)
-                    return student.cookies.set_logged_in_cookies(request, response, user)
+                    return user_authn_cookies.set_logged_in_cookies(request, response, user)
 
 
 @partial.partial
-def login_analytics(strategy, auth_entry, *args, **kwargs):
+def login_analytics(strategy, auth_entry, current_partial=None, *args, **kwargs):  # pylint: disable=keyword-arg-before-vararg
     """ Sends login info to Segment """
 
     event_name = None
+    anonymous_id = ""
+    additional_params = {}
+
+    try:
+        request = kwargs['request']
+        anonymous_id = request.COOKIES.get('ajs_anonymous_id', "")
+    except:  # pylint: disable=bare-except
+        pass
+
     if auth_entry == AUTH_ENTRY_LOGIN:
         event_name = 'edx.bi.user.account.authenticated'
+        additional_params['anonymous_id'] = anonymous_id
     elif auth_entry in [AUTH_ENTRY_ACCOUNT_SETTINGS]:
         event_name = 'edx.bi.user.account.linked'
 
-    if event_name is not None and hasattr(settings, 'LMS_SEGMENT_KEY') and settings.LMS_SEGMENT_KEY:
-        tracking_context = tracker.get_tracker().resolve_context()
-        analytics.track(
-            kwargs['user'].id,
-            event_name,
-            {
-                'category': "conversion",
-                'label': None,
-                'provider': getattr(kwargs['backend'], 'name')
-            },
-            context={
-                'ip': tracking_context.get('ip'),
-                'Google Analytics': {
-                    'clientId': tracking_context.get('client_id')
-                }
-            }
-        )
+    if event_name is not None:
+        segment.track(kwargs['user'].id, event_name, {
+            'category': "conversion",
+            'label': None,
+            'provider': kwargs['backend'].name,
+            **additional_params
+        })
 
 
 @partial.partial
-def associate_by_email_if_login_api(auth_entry, backend, details, user, *args, **kwargs):
+def associate_by_email_if_login_api(auth_entry, backend, details, user, current_partial=None, *args, **kwargs):  # pylint: disable=keyword-arg-before-vararg
     """
     This pipeline step associates the current social auth with the user with the
     same email address in the database.  It defers to the social library's associate_by_email
@@ -622,14 +760,268 @@ def associate_by_email_if_login_api(auth_entry, backend, details, user, *args, *
     This association is done ONLY if the user entered the pipeline through a LOGIN API.
     """
     if auth_entry == AUTH_ENTRY_LOGIN_API:
-        association_response = associate_by_email(backend, details, user, *args, **kwargs)
-        if (
-            association_response and
-            association_response.get('user') and
-            association_response['user'].is_active
-        ):
-            # Only return the user matched by email if their email has been activated.
-            # Otherwise, an illegitimate user can create an account with another user's
-            # email address and the legitimate user would now login to the illegitimate
-            # account.
+        # Temporary custom attribute to help ensure there is no usage.
+        set_custom_attribute('deprecated_auth_entry_login_api', True)
+
+        association_response, user_is_active = get_associated_user_by_email_response(
+            backend, details, user, *args, **kwargs)
+
+        if user_is_active:
             return association_response
+
+
+@partial.partial
+def associate_by_email_if_oauth(auth_entry, backend, details, user, strategy, *args, **kwargs):
+    """
+    This pipeline step associates the current social auth with the user with the
+    same email address in the database.  It defers to the social library's associate_by_email
+    implementation, which verifies that only a single database user is associated with the email.
+
+    This association is done ONLY if the user entered the pipeline belongs to Oauth provider and
+    `ENABLE_REQUIRE_THIRD_PARTY_AUTH` is enabled.
+    """
+
+    if is_oauth_provider(backend.name, **kwargs):
+        association_response, user_is_active = get_associated_user_by_email_response(
+            backend, details, user, *args, **kwargs)
+
+        if user_is_active:
+            return association_response
+
+
+def associate_by_email_if_saml(auth_entry, backend, details, user, strategy, *args, **kwargs):
+    """
+    Deprecated — enterprise SAML email association moved to
+    enterprise.tpa_pipeline.enterprise_associate_by_email.
+
+    Retained as a no-op for backwards compatibility with custom pipeline configs.
+    """
+    logger.warning(
+        "associate_by_email_if_saml is deprecated and is now a no-op. "
+        "Enterprise SAML email association has moved to "
+        "enterprise.tpa_pipeline.enterprise_associate_by_email."
+    )
+
+
+def user_details_force_sync(auth_entry, strategy, details, user=None, *args, **kwargs):  # pylint: disable=keyword-arg-before-vararg
+    """
+    Update normally protected user details using data from provider.
+
+    This step in the pipeline is akin to `social_core.pipeline.user.user_details`, which updates
+    the user details but has an unconfigurable protection over updating the username & email, and
+    is unable to update information such as the user's full name which isn't on the user model, but
+    rather on the user profile model.
+
+    Additionally, because the email field is normally used to log in, if the email is changed by this
+    forced synchronization, we send an email to both the old and new emails, letting the user know.
+
+    This step is controlled by the `sync_learner_profile_data` flag on the provider's configuration.
+    """
+    current_provider = provider.Registry.get_from_pipeline({'backend': strategy.request.backend.name, 'kwargs': kwargs})
+    if user and current_provider and current_provider.sync_learner_profile_data:
+        # Keep track of which incoming values get applied.
+        changed = {}
+
+        # Map each incoming field from the provider to the name on the user model (by default, they always match).
+        field_mapping = {field: (user, field) for field in details.keys() if hasattr(user, field)}
+
+        # This is a special case where the field mapping should go to the user profile object and not the user object,
+        # in some cases with differing field names (i.e. 'fullname' vs. 'name').
+        field_mapping.update({
+            'fullname': (user.profile, 'name'),
+            'country': (user.profile, 'country'),
+        })
+
+        # Remove username from list of fields for update
+        field_mapping.pop('username', None)
+
+        # Track any fields that would raise an integrity error if there was a conflict.
+        integrity_conflict_fields = {'email': user.email, 'username': user.username}
+
+        for provider_field, (model, field) in field_mapping.items():
+            provider_value = details.get(provider_field)
+            current_value = getattr(model, field)
+            if provider_value is not None and current_value != provider_value:
+                if field in integrity_conflict_fields and User.objects.filter(**{field: provider_value}).exists():
+                    logger.warning('[THIRD_PARTY_AUTH] Profile data synchronization conflict. '  # noqa: UP032
+                                   'UserId: {user_id}, Provider: {provider}, ConflictField: {conflict_field}, '
+                                   'ConflictValue: {conflict_value}'.format(
+                                       user_id=user.id,
+                                       provider=current_provider.name,
+                                       conflict_field=field,
+                                       conflict_value=provider_value))
+                    continue
+                changed[provider_field] = current_value
+                setattr(model, field, provider_value)
+
+        if changed:
+            logger.info(
+                '[THIRD_PARTY_AUTH] User performed SSO and data was synchronized. '  # noqa: UP032
+                'User: {user}, Provider: {provider}, UpdatedKeys: {updated_keys}'.format(
+                    user=get_username_or_pii_safe_user_id_for_log(user),
+                    provider=current_provider.name,
+                    updated_keys=list(changed.keys())
+                )
+            )
+
+            # Save changes to user and user.profile models.
+            strategy.storage.user.changed(user)
+            user.profile.save()
+
+            # Send an email to the old and new email to alert the user that their login email changed.
+            if changed.get('email'):
+                old_email = changed['email']
+                new_email = user.email
+                email_context = {'old_email': old_email, 'new_email': new_email}
+                # Subjects shouldn't have new lines.
+                subject = ''.join(render_to_string(
+                    'emails/sync_learner_profile_data_email_change_subject.txt',
+                    email_context
+                ).splitlines())
+                body = render_to_string('emails/sync_learner_profile_data_email_change_body.txt', email_context)
+                from_email = configuration_helpers.get_value('email_from_address', settings.DEFAULT_FROM_EMAIL)
+
+                email = EmailMessage(subject=subject, body=body, from_email=from_email, to=[old_email, new_email])
+                email.content_subtype = "html"
+                try:
+                    email.send()
+                except SMTPException:
+                    logger.exception('[THIRD_PARTY_AUTH] Error sending IdP learner data sync-initiated email change '  # noqa: UP032  # pylint: disable=line-too-long
+                                     'notification email. User: {user}'.format(
+                                         user=get_username_or_pii_safe_user_id_for_log(user)
+                                     ))
+
+
+def set_id_verification_status(auth_entry, strategy, details, user=None, *args, **kwargs):  # pylint: disable=keyword-arg-before-vararg
+    """
+    Use the user's authentication with the provider, if configured, as evidence of their identity being verified.
+    """
+    current_provider = provider.Registry.get_from_pipeline({'backend': strategy.request.backend.name, 'kwargs': kwargs})
+    if user and current_provider and current_provider.enable_sso_id_verification:
+        # Get previous valid, non expired verification attempts for this SSO Provider and user
+        verifications = SSOVerification.objects.filter(
+            user=user,
+            status="approved",
+            created_at__gte=earliest_allowed_verification_date(),
+            identity_provider_type=current_provider.full_class_name,
+            identity_provider_slug=current_provider.slug,
+        )
+
+        # If there is none, create a new approved verification for the user.
+        if not verifications:
+            verification = SSOVerification.objects.create(
+                user=user,
+                status="approved",
+                name=user.profile.name,
+                identity_provider_type=current_provider.full_class_name,
+                identity_provider_slug=current_provider.slug,
+            )
+            # Send a signal so users who have already passed their courses receive credit
+            verification.send_approval_signal(current_provider.slug)
+
+
+def get_username(strategy, details, backend, user=None, *args, **kwargs):  # pylint: disable=keyword-arg-before-vararg
+    """
+    Copy of social_core.pipeline.user.get_username to achieve
+    1. additional logging
+    2. case insensitive username checks
+    3. enforce same maximum and minimum length restrictions we have in `user_api/accounts`
+    """
+    if 'username' not in backend.setting('USER_FIELDS', USER_FIELDS):
+        return
+    storage = strategy.storage
+
+    if not user:
+        email_as_username = strategy.setting('USERNAME_IS_FULL_EMAIL', False)
+        uuid_length = strategy.setting('UUID_LENGTH', 16)
+        min_length = strategy.setting('USERNAME_MIN_LENGTH', accounts.USERNAME_MIN_LENGTH)
+        max_length = strategy.setting('USERNAME_MAX_LENGTH', accounts.USERNAME_MAX_LENGTH)
+        do_slugify = strategy.setting('SLUGIFY_USERNAMES', False)
+        do_clean = strategy.setting('CLEAN_USERNAMES', True)
+
+        if do_clean:
+            override_clean = strategy.setting('CLEAN_USERNAME_FUNCTION')
+            if override_clean:
+                clean_func = module_member(override_clean)
+            else:
+                clean_func = storage.user.clean_username
+        else:
+            clean_func = lambda val: val
+
+        if do_slugify:
+            override_slug = strategy.setting('SLUGIFY_FUNCTION')
+            if override_slug:
+                slug_func = module_member(override_slug)
+            else:
+                slug_func = slugify
+        else:
+            slug_func = lambda val: val
+
+        if is_auto_generated_username_enabled() and details.get('username') is None:
+            # Lazy import to avoid circular dependency
+            from openedx.core.djangoapps.user_authn.views.utils import get_auto_generated_username
+            username = get_auto_generated_username(details)
+        else:
+            if email_as_username and details.get('email'):
+                username = details['email']
+            elif details.get('username'):
+                username = details['username']
+            else:
+                username = uuid4().hex
+
+        input_username = username
+        final_username = slug_func(clean_func(username[:max_length]))
+
+        # Generate a unique username for current user using username
+        # as base but adding a unique hash at the end. Original
+        # username is cut to avoid any field max_length.
+        # We are using our own version of user_exists to avoid possible case sensitivity issues.
+        # We will attempt different length random suffixes
+        while len(final_username) < min_length or user_exists({'username': final_username}):
+            # try to use at least 3 characters to avoid weird '-1' '-a' etc
+            # use less than 3 if that is whats being asked for
+            this_uuid_length = randint(min(uuid_length, 3), uuid_length)
+            short_username = (input_username[:max_length - (this_uuid_length + 1)]  # +1 for the '-'
+                              if max_length is not None
+                              else username)
+            # adding a dash between user-supplied and system-generated values to avoid weird combinations
+            username = short_username + '-' + username_suffix_generator(this_uuid_length)
+            final_username = slug_func(clean_func(username[:max_length]))
+            logger.info(
+                '[THIRD_PARTY_AUTH] New username candidate generated: '
+                f'input_username={get_standalone_pii_or_redacted_for_log(input_username)}, '
+                f'suffix_length={this_uuid_length}, '
+                f'final_username={get_standalone_pii_or_redacted_for_log(final_username)}'
+            )
+    else:
+        final_username = storage.user.get_username(user)
+    logger.info(
+        '[THIRD_PARTY_AUTH] get_username complete: '
+        f'details={get_standalone_pii_or_redacted_for_log(details)}, '
+        f'final_username={get_standalone_pii_or_redacted_for_log(final_username)}'
+    )
+    return {'username': final_username}
+
+
+def ensure_redirect_url_is_safe(strategy, *args, **kwargs):
+    """
+    Ensure that the redirect url is save if a user logs in or registers by
+    directly hitting the TPA url i.e /auth/login/backend_name?next=<redirect_to>
+
+    Check it against the LOGIN_REDIRECT_WHITELIST. If it is not safe then
+    redirect to SOCIAL_AUTH_LOGIN_REDIRECT_URL (defaults to /dashboard)
+    """
+    redirect_to = strategy.session_get(REDIRECT_FIELD_NAME, None)
+    request = strategy.request
+
+    if redirect_to and request:
+        is_safe = is_safe_login_or_logout_redirect(
+            redirect_to=redirect_to,
+            request_host=request.get_host(),
+            dot_client_id=None,
+            require_https=request.is_secure(),
+        )
+
+        if not is_safe:
+            safe_redirect_url = getattr(settings, 'SOCIAL_AUTH_LOGIN_REDIRECT_URL', '/dashboard')
+            strategy.session_set(REDIRECT_FIELD_NAME, safe_redirect_url)

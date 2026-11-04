@@ -1,21 +1,35 @@
 """
 URLs for course_info API
 """
-from django.conf.urls import patterns, url
+
+
 from django.conf import settings
+from django.urls import path, re_path
 
-from .views import CourseUpdatesList, CourseHandoutsList
+from .views import (
+    BlocksInfoInCourseView,
+    CourseEnrollmentDetailsView,
+    CourseGoalsRecordUserActivity,
+    CourseHandoutsList,
+    CourseUpdatesList,
+)
 
-urlpatterns = patterns(
-    'mobile_api.course_info.views',
-    url(
-        r'^{}/handouts$'.format(settings.COURSE_ID_PATTERN),
+urlpatterns = [
+    re_path(
+        fr'^{settings.COURSE_ID_PATTERN}/handouts$',
         CourseHandoutsList.as_view(),
         name='course-handouts-list'
     ),
-    url(
-        r'^{}/updates$'.format(settings.COURSE_ID_PATTERN),
+    re_path(
+        fr'^{settings.COURSE_ID_PATTERN}/updates$',
         CourseUpdatesList.as_view(),
         name='course-updates-list'
     ),
-)
+    re_path(
+        fr'^{settings.COURSE_ID_PATTERN}/enrollment_details$',
+        CourseEnrollmentDetailsView.as_view(),
+        name='course-enrollment-details'
+    ),
+    path('record_user_activity', CourseGoalsRecordUserActivity.as_view(), name='record_user_activity'),
+    path('blocks/', BlocksInfoInCourseView.as_view(), name="blocks_info_in_course"),
+]

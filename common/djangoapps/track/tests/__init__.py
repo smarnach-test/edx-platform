@@ -1,29 +1,28 @@
 """Helpers for tests related to emitting events to the tracking logs."""
 
+
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from django.test import TestCase
 from django.test.utils import override_settings
-from freezegun import freeze_time
-from pytz import UTC
-
 from eventtracking import tracker
 from eventtracking.django import DjangoTracker
+from freezegun import freeze_time
 
-
-FROZEN_TIME = datetime(2013, 10, 3, 8, 24, 55, tzinfo=UTC)
+FROZEN_TIME = datetime(2013, 10, 3, 8, 24, 55, tzinfo=ZoneInfo("UTC"))
 IN_MEMORY_BACKEND_CONFIG = {
     'mem': {
-        'ENGINE': 'track.tests.InMemoryBackend'
+        'ENGINE': 'common.djangoapps.track.tests.InMemoryBackend'
     }
 }
 
 
-class InMemoryBackend(object):
+class InMemoryBackend:
     """A backend that simply stores all events in memory"""
 
     def __init__(self):
-        super(InMemoryBackend, self).__init__()
+        super().__init__()  # pylint: disable=super-with-arguments
         self.events = []
 
     def send(self, event):
@@ -31,7 +30,6 @@ class InMemoryBackend(object):
         self.events.append(event)
 
 
-@freeze_time(FROZEN_TIME)
 @override_settings(
     EVENT_TRACKING_BACKENDS=IN_MEMORY_BACKEND_CONFIG
 )
@@ -46,7 +44,11 @@ class EventTrackingTestCase(TestCase):
     # Make this more robust to the addition of new events that the test doesn't care about.
 
     def setUp(self):
-        super(EventTrackingTestCase, self).setUp()
+        freezer = freeze_time(FROZEN_TIME)
+        freezer.start()
+        self.addCleanup(freezer.stop)
+
+        super().setUp()  # pylint: disable=super-with-arguments
 
         self.recreate_tracker()
 
@@ -70,8 +72,8 @@ class EventTrackingTestCase(TestCase):
 
     def assert_no_events_emitted(self):
         """Ensure no events were emitted at this point in the test."""
-        self.assertEquals(len(self.backend.events), 0)
+        assert len(self.backend.events) == 0
 
     def assert_events_emitted(self):
         """Ensure at least one event has been emitted at this point in the test."""
-        self.assertGreaterEqual(len(self.backend.events), 1)
+        assert len(self.backend.events) >= 1

@@ -1,4 +1,4 @@
-#   Copyright (c) 2008 Mikeal Rogers
+#   Copyright (c) 2008 Mikeal Rogers  # pylint: disable=missing-module-docstring
 #
 #   Licensed under the Apache License, Version 2.0 (the "License");
 #   you may not use this file except in compliance with the License.
@@ -12,49 +12,90 @@
 #   See the License for the specific language governing permissions and
 #   limitations under the License.
 
-from django.template import Context
-from django.http import HttpResponse
+
 import logging
 
-from microsite_configuration import microsite
-
-from edxmako import lookup_template
-from edxmako.middleware import get_template_request_context
 from django.conf import settings
-from django.core.urlresolvers import reverse
+from django.core.exceptions import ValidationError
+from django.core.validators import URLValidator
+from django.http import HttpResponse  # pylint: disable=unused-import
+from django.template import engines
+from six.moves.urllib.parse import urljoin
+
+from openedx.core.djangoapps.site_configuration import helpers as configuration_helpers
+
+from . import Engines
+
 log = logging.getLogger(__name__)
 
 
 def marketing_link(name):
-    """Returns the correct URL for a link to the marketing site
-    depending on if the marketing site is enabled
+    """Returns the URL for a marketing site link from MKTG_URLS.
 
-    Since the marketing site is enabled by a setting, we have two
-    possible URLs for certain links. This function is to decides
-    which URL should be provided.
+    MKTG_URL_OVERRIDES take priority. 'ROOT' falls back to the local landing page
+    ('/'); any other unconfigured link falls back to '#'.
     """
-
-    # link_map maps URLs from the marketing site to the old equivalent on
-    # the Django site
-    link_map = settings.MKTG_URL_LINK_MAP
-    enable_mktg_site = microsite.get_value(
-        'ENABLE_MKTG_SITE',
-        settings.FEATURES.get('ENABLE_MKTG_SITE', False)
+    marketing_urls = configuration_helpers.get_value(
+        'MKTG_URLS',
+        settings.MKTG_URLS
+    )
+    marketing_url_overrides = configuration_helpers.get_value(
+        'MKTG_URL_OVERRIDES',
+        settings.MKTG_URL_OVERRIDES
     )
 
-    if enable_mktg_site and name in settings.MKTG_URLS:
+    if name in marketing_url_overrides:
+        validate = URLValidator()
+        url = marketing_url_overrides.get(name)
+        try:
+            validate(url)
+            return url
+        except ValidationError as err:
+            log.debug("Invalid link set for link %s: %s", name, err)
+            return '#'
+
+    if name in marketing_urls:
         # special case for when we only want the root marketing URL
         if name == 'ROOT':
-            return settings.MKTG_URLS.get('ROOT')
-        return settings.MKTG_URLS.get('ROOT') + settings.MKTG_URLS.get(name)
-    # only link to the old pages when the marketing site isn't on
-    elif not enable_mktg_site and name in link_map:
-        # don't try to reverse disabled marketing links
-        if link_map[name] is not None:
-            return reverse(link_map[name])
-    else:
-        log.debug("Cannot find corresponding link for name: %s", name)
-        return '#'
+            return marketing_urls.get('ROOT')
+        # special case for new enterprise marketing url with custom tracking query params
+        if name == 'ENTERPRISE':
+            enterprise_url = marketing_urls.get(name)
+            # if url is not relative, then return it without joining to root
+            if not enterprise_url.startswith('/'):
+                return enterprise_url
+        # Using urljoin here allows us to enable a marketing site and set
+        # a site ROOT, but still specify absolute URLs for other marketing
+        # URLs in the MKTG_URLS setting
+        # e.g. urljoin('https://marketing.com', 'https://open-edx.org/about') >>> 'https://open-edx.org/about'
+        return urljoin(marketing_urls.get('ROOT'), marketing_urls.get(name))
+
+    # ROOT is the live site root (not a legacy marketing page), so default it to
+    # the local landing page when no marketing site ROOT is configured.
+    if name == 'ROOT':
+        return '/'
+
+    log.debug("Cannot find corresponding link for name: %s", name)
+    return '#'
+
+
+def is_any_marketing_link_set(names):
+    """
+    Returns a boolean if any given named marketing links are configured.
+    """
+
+    return any(is_marketing_link_set(name) for name in names)
+
+
+def is_marketing_link_set(name):
+    """
+    Returns a boolean if a given named marketing link is configured.
+    """
+    marketing_urls = configuration_helpers.get_value(
+        'MKTG_URLS',
+        settings.MKTG_URLS
+    )
+    return name in marketing_urls
 
 
 def marketing_link_context_processor(request):
@@ -66,82 +107,50 @@ def marketing_link_context_processor(request):
     'MKTG_URL_' and whose values are the corresponding URLs as computed by the
     marketing_link method.
     """
-    return dict(
-        [
-            ("MKTG_URL_" + k, marketing_link(k))
-            for k in (
-                settings.MKTG_URL_LINK_MAP.viewkeys() |
-                settings.MKTG_URLS.viewkeys()
-            )
-        ]
+    marketing_urls = configuration_helpers.get_value(
+        'MKTG_URLS',
+        settings.MKTG_URLS
     )
 
+    return {
+        "MKTG_URL_" + k: marketing_link(k)
+        for k in marketing_urls.keys()
+    }
 
-def open_source_footer_context_processor(request):
+
+def render_to_string(template_name, dictionary, namespace='main', request=None):
     """
-    Checks the site name to determine whether to use the edX.org footer or the Open Source Footer.
+    Render a Mako template to as a string.
+
+    The following values are available to all templates:
+        settings: the django settings object
+        EDX_ROOT_URL: settings.EDX_ROOT_URL
+        marketing_link: The :func:`marketing_link` function
+        is_any_marketing_link_set: The :func:`is_any_marketing_link_set` function
+        is_marketing_link_set: The :func:`is_marketing_link_set` function
+
+    Arguments:
+        template_name: The name of the template to render. Will be loaded
+            from the template paths specified in configuration.
+        dictionary: A dictionary of variables to insert into the template during
+            rendering.
+        namespace: The Mako namespace to find the named template in.
+        request: The request to use to construct the RequestContext for rendering
+            this template. If not supplied, the current request will be used.
     """
-    return dict(
-        [
-            ("IS_EDX_DOMAIN", settings.FEATURES.get('IS_EDX_DOMAIN', False))
-        ]
-    )
+    if namespace == 'lms.main':
+        engine = engines[Engines.PREVIEW]
+    else:
+        engine = engines[Engines.MAKO]
+    template = engine.get_template(template_name)
+    return template.render(dictionary, request)
 
 
-def microsite_footer_context_processor(request):
-    """
-    Checks the site name to determine whether to use the edX.org footer or the Open Source Footer.
-    """
-    return dict(
-        [
-            ("IS_REQUEST_IN_MICROSITE", microsite.is_request_in_microsite())
-        ]
-    )
-
-
-def render_to_string(template_name, dictionary, context=None, namespace='main'):
-
-    # see if there is an override template defined in the microsite
-    template_name = microsite.get_template_path(template_name)
-
-    context_instance = Context(dictionary)
-    # add dictionary to context_instance
-    context_instance.update(dictionary or {})
-    # collapse context_instance to a single dictionary for mako
-    context_dictionary = {}
-    context_instance['settings'] = settings
-    context_instance['EDX_ROOT_URL'] = settings.EDX_ROOT_URL
-    context_instance['marketing_link'] = marketing_link
-
-    # In various testing contexts, there might not be a current request context.
-    request_context = get_template_request_context()
-    if request_context:
-        for item in request_context:
-            context_dictionary.update(item)
-    for item in context_instance:
-        context_dictionary.update(item)
-    if context:
-        context_dictionary.update(context)
-
-    # "Fix" CSRF token by evaluating the lazy object
-    KEY_CSRF_TOKENS = ('csrf_token', 'csrf')
-    for key in KEY_CSRF_TOKENS:
-        if key in context_dictionary:
-            context_dictionary[key] = unicode(context_dictionary[key])
-
-    # fetch and render template
-    template = lookup_template(namespace, template_name)
-    return template.render_unicode(**context_dictionary)
-
-
-def render_to_response(template_name, dictionary=None, context_instance=None, namespace='main', **kwargs):
+def render_to_response(template_name, dictionary=None, namespace='main', request=None, **kwargs):
     """
     Returns a HttpResponse whose content is filled with the result of calling
     lookup.get_template(args[0]).render with the passed arguments.
     """
 
-    # see if there is an override template defined in the microsite
-    template_name = microsite.get_template_path(template_name)
-
     dictionary = dictionary or {}
-    return HttpResponse(render_to_string(template_name, dictionary, context_instance, namespace), **kwargs)
+    return HttpResponse(render_to_string(template_name, dictionary, namespace, request), **kwargs)

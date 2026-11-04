@@ -3,4 +3,4 @@
 
 class InvalidResponseError(Exception):
     """ Exception raised when an API response is invalid. """
-    pass
+    pass  # pylint: disable=unnecessary-pass

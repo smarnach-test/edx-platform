@@ -1,19 +1,23 @@
-""" Search index used to load data into elasticsearch"""
+"""
+Search index used to load data into elasticsearch.
+"""
+
 
 import logging
-from elasticsearch.exceptions import ConnectionError
+from functools import wraps
 
 from django.conf import settings
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 from django.utils import translation
-from functools import wraps
-
+from elasticsearch.exceptions import ConnectionError  # pylint: disable=redefined-builtin
 from search.search_engine_base import SearchEngine
-from request_cache import get_request_or_stub
+
+from lms.djangoapps.teams.models import CourseTeam
+from openedx.core.lib.request_utils import get_request_or_stub
 
 from .errors import ElasticSearchConnectionError
-from .serializers import CourseTeamSerializer, CourseTeam
+from .serializers import CourseTeamSerializer
 
 
 def if_search_enabled(f):
@@ -29,7 +33,7 @@ def if_search_enabled(f):
     return wrapper
 
 
-class CourseTeamIndexer(object):
+class CourseTeamIndexer:
     """
     This is the index object for searching and storing CourseTeam model instances.
     """
@@ -75,7 +79,7 @@ class CourseTeamIndexer(object):
         """
         # Always use the English version of any localizable strings (see TNL-3239)
         with translation.override('en'):
-            return u"{name}\n{description}\n{country}\n{language}".format(
+            return "{name}\n{description}\n{country}\n{language}".format(  # noqa: UP032
                 name=self.course_team.name,
                 description=self.course_team.description,
                 country=self.course_team.country.name.format(),
@@ -100,7 +104,7 @@ class CourseTeamIndexer(object):
         """
         search_engine = cls.engine()
         serialized_course_team = CourseTeamIndexer(course_team).data()
-        search_engine.index(cls.DOCUMENT_TYPE_NAME, [serialized_course_team])
+        search_engine.index([serialized_course_team])
 
     @classmethod
     @if_search_enabled
@@ -108,7 +112,7 @@ class CourseTeamIndexer(object):
         """
         Remove course_team from the index (if feature is enabled).
         """
-        cls.engine().remove(cls.DOCUMENT_TYPE_NAME, [course_team.team_id])
+        cls.engine().remove([course_team.team_id])
 
     @classmethod
     @if_search_enabled
@@ -120,14 +124,14 @@ class CourseTeamIndexer(object):
             return SearchEngine.get_search_engine(index=cls.INDEX_NAME)
         except ConnectionError as err:
             logging.error('Error connecting to elasticsearch: %s', err)
-            raise ElasticSearchConnectionError
+            raise ElasticSearchConnectionError  # pylint: disable=raise-missing-from  # noqa: B904
 
     @classmethod
     def search_is_enabled(cls):
         """
         Return boolean of whether course team indexing is enabled.
         """
-        return settings.FEATURES.get(cls.ENABLE_SEARCH_KEY, False)
+        return getattr(settings, cls.ENABLE_SEARCH_KEY, False)
 
 
 @receiver(post_save, sender=CourseTeam, dispatch_uid='teams.signals.course_team_post_save_callback')
@@ -142,7 +146,7 @@ def course_team_post_save_callback(**kwargs):
 
 
 @receiver(post_delete, sender=CourseTeam, dispatch_uid='teams.signals.course_team_post_delete_callback')
-def course_team_post_delete_callback(**kwargs):  # pylint: disable=invalid-name
+def course_team_post_delete_callback(**kwargs):
     """
     Reindex object after delete.
     """

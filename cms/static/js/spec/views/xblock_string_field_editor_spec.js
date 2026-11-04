@@ -1,156 +1,165 @@
-define(["jquery", "common/js/spec_helpers/ajax_helpers", "common/js/spec_helpers/template_helpers",
-        "js/spec_helpers/edit_helpers", "js/models/xblock_info", "js/views/xblock_string_field_editor"],
-       function ($, AjaxHelpers, TemplateHelpers, EditHelpers, XBlockInfo, XBlockStringFieldEditor) {
-           describe("XBlockStringFieldEditorView", function () {
-               var initialDisplayName, updatedDisplayName, getXBlockInfo, getFieldEditorView;
+import $ from 'jquery';
+import sinon from 'sinon';
+import AjaxHelpers from 'edx-ui-toolkit/js/utils/spec-helpers/ajax-helpers';
+import TemplateHelpers from 'common/js/spec_helpers/template_helpers';
+import EditHelpers from 'js/spec_helpers/edit_helpers';
+import XBlockInfo from 'js/models/xblock_info';
+import XBlockStringFieldEditor from 'js/views/xblock_string_field_editor';
 
-               getXBlockInfo = function (displayName) {
-                   return new XBlockInfo(
-                       {
-                           display_name: displayName,
-                           id: "my_xblock"
-                       },
-                       { parse: true }
-                   );
-               };
+describe('XBlockStringFieldEditorView', function() {
+    var initialDisplayName, updatedDisplayName, getXBlockInfo, getFieldEditorView, requests, xhrFactory;
 
-               getFieldEditorView = function (xblockInfo) {
-                   if (xblockInfo === undefined) {
-                       xblockInfo = getXBlockInfo(initialDisplayName);
-                   }
-                   return new XBlockStringFieldEditor({
-                       model: xblockInfo,
-                       el: $('.wrapper-xblock-field')
-                   });
-               };
+    getXBlockInfo = function(displayName) {
+        return new XBlockInfo(
+            {
+                display_name: displayName,
+                id: 'my_xblock'
+            },
+            {parse: true}
+        );
+    };
 
-               beforeEach(function () {
-                   initialDisplayName = "Default Display Name";
-                   updatedDisplayName = "Updated Display Name";
-                   TemplateHelpers.installTemplate('xblock-string-field-editor');
-                   appendSetFixtures(
-                           '<div class="wrapper-xblock-field incontext-editor is-editable"' +
-                           'data-field="display_name" data-field-display-name="Display Name">' +
-                           '<h1 class="page-header-title xblock-field-value incontext-editor-value">' +
-                           '<span class="title-value">' + initialDisplayName + '</span>' +
-                           '</h1>' +
-                           '</div>'
-                   );
-               });
+    getFieldEditorView = function(xblockInfo) {
+        if (xblockInfo === undefined) {
+            xblockInfo = getXBlockInfo(initialDisplayName);
+        }
+        return new XBlockStringFieldEditor({
+            model: xblockInfo,
+            el: $('.wrapper-xblock-field')
+        });
+    };
 
-               describe('Editing', function () {
-                   var expectPostedNewDisplayName, expectEditCanceled;
+    beforeEach(function() {
+        xhrFactory = sinon.useFakeXMLHttpRequest();
+        requests = [];
+        requests.currentIndex = 0;
+        requests.restore = function() { xhrFactory.restore(); };
+        xhrFactory.onCreate = function(req) { requests.push(req); };
+        initialDisplayName = 'Default Display Name';
+        updatedDisplayName = 'Updated Display Name';
+        TemplateHelpers.installTemplate('xblock-string-field-editor');
+        appendSetFixtures(
+            '<div class="wrapper-xblock-field incontext-editor is-editable"'
+                + 'data-field="display_name" data-field-display-name="Display Name">'
+                + '<h1 class="page-header-title xblock-field-value incontext-editor-value">'
+                + '<span class="title-value">' + initialDisplayName + '</span>'
+                + '</h1>'
+                + '</div>'
+        );
+    });
 
-                   expectPostedNewDisplayName = function (requests, displayName) {
-                       AjaxHelpers.expectJsonRequest(requests, 'POST', '/xblock/my_xblock', {
-                           metadata: {
-                               display_name: displayName
-                           }
-                       });
-                   };
+    afterEach(function() {
+        requests.restore();
+    });
 
-                   expectEditCanceled = function (test, fieldEditorView, options) {
-                       var requests, initialRequests, displayNameInput;
-                       requests = AjaxHelpers.requests(test);
-                       displayNameInput = EditHelpers.inlineEdit(fieldEditorView.$el, options.newTitle);
-                       if (options.pressEscape) {
-                           displayNameInput.simulate("keydown", { keyCode: $.simulate.keyCode.ESCAPE });
-                           displayNameInput.simulate("keyup", { keyCode: $.simulate.keyCode.ESCAPE });
-                       } else if (options.clickCancel) {
-                           fieldEditorView.$('button[name=cancel]').click();
-                       } else {
-                           displayNameInput.change();
-                       }
-                       // No requests should be made when the edit is cancelled client-side
-                       AjaxHelpers.expectNoRequests(requests);
-                       EditHelpers.verifyInlineEditChange(fieldEditorView.$el, initialDisplayName);
-                       expect(fieldEditorView.model.get('display_name')).toBe(initialDisplayName);
-                   };
+    describe('Editing', function() {
+        var expectPostedNewDisplayName, expectEditCanceled;
 
-                   it('can inline edit the display name', function () {
-                       var requests, fieldEditorView;
-                       requests = AjaxHelpers.requests(this);
-                       fieldEditorView = getFieldEditorView().render();
-                       EditHelpers.inlineEdit(fieldEditorView.$el, updatedDisplayName);
-                       fieldEditorView.$('button[name=submit]').click();
-                       expectPostedNewDisplayName(requests, updatedDisplayName);
-                       // This is the response for the change operation.
-                       AjaxHelpers.respondWithJson(requests, { });
-                       // This is the response for the subsequent fetch operation.
-                       AjaxHelpers.respondWithJson(requests, {display_name:  updatedDisplayName});
-                       EditHelpers.verifyInlineEditChange(fieldEditorView.$el, updatedDisplayName);
-                   });
+        expectPostedNewDisplayName = function(requests, displayName) {
+            AjaxHelpers.expectJsonRequest(requests, 'POST', '/xblock/my_xblock', {
+                metadata: {
+                    display_name: displayName
+                }
+            });
+        };
 
-                   it('does not change the title when a display name update fails', function () {
-                       var requests, fieldEditorView, initialRequests;
-                       requests = AjaxHelpers.requests(this);
-                       fieldEditorView = getFieldEditorView().render();
-                       EditHelpers.inlineEdit(fieldEditorView.$el, updatedDisplayName);
-                       fieldEditorView.$('button[name=submit]').click();
-                       expectPostedNewDisplayName(requests, updatedDisplayName);
-                       AjaxHelpers.respondWithError(requests);
-                       // No fetch operation should occur.
-                       AjaxHelpers.expectNoRequests(requests);
-                       EditHelpers.verifyInlineEditChange(fieldEditorView.$el, initialDisplayName, updatedDisplayName);
-                   });
+        expectEditCanceled = function(test, fieldEditorView, options) {
+            var displayNameInput;
+            displayNameInput = EditHelpers.inlineEdit(fieldEditorView.$el, options.newTitle);
+            if (options.pressEscape) {
+                displayNameInput.simulate('keydown', {keyCode: $.simulate.keyCode.ESCAPE});
+                displayNameInput.simulate('keyup', {keyCode: $.simulate.keyCode.ESCAPE});
+            } else if (options.clickCancel) {
+                fieldEditorView.$('button[name=cancel]').click();
+            } else {
+                displayNameInput.change();
+            }
+            // No requests should be made when the edit is cancelled client-side
+            AjaxHelpers.expectNoRequests(requests);
+            EditHelpers.verifyInlineEditChange(fieldEditorView.$el, initialDisplayName);
+            expect(fieldEditorView.model.get('display_name')).toBe(initialDisplayName);
+        };
 
-                   it('trims whitespace from the display name', function () {
-                       var requests, fieldEditorView;
-                       requests = AjaxHelpers.requests(this);
-                       fieldEditorView = getFieldEditorView().render();
-                       updatedDisplayName += ' ';
-                       EditHelpers.inlineEdit(fieldEditorView.$el, updatedDisplayName);
-                       fieldEditorView.$('button[name=submit]').click();
-                       expectPostedNewDisplayName(requests, updatedDisplayName.trim());
-                       // This is the response for the change operation.
-                       AjaxHelpers.respondWithJson(requests, { });
-                       // This is the response for the subsequent fetch operation.
-                       AjaxHelpers.respondWithJson(requests, {display_name:  updatedDisplayName.trim()});
-                       EditHelpers.verifyInlineEditChange(fieldEditorView.$el, updatedDisplayName.trim());
-                   });
+        it('can inline edit the display name', function() {
+            var fieldEditorView;
+            fieldEditorView = getFieldEditorView().render();
+            EditHelpers.inlineEdit(fieldEditorView.$el, updatedDisplayName);
+            fieldEditorView.$('button[name=submit]').click();
+            expectPostedNewDisplayName(requests, updatedDisplayName);
+            // This is the response for the change operation.
+            AjaxHelpers.respondWithJson(requests, { });
+            // This is the response for the subsequent fetch operation.
+            AjaxHelpers.respondWithJson(requests, {display_name: updatedDisplayName});
+            EditHelpers.verifyInlineEditChange(fieldEditorView.$el, updatedDisplayName);
+        });
 
-                   it('does not change the title when input is the empty string', function () {
-                       var fieldEditorView = getFieldEditorView().render();
-                       expectEditCanceled(this, fieldEditorView, {newTitle: ''});
-                   });
+        it('does not change the title when a display name update fails', function() {
+            var fieldEditorView;
+            fieldEditorView = getFieldEditorView().render();
+            EditHelpers.inlineEdit(fieldEditorView.$el, updatedDisplayName);
+            fieldEditorView.$('button[name=submit]').click();
+            expectPostedNewDisplayName(requests, updatedDisplayName);
+            AjaxHelpers.respondWithError(requests);
+            // No fetch operation should occur.
+            AjaxHelpers.expectNoRequests(requests);
+            EditHelpers.verifyInlineEditChange(fieldEditorView.$el, initialDisplayName, updatedDisplayName);
+        });
 
-                   it('does not change the title when input is whitespace-only', function () {
-                       var fieldEditorView = getFieldEditorView().render();
-                       expectEditCanceled(this, fieldEditorView, {newTitle: ' '});
-                   });
+        it('trims whitespace from the display name', function() {
+            var fieldEditorView;
+            fieldEditorView = getFieldEditorView().render();
+            updatedDisplayName += ' ';
+            EditHelpers.inlineEdit(fieldEditorView.$el, updatedDisplayName);
+            fieldEditorView.$('button[name=submit]').click();
+            expectPostedNewDisplayName(requests, updatedDisplayName.trim());
+            // This is the response for the change operation.
+            AjaxHelpers.respondWithJson(requests, { });
+            // This is the response for the subsequent fetch operation.
+            AjaxHelpers.respondWithJson(requests, {display_name: updatedDisplayName.trim()});
+            EditHelpers.verifyInlineEditChange(fieldEditorView.$el, updatedDisplayName.trim());
+        });
 
-                   it('can cancel an inline edit by pressing escape', function () {
-                       var fieldEditorView = getFieldEditorView().render();
-                       expectEditCanceled(this, fieldEditorView, {newTitle: updatedDisplayName, pressEscape: true});
-                   });
+        it('does not change the title when input is the empty string', function() {
+            var fieldEditorView = getFieldEditorView().render();
+            expectEditCanceled(this, fieldEditorView, {newTitle: ''});
+        });
 
-                   it('can cancel an inline edit by clicking cancel', function () {
-                       var fieldEditorView = getFieldEditorView().render();
-                       expectEditCanceled(this, fieldEditorView, {newTitle: updatedDisplayName, clickCancel: true});
-                   });
-               });
+        it('does not change the title when input is whitespace-only', function() {
+            var fieldEditorView = getFieldEditorView().render();
+            expectEditCanceled(this, fieldEditorView, {newTitle: ' '});
+        });
 
-               describe('Rendering', function () {
-                   var expectInputMatchesModelDisplayName = function (displayName) {
-                       var fieldEditorView = getFieldEditorView(getXBlockInfo(displayName)).render();
-                       expect(fieldEditorView.$('.xblock-field-input').val()).toBe(displayName);
-                   };
+        it('can cancel an inline edit by pressing escape', function() {
+            var fieldEditorView = getFieldEditorView().render();
+            expectEditCanceled(this, fieldEditorView, {newTitle: updatedDisplayName, pressEscape: true});
+        });
 
-                   it('renders single quotes in input field', function () {
-                       expectInputMatchesModelDisplayName('Updated \'Display Name\'');
-                   });
+        it('can cancel an inline edit by clicking cancel', function() {
+            var fieldEditorView = getFieldEditorView().render();
+            expectEditCanceled(this, fieldEditorView, {newTitle: updatedDisplayName, clickCancel: true});
+        });
+    });
 
-                   it('renders double quotes in input field', function () {
-                       expectInputMatchesModelDisplayName('Updated "Display Name"');
-                   });
+    describe('Rendering', function() {
+        var expectInputMatchesModelDisplayName = function(displayName) {
+            var fieldEditorView = getFieldEditorView(getXBlockInfo(displayName)).render();
+            expect(fieldEditorView.$('.xblock-field-input').val()).toBe(displayName);
+        };
 
-                   it('renders open angle bracket in input field', function () {
-                       expectInputMatchesModelDisplayName(updatedDisplayName + '<');
-                   });
+        it('renders single quotes in input field', function() {
+            expectInputMatchesModelDisplayName('Updated \'Display Name\'');
+        });
 
-                   it('renders close angle bracket in input field', function () {
-                       expectInputMatchesModelDisplayName('>' + updatedDisplayName);
-                   });
-               });
-           });
-       });
+        it('renders double quotes in input field', function() {
+            expectInputMatchesModelDisplayName('Updated "Display Name"');
+        });
+
+        it('renders open angle bracket in input field', function() {
+            expectInputMatchesModelDisplayName(updatedDisplayName + '<');
+        });
+
+        it('renders close angle bracket in input field', function() {
+            expectInputMatchesModelDisplayName('>' + updatedDisplayName);
+        });
+    });
+});

@@ -1,25 +1,32 @@
-"""
+"""  # pylint: disable=cyclic-import
 Separate integration test for Twitter which is an OAuth1 provider.
 """
 
-from mock import patch
-from third_party_auth.tests.specs import base
+
+from unittest.mock import patch
+
+from common.djangoapps.third_party_auth.tests.specs import base
 
 
-class TwitterIntegrationTest(base.Oauth2IntegrationTest):
+class TwitterIntegrationTest(base.Oauth2IntegrationTest):  # pylint: disable=test-inherits-tests
     """Integration tests for Twitter backend."""
 
+    PROVIDER_NAME = "twitter"
+    PROVIDER_BACKEND = "twitter-oauth2"
+    PROVIDER_ID = "oa2-twitter-oauth2"
+
     def setUp(self):
-        super(TwitterIntegrationTest, self).setUp()
+        super().setUp()
         self.provider = self.configure_twitter_provider(
             enabled=True,
+            visible=True,
             key='twitter_oauth1_key',
             secret='twitter_oauth1_secret',
         )
 
         # To test an OAuth1 provider, we need to patch an additional method:
         patcher = patch(
-            'social.backends.twitter.TwitterOAuth.unauthorized_token',
+            'social_core.backends.twitter.TwitterOAuth.unauthorized_token',
             create=True,
             return_value="unauth_token"
         )

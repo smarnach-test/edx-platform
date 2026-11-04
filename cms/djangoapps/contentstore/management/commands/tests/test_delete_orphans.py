@@ -1,49 +1,54 @@
 """Tests running the delete_orphan command"""
 
-import ddt
-from django.core.management import call_command
-from contentstore.tests.test_orphan import TestOrphanBase
 
-from xmodule.modulestore.tests.factories import CourseFactory
-from xmodule.modulestore import ModuleStoreEnum
+from django.core.management import CommandError, call_command
+
+from cms.djangoapps.contentstore.tests.test_orphan import TestOrphanBase
+from xmodule.modulestore import ModuleStoreEnum  # pylint: disable=wrong-import-order
+from xmodule.modulestore.tests.factories import CourseFactory  # pylint: disable=wrong-import-order
 
 
-@ddt.ddt
 class TestDeleteOrphan(TestOrphanBase):
     """
     Tests for running the delete_orphan management command.
     Inherits from TestOrphan in order to use its setUp method.
     """
-    @ddt.data(ModuleStoreEnum.Type.split, ModuleStoreEnum.Type.mongo)
-    def test_delete_orphans_no_commit(self, default_store):
+    def test_no_args(self):
         """
-        Tests that running the command without a 'commit' argument
+        Test delete_orphans command with no arguments
+        """
+        errstring = 'Error: the following arguments are required: course_id'
+        with self.assertRaisesRegex(CommandError, errstring):  # noqa: PT027
+            call_command('delete_orphans')
+
+    def test_delete_orphans_no_commit(self):
+        """
+        Tests that running the command without a '--commit' argument
         results in no orphans being deleted
         """
-        course = self.create_course_with_orphans(default_store)
-        call_command('delete_orphans', unicode(course.id))
-        self.assertTrue(self.store.has_item(course.id.make_usage_key('html', 'multi_parent_html')))
-        self.assertTrue(self.store.has_item(course.id.make_usage_key('vertical', 'OrphanVert')))
-        self.assertTrue(self.store.has_item(course.id.make_usage_key('chapter', 'OrphanChapter')))
-        self.assertTrue(self.store.has_item(course.id.make_usage_key('html', 'OrphanHtml')))
+        course = self.create_course_with_orphans(ModuleStoreEnum.Type.split)
+        call_command('delete_orphans', str(course.id))
+        self.assertTrue(self.store.has_item(course.id.make_usage_key('html', 'multi_parent_html')))  # noqa: PT009
+        self.assertTrue(self.store.has_item(course.id.make_usage_key('vertical', 'OrphanVert')))  # noqa: PT009
+        self.assertTrue(self.store.has_item(course.id.make_usage_key('chapter', 'OrphanChapter')))  # noqa: PT009
+        self.assertTrue(self.store.has_item(course.id.make_usage_key('html', 'OrphanHtml')))  # noqa: PT009
 
-    @ddt.data(ModuleStoreEnum.Type.split, ModuleStoreEnum.Type.mongo)
-    def test_delete_orphans_commit(self, default_store):
+    def test_delete_orphans_commit(self):
         """
-        Tests that running the command WITH the 'commit' argument
+        Tests that running the command WITH the '--commit' argument
         results in the orphans being deleted
         """
-        course = self.create_course_with_orphans(default_store)
+        course = self.create_course_with_orphans(ModuleStoreEnum.Type.split)
 
-        call_command('delete_orphans', unicode(course.id), 'commit')
+        call_command('delete_orphans', str(course.id), '--commit')
 
-        # make sure this module wasn't deleted
-        self.assertTrue(self.store.has_item(course.id.make_usage_key('html', 'multi_parent_html')))
+        # make sure this block wasn't deleted
+        self.assertTrue(self.store.has_item(course.id.make_usage_key('html', 'multi_parent_html')))  # noqa: PT009
 
         # and make sure that these were
-        self.assertFalse(self.store.has_item(course.id.make_usage_key('vertical', 'OrphanVert')))
-        self.assertFalse(self.store.has_item(course.id.make_usage_key('chapter', 'OrphanChapter')))
-        self.assertFalse(self.store.has_item(course.id.make_usage_key('html', 'OrphanHtml')))
+        self.assertFalse(self.store.has_item(course.id.make_usage_key('vertical', 'OrphanVert')))  # noqa: PT009
+        self.assertFalse(self.store.has_item(course.id.make_usage_key('chapter', 'OrphanChapter')))  # noqa: PT009
+        self.assertFalse(self.store.has_item(course.id.make_usage_key('html', 'OrphanHtml')))  # noqa: PT009
 
     def test_delete_orphans_published_branch_split(self):
         """
@@ -59,19 +64,19 @@ class TestDeleteOrphan(TestOrphanBase):
 
         # call delete orphans, specifying the published branch
         # of the course
-        call_command('delete_orphans', unicode(published_branch), 'commit')
+        call_command('delete_orphans', str(published_branch), '--commit')
 
         # now all orphans should be deleted
         self.assertOrphanCount(course.id, 0)
         self.assertOrphanCount(published_branch, 0)
-        self.assertNotIn(orphan, self.store.get_items(published_branch))
+        self.assertNotIn(orphan, self.store.get_items(published_branch))  # noqa: PT009
         # we should have one fewer item in the published branch of the course
-        self.assertEqual(
+        self.assertEqual(  # noqa: PT009
             len(items_in_published) - 1,
             len(self.store.get_items(published_branch)),
         )
         # and the same amount of items in the draft branch of the course
-        self.assertEqual(
+        self.assertEqual(  # noqa: PT009
             len(items_in_draft_preferred),
             len(self.store.get_items(course.id)),
         )
@@ -106,6 +111,6 @@ class TestDeleteOrphan(TestOrphanBase):
         # there should be one in published
         self.assertOrphanCount(course.id, 0)
         self.assertOrphanCount(published_branch, 1)
-        self.assertIn(orphan, self.store.get_items(published_branch))
+        self.assertIn(orphan.location, [x.location for x in self.store.get_items(published_branch)])  # noqa: PT009
 
         return course, orphan

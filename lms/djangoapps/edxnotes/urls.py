@@ -1,13 +1,16 @@
 """
 URLs for EdxNotes.
 """
-from django.conf.urls import patterns, url
+
+
+from django.urls import path
+
+from . import views
 
 # Additionally, we include login URLs for the browseable API.
-urlpatterns = patterns(
-    "edxnotes.views",
-    url(r"^/$", "edxnotes", name="edxnotes"),
-    url(r"^/search/$", "search_notes", name="search_notes"),
-    url(r"^/token/$", "get_token", name="get_token"),
-    url(r"^/visibility/$", "edxnotes_visibility", name="edxnotes_visibility"),
-)
+urlpatterns = [
+    path('', views.edxnotes, name="edxnotes"),
+    path('notes/', views.notes, name="notes"),
+    path('token/', views.get_token, name="get_token"),
+    path('visibility/', views.edxnotes_visibility, name="edxnotes_visibility"),
+]

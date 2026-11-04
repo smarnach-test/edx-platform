@@ -1,10 +1,20 @@
 """
 Django admin page for bulk email models
 """
+
+
+from config_models.admin import ConfigurationModelAdmin
 from django.contrib import admin
 
-from bulk_email.models import CourseEmail, Optout, CourseEmailTemplate, CourseAuthorization
-from bulk_email.forms import CourseEmailTemplateForm, CourseAuthorizationAdminForm
+from lms.djangoapps.bulk_email.forms import CourseAuthorizationAdminForm, CourseEmailTemplateForm
+from lms.djangoapps.bulk_email.models import (
+    BulkEmailFlag,
+    CourseAuthorization,
+    CourseEmail,
+    CourseEmailTemplate,
+    DisabledCourse,
+    Optout,
+)
 
 
 class CourseEmailAdmin(admin.ModelAdmin):
@@ -34,6 +44,8 @@ two curly braces on each side), to indicate where the email text is to be insert
 Other tags that may be used (surrounded by one curly brace on each side):
 {platform_name}        : the name of the platform
 {course_title}         : the name of the course
+{course_root}          : the URL path to the root of the course
+{course_language}      : the course language. The default is None.
 {course_url}           : the course's full URL
 {email}                : the user's email address
 {account_settings_url} : URL at which users can change account preferences
@@ -46,16 +58,10 @@ unsupported tags will cause email sending to fail.
 '''
         }),
     )
-    # Turn off the action bar (we have no bulk actions)
-    actions = None
 
     def has_add_permission(self, request):
         """Enable the ability to add new templates, as we want to be able to define multiple templates."""
         return True
-
-    def has_delete_permission(self, request, obj=None):
-        """Disables the ability to remove existing templates, as we'd like to make sure we don't have dangling references."""
-        return False
 
 
 class CourseAuthorizationAdmin(admin.ModelAdmin):
@@ -65,7 +71,7 @@ class CourseAuthorizationAdmin(admin.ModelAdmin):
         (None, {
             'fields': ('course_id', 'email_enabled'),
             'description': '''
-Enter a course id in the following form: Org/Course/CourseRun, eg MITx/6.002x/2012_Fall
+Enter a course id in the following form: course-v1:Org+CourseNumber+CourseRun, eg course-v1:edX+DemoX+Demo_Course
 Do not enter leading or trailing slashes. There is no need to surround the course ID with quotes.
 Validation will be performed on the course name, and if it is invalid, an error message will display.
 
@@ -74,7 +80,15 @@ To enable email for the course, check the "Email enabled" box, then click "Save"
         }),
     )
 
+
+class DisabledCourseAdmin(admin.ModelAdmin):
+    """Admin for disabling bulk email on a course-by-course basis"""
+    list_display = ('course_id', )
+
+
 admin.site.register(CourseEmail, CourseEmailAdmin)
 admin.site.register(Optout, OptoutAdmin)
 admin.site.register(CourseEmailTemplate, CourseEmailTemplateAdmin)
 admin.site.register(CourseAuthorization, CourseAuthorizationAdmin)
+admin.site.register(BulkEmailFlag, ConfigurationModelAdmin)
+admin.site.register(DisabledCourse, DisabledCourseAdmin)

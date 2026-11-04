@@ -2,17 +2,19 @@
 Test the lms/staticbook views.
 """
 
+
 import textwrap
+from unittest import mock
 
-import mock
+import pytest
 import requests
+from django.urls import NoReverseMatch, reverse
 
-from django.core.urlresolvers import reverse, NoReverseMatch
-
-from student.tests.factories import UserFactory, CourseEnrollmentFactory
-from xmodule.modulestore.tests.factories import CourseFactory
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-
+from common.djangoapps.student.tests.factories import CourseEnrollmentFactory, UserFactory
+from xmodule.modulestore.tests.django_utils import (
+    ModuleStoreTestCase,  # pylint: disable=wrong-import-order
+)
+from xmodule.modulestore.tests.factories import CourseFactory  # pylint: disable=wrong-import-order
 
 IMAGE_BOOK = ("An Image Textbook", "http://example.com/the_book/")
 
@@ -50,7 +52,7 @@ class StaticBookTest(ModuleStoreTestCase):
     """
 
     def __init__(self, *args, **kwargs):
-        super(StaticBookTest, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.course = None
 
     def make_course(self, **kwargs):
@@ -60,7 +62,7 @@ class StaticBookTest(ModuleStoreTestCase):
         self.course = CourseFactory.create(**kwargs)
         user = UserFactory.create()
         CourseEnrollmentFactory.create(user=user, course_id=self.course.id)
-        self.client.login(username=user.username, password='test')
+        self.client.login(username=user.username, password=self.TEST_PASSWORD)
 
     def make_url(self, url_name, **kwargs):
         """
@@ -69,7 +71,7 @@ class StaticBookTest(ModuleStoreTestCase):
         Automatically provides the course id.
 
         """
-        kwargs['course_id'] = self.course.id.to_deprecated_string()
+        kwargs['course_id'] = str(self.course.id)
         url = reverse(url_name, kwargs=kwargs)
         return url
 
@@ -102,19 +104,19 @@ class StaticImageBookTest(StaticBookTest):
     def test_bad_book_id(self):
         # A bad book id will be a 404.
         self.make_course(textbooks=[IMAGE_BOOK])
-        with self.assertRaises(NoReverseMatch):
+        with pytest.raises(NoReverseMatch):
             self.make_url('book', book_index='fooey')
 
     def test_out_of_range_book_id(self):
         self.make_course()
         url = self.make_url('book', book_index=0)
         response = self.client.get(url)
-        self.assertEqual(response.status_code, 404)
+        assert response.status_code == 404
 
     def test_bad_page_id(self):
         # A bad page id will cause a 404.
         self.make_course(textbooks=[IMAGE_BOOK])
-        with self.assertRaises(NoReverseMatch):
+        with pytest.raises(NoReverseMatch):
             self.make_url('book', book_index=0, page='xyzzy')
 
 
@@ -159,10 +161,23 @@ class StaticPdfBookTest(StaticBookTest):
         self.assertContains(response, "file={}".format(PDF_BOOK['chapters'][1]['url']))
         self.assertContains(response, "page=17")
 
+    def test_viewer_template_renders(self):
+        # The ?viewer=true path renders pdf_viewer.html (the embedded pdf.js
+        # viewer page). Confirm it parses, returns 200, and includes the
+        # vendored viewer's asset URLs.
+        self.make_course(pdf_textbooks=[PDF_BOOK])
+        url = self.make_url('pdf_book', book_index=0, chapter=1)
+        response = self.client.get(url + "?viewer=true")
+        assert response.status_code == 200
+        self.assertContains(response, "Chapter 1 for PDF")
+        self.assertContains(response, "/js/vendor/pdfjs/web/")
+        self.assertContains(response, "viewer.mjs")
+        self.assertContains(response, "pdf-analytics.js")
+
     def test_bad_book_id(self):
         # If the book id isn't an int, we'll get a 404.
         self.make_course(pdf_textbooks=[PDF_BOOK])
-        with self.assertRaises(NoReverseMatch):
+        with pytest.raises(NoReverseMatch):
             self.make_url('pdf_book', book_index='fooey', chapter=1)
 
     def test_out_of_range_book_id(self):
@@ -170,34 +185,34 @@ class StaticPdfBookTest(StaticBookTest):
         self.make_course(pdf_textbooks=[PDF_BOOK])
         url = self.make_url('pdf_book', book_index=1, chapter=1)
         response = self.client.get(url)
-        self.assertEqual(response.status_code, 404)
+        assert response.status_code == 404
 
     def test_no_book(self):
         # If we have no books, asking for the first book will fail with a 404.
         self.make_course()
         url = self.make_url('pdf_book', book_index=0, chapter=1)
         response = self.client.get(url)
-        self.assertEqual(response.status_code, 404)
+        assert response.status_code == 404
 
     def test_chapter_xss(self):
         # The chapter in the URL used to go right on the page.
         self.make_course(pdf_textbooks=[PDF_BOOK])
         # It's no longer possible to use a non-integer chapter.
-        with self.assertRaises(NoReverseMatch):
+        with pytest.raises(NoReverseMatch):
             self.make_url('pdf_book', book_index=0, chapter='xyzzy')
 
     def test_page_xss(self):
         # The page in the URL used to go right on the page.
         self.make_course(pdf_textbooks=[PDF_BOOK])
         # It's no longer possible to use a non-integer page.
-        with self.assertRaises(NoReverseMatch):
+        with pytest.raises(NoReverseMatch):
             self.make_url('pdf_book', book_index=0, page='xyzzy')
 
     def test_chapter_page_xss(self):
         # The page in the URL used to go right on the page.
         self.make_course(pdf_textbooks=[PDF_BOOK])
         # It's no longer possible to use a non-integer page and a non-integer chapter.
-        with self.assertRaises(NoReverseMatch):
+        with pytest.raises(NoReverseMatch):
             self.make_url('pdf_book', book_index=0, chapter='fooey', page='xyzzy')
 
     def test_static_url_map_contentstore(self):
@@ -209,9 +224,14 @@ class StaticPdfBookTest(StaticBookTest):
         url = self.make_url('pdf_book', book_index=0, chapter=1)
         response = self.client.get(url)
         self.assertNotContains(response, 'file={}'.format(PORTABLE_PDF_BOOK['chapters'][0]['url']))
-        self.assertContains(response, 'file=/c4x/{0.org}/{0.course}/asset/{1}'.format(
-            self.course.location,
-            PORTABLE_PDF_BOOK['chapters'][0]['url'].replace('/static/', '')))
+        # The `+` separators in the asset-v1 opaque key are percent-encoded as
+        # %2B so pdf.js's URLSearchParams-based query parser doesn't decode
+        # them as spaces.
+        self.assertContains(
+            response,
+            'file=/asset-v1:{0.org}%2B{0.course}%2B{0.run}%2Btype@asset%2Bblock/{1}'.format(
+                self.course.location,
+                PORTABLE_PDF_BOOK['chapters'][0]['url'].replace('/static/', '')))
 
     def test_static_url_map_static_asset_path(self):
         """
@@ -226,6 +246,17 @@ class StaticPdfBookTest(StaticBookTest):
             PORTABLE_PDF_BOOK['chapters'][0]['url'].replace('/static/', '')))
         self.assertContains(response, 'file=/static/awesomesauce/{}'.format(
             PORTABLE_PDF_BOOK['chapters'][0]['url'].replace('/static/', '')))
+
+    def test_invalid_chapter_id(self):
+        """
+        Test that 1st chapter is displayed to the user when an invalid chapter id is provided
+        """
+        self.make_course(pdf_textbooks=[PDF_BOOK])
+        invalid_chapter = len(PDF_BOOK['chapters']) + 1
+        url = self.make_url('pdf_book', book_index=0, chapter=invalid_chapter)
+        response = self.client.get(url)
+        assert response.status_code == 200
+        self.assertContains(response, "Chapter 1 for PDF")
 
 
 class StaticHtmlBookTest(StaticBookTest):
@@ -254,18 +285,18 @@ class StaticHtmlBookTest(StaticBookTest):
         self.make_course(html_textbooks=[HTML_BOOK])
         url = self.make_url('html_book', book_index=1, chapter=1)
         response = self.client.get(url)
-        self.assertEqual(response.status_code, 404)
+        assert response.status_code == 404
 
     def test_no_book(self):
         # If we have no books, asking for the first book will fail with a 404.
         self.make_course()
         url = self.make_url('html_book', book_index=0, chapter=1)
         response = self.client.get(url)
-        self.assertEqual(response.status_code, 404)
+        assert response.status_code == 404
 
     def test_chapter_xss(self):
         # The chapter in the URL used to go right on the page.
         self.make_course(pdf_textbooks=[HTML_BOOK])
         # It's no longer possible to use a non-integer chapter.
-        with self.assertRaises(NoReverseMatch):
+        with pytest.raises(NoReverseMatch):
             self.make_url('html_book', book_index=0, chapter='xyzzy')

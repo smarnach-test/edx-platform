@@ -1,36 +1,41 @@
 """
 Tests for the LTI provider views
 """
+from unittest.mock import MagicMock, patch
 
-from django.core.urlresolvers import reverse
+from django.contrib.auth.models import AnonymousUser
 from django.test import TestCase
 from django.test.client import RequestFactory
-from mock import patch, MagicMock
+from django.test.utils import override_settings
+from django.urls import reverse
+from opaque_keys.edx.locator import BlockUsageLocator, CourseLocator
+from openedx_events.learning.data import LtiProviderLaunchData, LtiProviderLaunchParamsData, UserData, UserPersonalData
 
-from courseware.testutils import RenderXBlockTestMixin
-from lti_provider import views, models
-from lti_provider.signature_validator import SignatureValidator
-from opaque_keys.edx.locator import CourseLocator, BlockUsageLocator
-from student.tests.factories import UserFactory
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-
+from common.djangoapps.student.tests.factories import UserFactory
+from lms.djangoapps.courseware.testutils import RenderXBlockTestMixin
+from lms.djangoapps.lti_provider import models, views
+from xmodule.modulestore.tests.django_utils import (
+    ModuleStoreTestCase,  # pylint: disable=wrong-import-order
+)
 
 LTI_DEFAULT_PARAMS = {
-    'roles': u'Instructor,urn:lti:instrole:ims/lis/Administrator',
-    'context_id': u'lti_launch_context_id',
-    'oauth_version': u'1.0',
-    'oauth_consumer_key': u'consumer_key',
-    'oauth_signature': u'OAuth Signature',
-    'oauth_signature_method': u'HMAC-SHA1',
-    'oauth_timestamp': u'OAuth Timestamp',
-    'oauth_nonce': u'OAuth Nonce',
-    'user_id': u'LTI_User',
+    'roles': 'Instructor,urn:lti:instrole:ims/lis/Administrator',
+    'context_id': 'lti_launch_context_id',
+    'oauth_version': '1.0',
+    'oauth_consumer_key': 'consumer_key',
+    'oauth_signature': 'OAuth Signature',
+    'oauth_signature_method': 'HMAC-SHA1',
+    'oauth_timestamp': 'OAuth Timestamp',
+    'oauth_nonce': 'OAuth Nonce',
+    'user_id': 'LTI_User',
 }
 
 LTI_OPTIONAL_PARAMS = {
-    'lis_result_sourcedid': u'result sourcedid',
-    'lis_outcome_service_url': u'outcome service URL',
-    'tool_consumer_instance_guid': u'consumer instance guid'
+    'context_title': 'context title',
+    'context_label': 'context label',
+    'lis_result_sourcedid': 'result sourcedid',
+    'lis_outcome_service_url': 'outcome service URL',
+    'tool_consumer_instance_guid': 'consumer instance guid'
 }
 
 COURSE_KEY = CourseLocator(org='some_org', course='some_course', run='some_run')
@@ -42,30 +47,37 @@ COURSE_PARAMS = {
 }
 
 
-ALL_PARAMS = dict(LTI_DEFAULT_PARAMS.items() + COURSE_PARAMS.items())
+ALL_PARAMS = dict(list(LTI_DEFAULT_PARAMS.items()) + list(COURSE_PARAMS.items()))
 
 
-def build_launch_request(authenticated=True):
+def build_launch_request(extra_post_data=None, param_to_delete=None):
     """
     Helper method to create a new request object for the LTI launch.
     """
-    request = RequestFactory().post('/')
+    if extra_post_data is None:
+        extra_post_data = {}
+    post_data = dict(list(LTI_DEFAULT_PARAMS.items()) + list(extra_post_data.items()))
+    if param_to_delete:
+        del post_data[param_to_delete]
+    request = RequestFactory().post('/', data=post_data)
     request.user = UserFactory.create()
-    request.user.is_authenticated = MagicMock(return_value=authenticated)
-    request.session = {}
-    request.POST.update(LTI_DEFAULT_PARAMS)
+    request.session = MagicMock()
     return request
 
 
-class LtiTestMixin(object):
+class LtiTestMixin:
     """
-    Mixin for LTI tests
+    Mixin for LTI tests. Apply ``@override_settings(ENABLE_LTI_PROVIDER=True)`` at the
+    concrete test class level; `override_settings` cannot decorate a mixin directly.
     """
-    @patch.dict('django.conf.settings.FEATURES', {'ENABLE_LTI_PROVIDER': True})
     def setUp(self):
-        super(LtiTestMixin, self).setUp()
+        super().setUp()
         # Always accept the OAuth signature
-        SignatureValidator.verify = MagicMock(return_value=True)
+        self.mock_verify = MagicMock(return_value=True)
+        patcher = patch('lms.djangoapps.lti_provider.signature_validator.SignatureValidator.verify', self.mock_verify)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
         self.consumer = models.LtiConsumer(
             consumer_name='consumer',
             consumer_key=LTI_DEFAULT_PARAMS['oauth_consumer_key'],
@@ -73,33 +85,107 @@ class LtiTestMixin(object):
         )
         self.consumer.save()
 
+        self.auto_link_consumer = models.LtiConsumer(
+            consumer_name='auto-link-consumer',
+            consumer_key='consumer_key_2',
+            consumer_secret='secret_2',
+            require_user_account=True
+        )
+        self.auto_link_consumer.save()
 
+
+@override_settings(ENABLE_LTI_PROVIDER=True)
 class LtiLaunchTest(LtiTestMixin, TestCase):
     """
     Tests for the lti_launch view
     """
-    @patch('lti_provider.views.render_courseware')
-    @patch('lti_provider.views.authenticate_lti_user')
-    def test_valid_launch(self, _authenticate, render):
+    @patch('lms.djangoapps.lti_provider.views.LTI_PROVIDER_LAUNCH_SUCCESS.send_event')
+    @patch('lms.djangoapps.lti_provider.views.render_courseware')
+    @patch('lms.djangoapps.lti_provider.views.authenticate_lti_user')
+    def test_valid_launch(self, _authenticate, render, lti_launch_success_send_event):  # noqa: PT019
         """
         Verifies that the LTI launch succeeds when passed a valid request.
         """
         request = build_launch_request()
-        views.lti_launch(request, unicode(COURSE_KEY), unicode(USAGE_KEY))
+        views.lti_launch(request, str(COURSE_KEY), str(USAGE_KEY))
         render.assert_called_with(request, USAGE_KEY)
+        lti_launch_success_send_event.assert_called_with(
+            launch_data=LtiProviderLaunchData(
+                user=UserData(
+                    id=request.user.id,
+                    is_active=request.user.is_active,
+                    pii=UserPersonalData(
+                        username=request.user.username,
+                        email=request.user.email,
+                        name=request.user.profile.name,
+                    )
+                ),
+                course_key=COURSE_KEY,
+                usage_key=USAGE_KEY,
+                launch_params=LtiProviderLaunchParamsData(
+                    roles='Instructor,urn:lti:instrole:ims/lis/Administrator',
+                    context_id='lti_launch_context_id',
+                    user_id='LTI_User', extra_params={}
+                )
+            )
+        )
 
-    @patch('lti_provider.views.render_courseware')
-    @patch('lti_provider.views.store_outcome_parameters')
-    @patch('lti_provider.views.authenticate_lti_user')
-    def test_outcome_service_registered(self, _authenticate, store_params, _render):
+    @patch('lms.djangoapps.lti_provider.views.render_courseware')
+    @patch('lms.djangoapps.lti_provider.views.store_outcome_parameters')
+    @patch('lms.djangoapps.lti_provider.views.authenticate_lti_user')
+    def test_valid_launch_with_optional_params(self, _authenticate, store_params, _render):  # noqa: PT019
+        """
+        Verifies that the LTI launch succeeds when passed a valid request.
+        """
+        request = build_launch_request(extra_post_data=LTI_OPTIONAL_PARAMS)
+        views.lti_launch(request, str(COURSE_KEY), str(USAGE_KEY))
+        store_params.assert_called_with(
+            dict(list(ALL_PARAMS.items()) + list(LTI_OPTIONAL_PARAMS.items())),
+            request.user,
+            self.consumer
+        )
+
+    @patch('lms.djangoapps.lti_provider.views.render_courseware')
+    @patch('lms.djangoapps.lti_provider.views.store_outcome_parameters')
+    @patch('lms.djangoapps.lti_provider.views.authenticate_lti_user')
+    @override_settings(LTI_CUSTOM_PARAMS=["extra_param1", "extra_param2"])
+    def test_valid_launch_with_extra_params(self, _authenticate, store_params, _render):  # noqa: PT019
+        """
+        Verifies that the LTI launch succeeds when passed a valid request.
+        """
+        extra_params = {'extra_param1': 'extra_value1', 'extra_param2': "extra_value2"}
+        request = build_launch_request(extra_post_data=LTI_OPTIONAL_PARAMS | extra_params)
+        views.lti_launch(request, str(COURSE_KEY), str(USAGE_KEY))
+        store_params.assert_called_with(
+            dict(list(ALL_PARAMS.items()) + list(LTI_OPTIONAL_PARAMS.items()) + list(extra_params.items())),
+            request.user,
+            self.consumer
+        )
+
+    @patch('lms.djangoapps.courseware.views.views.render_xblock')
+    @patch('lms.djangoapps.lti_provider.views.authenticate_lti_user')
+    def test_render_xblock_params(self, _authenticate, render):  # noqa: PT019
+        """
+        Verifies that the LTI renders an XBlock without:
+        1. Checking the enrollment.
+        2. Displaying staff debug info.
+        """
+        request = build_launch_request()
+        views.lti_launch(request, str(COURSE_KEY), str(USAGE_KEY))
+        render.assert_called_with(request, str(USAGE_KEY), check_if_enrolled=False, disable_staff_debug_info=True)
+
+    @patch('lms.djangoapps.lti_provider.views.render_courseware')
+    @patch('lms.djangoapps.lti_provider.views.store_outcome_parameters')
+    @patch('lms.djangoapps.lti_provider.views.authenticate_lti_user')
+    def test_outcome_service_registered(self, _authenticate, store_params, _render):  # noqa: PT019
         """
         Verifies that the LTI launch succeeds when passed a valid request.
         """
         request = build_launch_request()
         views.lti_launch(
             request,
-            unicode(COURSE_PARAMS['course_key']),
-            unicode(COURSE_PARAMS['usage_key'])
+            str(COURSE_PARAMS['course_key']),
+            str(COURSE_PARAMS['usage_key'])
         )
         store_params.assert_called_with(ALL_PARAMS, request.user, self.consumer)
 
@@ -107,8 +193,7 @@ class LtiLaunchTest(LtiTestMixin, TestCase):
         """
         Helper method to remove a parameter from the LTI launch and call the view
         """
-        request = build_launch_request()
-        del request.POST[missing_param]
+        request = build_launch_request(param_to_delete=missing_param)
         return views.lti_launch(request, None, None)
 
     def test_launch_with_missing_parameters(self):
@@ -118,65 +203,95 @@ class LtiLaunchTest(LtiTestMixin, TestCase):
         """
         for missing_param in views.REQUIRED_PARAMETERS:
             response = self.launch_with_missing_parameter(missing_param)
-            self.assertEqual(
-                response.status_code, 400,
-                'Launch should fail when parameter ' + missing_param + ' is missing'
-            )
+            assert response.status_code == 400, (('Launch should fail when parameter ' + missing_param) + ' is missing')
 
     def test_launch_with_disabled_feature_flag(self):
         """
         Verifies that the LTI launch will fail if the ENABLE_LTI_PROVIDER flag
         is not set
         """
-        with patch.dict('django.conf.settings.FEATURES', {'ENABLE_LTI_PROVIDER': False}):
+        with override_settings(ENABLE_LTI_PROVIDER=False):
             request = build_launch_request()
             response = views.lti_launch(request, None, None)
-            self.assertEqual(response.status_code, 403)
+            assert response.status_code == 403
 
     def test_forbidden_if_signature_fails(self):
         """
         Verifies that the view returns Forbidden if the LTI OAuth signature is
         incorrect.
         """
-        SignatureValidator.verify = MagicMock(return_value=False)
+        self.mock_verify.return_value = False
+
         request = build_launch_request()
         response = views.lti_launch(request, None, None)
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(response.status_code, 403)
+        assert response.status_code == 403
+        assert response.status_code == 403
 
-    @patch('lti_provider.views.render_courseware')
-    def test_lti_consumer_record_supplemented_with_guid(self, _render):
-        SignatureValidator.verify = MagicMock(return_value=False)
-        request = build_launch_request()
-        request.POST.update(LTI_OPTIONAL_PARAMS)
-        with self.assertNumQueries(4):
+    @patch('lms.djangoapps.lti_provider.views.render_courseware')
+    def test_lti_consumer_record_supplemented_with_guid(self, _render):  # noqa: PT019
+        self.mock_verify.return_value = False
+
+        request = build_launch_request(LTI_OPTIONAL_PARAMS)
+        with self.assertNumQueries(3):
             views.lti_launch(request, None, None)
         consumer = models.LtiConsumer.objects.get(
             consumer_key=LTI_DEFAULT_PARAMS['oauth_consumer_key']
         )
-        self.assertEqual(consumer.instance_guid, u'consumer instance guid')
+        assert consumer.instance_guid == 'consumer instance guid'
+
+    @patch('lms.djangoapps.lti_provider.views.render_to_response')
+    def test_unauthenticated_user_shown_error_when_require_user_account_is_enabled(self, render_error):
+        """
+        Verify that an error page is shown instead of LTI Content for an unauthenticated user,
+        when the `require_user_account` flag is enabled for the LTI Consumer.
+        """
+        request = build_launch_request({'oauth_consumer_key': 'consumer_key_2'})
+        request.user = AnonymousUser()
+
+        views.lti_launch(request, str(COURSE_KEY), str(USAGE_KEY))
+
+        render_error.assert_called()
+        assert render_error.call_args[0][0] == "lti_provider/user-auth-error.html"
+
+    @patch('lms.djangoapps.lti_provider.views.render_to_response')
+    def test_auth_error_shown_when_lis_email_is_different_from_user_email(self, render_error):
+        """
+        When the `require_user_account` flag is enabled for the LTI Consumer, verify that
+        an error page is shown instead of LTI Content if the authenticated user's email
+        doesn't match the `lis_person_contact_email_primary` value from LTI Launch.
+        """
+        # lis email different from logged in user
+        request = build_launch_request({
+            'oauth_consumer_key': 'consumer_key_2',
+            'lis_person_contact_email_primary': 'random_email@test.com'
+        })
+
+        views.lti_launch(request, str(COURSE_KEY), str(USAGE_KEY))
+        render_error.assert_called()
 
 
+@override_settings(ENABLE_LTI_PROVIDER=True)
 class LtiLaunchTestRender(LtiTestMixin, RenderXBlockTestMixin, ModuleStoreTestCase):
     """
     Tests for the rendering returned by lti_launch view.
     This class overrides the get_response method, which is used by
     the tests defined in RenderXBlockTestMixin.
     """
-    def get_response(self, url_encoded_params=None):
+
+    def get_response(self, usage_key, url_encoded_params=None):
         """
         Overridable method to get the response from the endpoint that is being tested.
         """
         lti_launch_url = reverse(
             'lti_provider_launch',
             kwargs={
-                'course_id': unicode(self.course.id),
-                'usage_id': unicode(self.html_block.location)
+                'course_id': str(self.course.id),
+                'usage_id': str(usage_key)
             }
         )
         if url_encoded_params:
             lti_launch_url += '?' + url_encoded_params
-        SignatureValidator.verify = MagicMock(return_value=True)
+
         return self.client.post(lti_launch_url, data=LTI_DEFAULT_PARAMS)
 
     # The following test methods override the base tests for verifying access

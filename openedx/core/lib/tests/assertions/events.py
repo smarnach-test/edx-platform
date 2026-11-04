@@ -1,5 +1,6 @@
 """Assertions related to event validation"""
 
+
 import json
 import pprint
 
@@ -84,7 +85,7 @@ def assert_event_matches(expected, actual, tolerate=None):
         raise AssertionError('Unexpected differences found in structs:\n\n' + '\n'.join(message_lines))
 
 
-class EventMatchTolerates(object):
+class EventMatchTolerates:
     """
     Represents groups of flags that specify the level of tolerance for deviation between an expected event and an actual
     event.
@@ -188,15 +189,16 @@ def block_indent(text, spaces=4):
 
 def parse_event_payload(event):
     """
-    Given an event, parse the "event" field as a JSON string.
+    Given an event, parse the 'event' field, if found otherwise 'data' field as a JSON string.
 
     Note that this may simply return the same event unchanged, or return a new copy of the event with the payload
     parsed. It will never modify the event in place.
     """
-    if 'event' in event and isinstance(event['event'], basestring):
+    payload_key = 'event' if 'event' in event else 'data'
+    if payload_key in event and isinstance(event[payload_key], str):
         event = event.copy()
         try:
-            event['event'] = json.loads(event['event'])
+            event[payload_key] = json.loads(event[payload_key])
         except ValueError:
             pass
     return event
@@ -217,22 +219,22 @@ def compare_structs(expected, actual, should_strict_compare=None, path=None):
     differences = []
 
     if isinstance(expected, dict) and isinstance(actual, dict):
-        expected_keys = frozenset(expected.keys())
-        actual_keys = frozenset(actual.keys())
+        expected_keys = frozenset(list(expected.keys()))
+        actual_keys = frozenset(list(actual.keys()))
 
         for key in expected_keys - actual_keys:
-            differences.append('{0}: not found in actual'.format(_path_to_string(path + [key])))
+            differences.append(f'{_path_to_string(path + [key])}: not found in actual')
 
         if should_strict_compare is not None and should_strict_compare(path):
             for key in actual_keys - expected_keys:
-                differences.append('{0}: only defined in actual'.format(_path_to_string(path + [key])))
+                differences.append(f'{_path_to_string(path + [key])}: only defined in actual')
 
         for key in expected_keys & actual_keys:
             child_differences = compare_structs(expected[key], actual[key], should_strict_compare, path + [key])
             differences.extend(child_differences)
 
     elif expected != actual:
-        differences.append('{path}: {a} != {b} (expected != actual)'.format(
+        differences.append('{path}: {a} != {b} (expected != actual)'.format(  # noqa: UP032
             path=_path_to_string(path),
             a=repr(expected),
             b=repr(actual)

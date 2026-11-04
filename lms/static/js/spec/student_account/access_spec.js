@@ -1,22 +1,24 @@
-;(function (define) {
+(function(define) {
     'use strict';
-    define([
-            'jquery',
-            'underscore',
-            'backbone',
-            'common/js/spec_helpers/template_helpers',
-            'common/js/spec_helpers/ajax_helpers',
-            'js/student_account/views/AccessView',
-            'js/student_account/views/FormView',
-            'js/student_account/enrollment',
-            'js/student_account/shoppingcart',
-            'js/student_account/emailoptin'
-        ],
-        function($, _, Backbone, TemplateHelpers, AjaxHelpers, AccessView, FormView, EnrollmentInterface,
-                 ShoppingCartInterface) {
 
+    define([
+        'jquery',
+        'underscore',
+        'backbone',
+        'sinon',
+        'common/js/spec_helpers/template_helpers',
+        'edx-ui-toolkit/js/utils/spec-helpers/ajax-helpers',
+        'js/student_account/views/AccessView',
+        'js/student_account/views/FormView',
+        'js/student_account/enrollment',
+        'js/student_account/shoppingcart',
+        'js/student_account/emailoptin'
+    ],
+    function($, _, Backbone, sinon, TemplateHelpers, AjaxHelpers, AccessView, FormView, EnrollmentInterface,
+        ShoppingCartInterface) {
         describe('edx.student.account.AccessView', function() {
             var requests = null,
+                xhrFactory = null,
                 view = null,
                 FORM_DESCRIPTION = {
                     method: 'post',
@@ -47,42 +49,40 @@
                     ]
                 },
                 FORWARD_URL = (
-                    '/account/finish_auth' +
-                    '?course_id=edx%2FDemoX%2FFall' +
-                    '&enrollment_action=enroll' +
-                    '&next=%2Fdashboard'
+                    '/account/finish_auth'
+                    + '?course_id=edx%2FDemoX%2FFall'
+                    + '&enrollment_action=enroll'
+                    + '&next=%2Fdashboard'
                 ),
                 THIRD_PARTY_COMPLETE_URL = '/auth/complete/provider/';
 
-            var ajaxSpyAndInitialize = function(that, mode, nextUrl, finishAuthUrl) {
+            var ajaxSpyAndInitialize = function(that, mode, nextUrl, finishAuthUrl, createAccountOption) {
                 var options = {
                         initial_mode: mode,
                         third_party_auth: {
                             currentProvider: null,
                             providers: [],
-                            secondaryProviders: [{name: "provider"}],
+                            secondaryProviders: [{name: 'provider'}],
                             finishAuthUrl: finishAuthUrl
                         },
                         login_redirect_url: nextUrl, // undefined for default
                         platform_name: 'edX',
                         login_form_desc: FORM_DESCRIPTION,
                         registration_form_desc: FORM_DESCRIPTION,
-                        password_reset_form_desc: FORM_DESCRIPTION
+                        password_reset_form_desc: FORM_DESCRIPTION,
+                        account_creation_allowed: createAccountOption
                     },
                     $logistrationElement = $('#login-and-registration-container');
-
-                // Spy on AJAX requests
-                requests = AjaxHelpers.requests(that);
 
                 // Initialize the access view
                 view = new AccessView(_.extend(options, {el: $logistrationElement}));
 
                 // Mock the redirect call
-                spyOn( view, 'redirect' ).andCallFake( function() {} );
+                spyOn(view, 'redirect').and.callFake(function() {});
 
                 // Mock the enrollment and shopping cart interfaces
-                spyOn( EnrollmentInterface, 'enroll' ).andCallFake( function() {} );
-                spyOn( ShoppingCartInterface, 'addCourseToCart' ).andCallFake( function() {} );
+                spyOn(EnrollmentInterface, 'enroll').and.callFake(function() {});
+                spyOn(ShoppingCartInterface, 'addCourseToCart').and.callFake(function() {});
             };
 
             var assertForms = function(visibleType, hiddenType) {
@@ -101,6 +101,7 @@
             };
 
             beforeEach(function() {
+                spyOn(window.history, 'pushState');
                 setFixtures('<div id="login-and-registration-container" class="login-register" />');
                 TemplateHelpers.installTemplate('templates/student_account/access');
                 TemplateHelpers.installTemplate('templates/student_account/login');
@@ -112,10 +113,16 @@
 
                 // Stub analytics tracking
                 window.analytics = jasmine.createSpyObj('analytics', ['track', 'page', 'pageview', 'trackLink']);
+                xhrFactory = sinon.useFakeXMLHttpRequest();
+                requests = [];
+                requests.currentIndex = 0;
+                requests.restore = function() { xhrFactory.restore(); };
+                xhrFactory.onCreate = function(req) { requests.push(req); };
             });
 
             afterEach(function() {
                 Backbone.history.stop();
+                requests.restore();
             });
 
             it('can initially display the login form', function() {
@@ -138,9 +145,6 @@
 
             it('toggles between the login and registration forms', function() {
                 ajaxSpyAndInitialize(this, 'login');
-
-                // Prevent URL from updating
-                spyOn(history, 'pushState').andCallFake( function() {} );
 
                 // Simulate selection of the registration form
                 selectForm('register');
@@ -181,11 +185,11 @@
                 // Simulate a click on the reset password link
                 view.resetPassword();
 
-                // Verify that the login-anchor is hidden
-                expect($("#login-anchor")).toHaveClass('hidden');
+                // Verify that the login-form is hidden
+                expect($('#login-form')).toHaveClass('hidden');
 
                 // Verify that the password reset form is not hidden
-                expect($("#password-reset-form")).not.toHaveClass('hidden');
+                expect($('#password-reset-form')).not.toHaveClass('hidden');
             });
 
             it('redirects the user to the dashboard on auth complete', function() {
@@ -195,7 +199,7 @@
                 view.subview.register.trigger('auth-complete');
 
                 // Since we did not provide a ?next query param, expect a redirect to the dashboard.
-                expect( view.redirect ).toHaveBeenCalledWith( '/dashboard' );
+                expect(view.redirect).toHaveBeenCalledWith('/dashboard');
             });
 
             it('proceeds with the third party auth pipeline if active', function() {
@@ -205,7 +209,7 @@
                 view.subview.register.trigger('auth-complete');
 
                 // Verify that we were redirected
-                expect( view.redirect ).toHaveBeenCalledWith( THIRD_PARTY_COMPLETE_URL );
+                expect(view.redirect).toHaveBeenCalledWith(THIRD_PARTY_COMPLETE_URL);
             });
 
             it('redirects the user to the next page on auth complete', function() {
@@ -216,19 +220,22 @@
                 view.subview.register.trigger('auth-complete');
 
                 // Verify that we were redirected
-                expect( view.redirect ).toHaveBeenCalledWith( FORWARD_URL );
+                expect(view.redirect).toHaveBeenCalledWith(FORWARD_URL);
             });
 
-            it('ignores redirect to external URLs', function() {
-                ajaxSpyAndInitialize(this, 'register', "http://www.example.com");
+            it('hides create an account section', function() {
+                ajaxSpyAndInitialize(this, 'login', '', '', false);
 
-                // Trigger auth complete
-                view.subview.register.trigger('auth-complete');
-
-                // Expect that we ignore the external URL and redirect to the dashboard
-                expect( view.redirect ).toHaveBeenCalledWith( "/dashboard" );
+                // Expect the Create an account section is hidden
+                expect((view.$el.find('.toggle-form')).length).toEqual(0);
             });
 
+            it('shows create an account section', function() {
+                ajaxSpyAndInitialize(this, 'login', '', '', true);
+
+                // Expect the Create an account section is visible
+                expect((view.$el.find('.toggle-form')).length).toEqual(1);
+            });
         });
     });
 }).call(this, define || RequireJS.define);

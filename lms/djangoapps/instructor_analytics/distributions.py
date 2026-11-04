@@ -21,8 +21,10 @@ The distribution in a course for gender might look like:
 }
 """
 
+
 from django.db.models import Count
-from student.models import CourseEnrollment, UserProfile
+
+from common.djangoapps.student.models import CourseEnrollment, UserProfile
 
 # choices with a restricted domain, e.g. level_of_education
 _EASY_CHOICE_FEATURES = ('gender', 'level_of_education')
@@ -37,7 +39,7 @@ DISPLAY_NAMES = {
 }
 
 
-class ProfileDistribution(object):
+class ProfileDistribution:
     """
     Container for profile distribution data
 
@@ -50,7 +52,7 @@ class ProfileDistribution(object):
 
     class ValidationError(ValueError):
         """ Error thrown if validation fails. """
-        pass
+        pass  # pylint: disable=unnecessary-pass
 
     def __init__(self, feature):
         self.feature = feature
@@ -94,7 +96,7 @@ def profile_distribution(course_id, feature):
 
     if feature not in AVAILABLE_PROFILE_FEATURES:
         raise ValueError(
-            "unsupported feature requested for distribution '{}'".format(
+            "unsupported feature requested for distribution u'{}'".format(  # noqa: UP032
                 feature)
         )
 
@@ -109,8 +111,7 @@ def profile_distribution(course_id, feature):
             raw_choices = UserProfile.LEVEL_OF_EDUCATION_CHOICES
 
         # short name and display name (full) of the choices.
-        choices = [(short, full)
-                   for (short, full) in raw_choices] + [('no_data', 'No Data')]
+        choices = list(raw_choices) + [('no_data', 'No Data')]
 
         def get_filter(feature, value):
             """ Get the orm filter parameters for a feature. """
@@ -128,7 +129,7 @@ def profile_distribution(course_id, feature):
             ).count()
 
         distribution = {}
-        for (short, full) in choices:
+        for (short, full) in choices:  # pylint: disable=unused-variable  # noqa: B007
             # handle no data case
             if short == 'no_data':
                 distribution['no_data'] = 0
@@ -150,8 +151,7 @@ def profile_distribution(course_id, feature):
         # query_distribution is of the form [{'featureval': 'value1', 'featureval__count': 4},
         #    {'featureval': 'value2', 'featureval__count': 2}, ...]
 
-        distribution = dict((vald[feature], vald[feature + '__count'])
-                            for vald in query_distribution)
+        distribution = {vald[feature]: vald[feature + '__count'] for vald in query_distribution}
         # distribution is of the form {'value1': 4, 'value2': 2, ...}
 
         # change none to no_data for valid json key

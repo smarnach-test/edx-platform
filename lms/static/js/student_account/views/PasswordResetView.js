@@ -1,39 +1,39 @@
-;(function (define) {
+(function(define) {
     'use strict';
-    define([
-            'jquery',
-            'js/student_account/views/FormView'
-        ],
-        function($, FormView) {
 
+    define([
+        'jquery',
+        'js/student_account/views/FormView'
+    ],
+    function($, FormView) {
         return FormView.extend({
             el: '#password-reset-form',
 
             tpl: '#password_reset-tpl',
 
             events: {
-                'click .js-reset': 'submitForm'
+                'click .js-reset': 'submitForm',
+                'click .reset-help': 'toggleResetHelp'
             },
 
             formType: 'password-reset',
 
             requiredStr: '',
+            optionalStr: '',
 
             submitButton: '.js-reset',
 
             preRender: function() {
-                this.element.show( $( this.el ) );
-                this.element.show( $( this.el ).parent() );
-                this.listenTo( this.model, 'sync', this.saveSuccess );
+                this.element.show($(this.el));
+                this.element.show($(this.el).parent());
+                this.listenTo(this.model, 'sync', this.saveSuccess);
             },
 
-            toggleErrorMsg: function( show ) {
-                if ( show ) {
-                    this.setErrors();
-                    this.toggleDisableButton(false);
-                } else {
-                    this.element.hide( this.$errors );
-                }
+            toggleResetHelp: function(event) {
+                var $help;
+                event.preventDefault();
+                $help = $('#reset-help');
+                this.toggleHelp(event, $help);
             },
 
             saveSuccess: function() {

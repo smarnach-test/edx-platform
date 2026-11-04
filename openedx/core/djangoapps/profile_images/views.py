@@ -1,25 +1,31 @@
 """
 This module implements the upload and remove endpoints of the profile image api.
 """
-from contextlib import closing
-import datetime
-import logging
 
-from django.utils.translation import ugettext as _
-from django.utils.timezone import utc
+
+import datetime
+import itertools
+import logging
+from contextlib import closing
+from zoneinfo import ZoneInfo
+
+from django.utils.translation import gettext as _
+from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
+from edx_rest_framework_extensions.auth.session.authentication import SessionAuthenticationAllowInactiveUser
 from rest_framework import permissions, status
-from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from openedx.core.djangoapps.user_api.errors import UserNotFound
-from openedx.core.lib.api.authentication import (
-    OAuth2AuthenticationAllowInactiveUser,
-    SessionAuthenticationAllowInactiveUser,
-)
-from openedx.core.lib.api.permissions import IsUserInUrl, IsUserInUrlOrStaff
 from openedx.core.djangoapps.user_api.accounts.image_helpers import get_profile_image_names, set_has_profile_image
-from .images import validate_uploaded_image, create_profile_images, remove_profile_images, ImageValidationError
+from openedx.core.djangoapps.user_api.errors import UserNotFound
+from openedx.core.lib.api.authentication import BearerAuthenticationAllowInactiveUser
+from openedx.core.lib.api.parsers import TypedFileUploadParser
+from openedx.core.lib.api.permissions import IsUserInUrl
+from openedx.core.lib.api.view_utils import DeveloperErrorViewMixin
+
+from .exceptions import ImageValidationError
+from .images import IMAGE_TYPES, create_profile_images, remove_profile_images, validate_uploaded_image
 
 log = logging.getLogger(__name__)
 
@@ -32,10 +38,10 @@ def _make_upload_dt():
     Generate a server-side timestamp for the upload. This is in a separate
     function so its behavior can be overridden in tests.
     """
-    return datetime.datetime.utcnow().replace(tzinfo=utc)
+    return datetime.datetime.utcnow().replace(tzinfo=ZoneInfo("UTC"))
 
 
-class ProfileImageView(APIView):
+class ProfileImageView(DeveloperErrorViewMixin, APIView):
     """
     **Use Cases**
 
@@ -105,9 +111,15 @@ class ProfileImageView(APIView):
           the user exists or not.
     """
 
-    parser_classes = (MultiPartParser, FormParser)
-    authentication_classes = (OAuth2AuthenticationAllowInactiveUser, SessionAuthenticationAllowInactiveUser)
+    parser_classes = (MultiPartParser, FormParser, TypedFileUploadParser)
+    authentication_classes = (
+        JwtAuthentication,
+        BearerAuthenticationAllowInactiveUser,
+        SessionAuthenticationAllowInactiveUser,
+    )
     permission_classes = (permissions.IsAuthenticated, IsUserInUrl)
+
+    upload_media_types = set(itertools.chain(*(image_type.mimetypes for image_type in IMAGE_TYPES.values())))
 
     def post(self, request, username):
         """
@@ -120,8 +132,8 @@ class ProfileImageView(APIView):
         if 'file' not in request.FILES:
             return Response(
                 {
-                    "developer_message": u"No file provided for profile image",
-                    "user_message": _(u"No file provided for profile image"),
+                    "developer_message": "No file provided for profile image",
+                    "user_message": _("No file provided for profile image"),
 
                 },
                 status=status.HTTP_400_BAD_REQUEST
@@ -138,7 +150,7 @@ class ProfileImageView(APIView):
                 validate_uploaded_image(uploaded_file)
             except ImageValidationError as error:
                 return Response(
-                    {"developer_message": error.message, "user_message": error.user_message},
+                    {"developer_message": str(error), "user_message": error.user_message},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -151,13 +163,13 @@ class ProfileImageView(APIView):
 
             log.info(
                 LOG_MESSAGE_CREATE,
-                {'image_names': profile_image_names.values(), 'user_id': request.user.id}
+                {'image_names': list(profile_image_names.values()), 'user_id': request.user.id}
             )
 
         # send client response.
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-    def delete(self, request, username):  # pylint: disable=unused-argument
+    def delete(self, request, username):
         """
         DELETE /api/user/v1/accounts/{username}/image
         """
@@ -172,7 +184,7 @@ class ProfileImageView(APIView):
 
             log.info(
                 LOG_MESSAGE_DELETE,
-                {'image_names': profile_image_names.values(), 'user_id': request.user.id}
+                {'image_names': list(profile_image_names.values()), 'user_id': request.user.id}
             )
         except UserNotFound:
             return Response(status=status.HTTP_404_NOT_FOUND)

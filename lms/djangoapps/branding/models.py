@@ -1,14 +1,17 @@
 """
-Model used by Video module for Branding configuration.
+Model used by Video block for Branding configuration.
 
 Includes:
-    BrandingInfoConfig: A ConfigurationModel for managing how Video Module will
+    BrandingInfoConfig: A ConfigurationModel for managing how Video Block will
         use Branding.
 """
+
+
 import json
-from django.db.models import TextField
-from django.core.exceptions import ValidationError
+
 from config_models.models import ConfigurationModel
+from django.core.exceptions import ValidationError
+from django.db.models import TextField
 
 
 class BrandingInfoConfig(ConfigurationModel):
@@ -23,7 +26,12 @@ class BrandingInfoConfig(ConfigurationModel):
                     "logo_tag": "Video hosted by XuetangX.com"
             }
         }
+
+    .. no_pii:
     """
+    class Meta(ConfigurationModel.Meta):
+        app_label = "branding"
+
     configuration = TextField(
         help_text="JSON data of Configuration for Video Branding."
     )
@@ -35,7 +43,7 @@ class BrandingInfoConfig(ConfigurationModel):
         try:
             json.loads(self.configuration)
         except ValueError:
-            raise ValidationError('Must be valid JSON string.')
+            raise ValidationError('Must be valid JSON string.')  # pylint: disable=raise-missing-from  # noqa: B904
 
     @classmethod
     def get_config(cls):
@@ -53,5 +61,8 @@ class BrandingApiConfig(ConfigurationModel):
     When this flag is disabled, the api will return 404.
 
     When the flag is enabled, the api will returns the valid reponse.
+
+    .. no_pii:
     """
-    pass
+    class Meta(ConfigurationModel.Meta):
+        app_label = "branding"

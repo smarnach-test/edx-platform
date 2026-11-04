@@ -2,15 +2,13 @@
 Integration tests for importing courses containing pure XBlocks.
 """
 
+
+from django.conf import settings
 from xblock.core import XBlock
 from xblock.fields import String
 
-from xmodule.modulestore.django import modulestore
-from xmodule.modulestore import ModuleStoreEnum
-from xmodule.modulestore.xml_importer import import_course_from_xml
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-from xmodule.modulestore.mongo.draft import as_draft
-from django.conf import settings
+from xmodule.modulestore.xml_importer import import_course_from_xml
 
 TEST_DATA_DIR = settings.COMMON_TEST_DATA_ROOT
 
@@ -31,20 +29,13 @@ class StubXBlock(XBlock):
 
 
 class XBlockImportTest(ModuleStoreTestCase):
+    """Test class to verify xblock import operations"""
 
     @XBlock.register_temp_plugin(StubXBlock)
     def test_import_public(self):
         self._assert_import(
             'pure_xblock_public',
             'set by xml'
-        )
-
-    @XBlock.register_temp_plugin(StubXBlock)
-    def test_import_draft(self):
-        self._assert_import(
-            'pure_xblock_draft',
-            'set by xml',
-            has_draft=True
         )
 
     def _assert_import(self, course_dir, expected_field_val, has_draft=False):
@@ -64,22 +55,12 @@ class XBlockImportTest(ModuleStoreTestCase):
         """
         # It is necessary to use the "old mongo" modulestore because split doesn't work
         # with the "has_draft" logic below.
-        store = modulestore()._get_modulestore_by_type(ModuleStoreEnum.Type.mongo)  # pylint: disable=protected-access
         courses = import_course_from_xml(
-            store, self.user.id, TEST_DATA_DIR, [course_dir], create_if_not_present=True
+            self.store, self.user.id, TEST_DATA_DIR, [course_dir], create_if_not_present=True
         )
 
         xblock_location = courses[0].id.make_usage_key('stubxblock', 'xblock_test')
 
-        if has_draft:
-            xblock_location = as_draft(xblock_location)
-
-        xblock = store.get_item(xblock_location)
-        self.assertTrue(isinstance(xblock, StubXBlock))
-        self.assertEqual(xblock.test_field, expected_field_val)
-
-        if has_draft:
-            draft_xblock = store.get_item(xblock_location)
-            self.assertTrue(getattr(draft_xblock, 'is_draft', False))
-            self.assertTrue(isinstance(draft_xblock, StubXBlock))
-            self.assertEqual(draft_xblock.test_field, expected_field_val)
+        xblock = self.store.get_item(xblock_location)
+        self.assertTrue(isinstance(xblock, StubXBlock))  # noqa: PT009
+        self.assertEqual(xblock.test_field, expected_field_val)  # noqa: PT009

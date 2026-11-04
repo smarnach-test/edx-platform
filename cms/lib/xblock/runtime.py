@@ -2,7 +2,11 @@
 XBlock runtime implementations for edX Studio
 """
 
-from django.core.urlresolvers import reverse
+import logging
+
+from django.urls import reverse
+
+log = logging.getLogger(__name__)
 
 
 def handler_url(block, handler_name, suffix='', query='', thirdparty=False):
@@ -11,10 +15,10 @@ def handler_url(block, handler_name, suffix='', query='', thirdparty=False):
     """
 
     if thirdparty:
-        raise NotImplementedError("edX Studio doesn't support third-party xblock handler urls")
+        log.warning("edX Studio doesn't support third-party handler urls for XBlock %s", type(block))
 
     url = reverse('component_handler', kwargs={
-        'usage_key_string': unicode(block.scope_ids.usage_id).encode('utf-8'),
+        'usage_key_string': str(block.scope_ids.usage_id),
         'handler': handler_name,
         'suffix': suffix,
     }).rstrip('/')
@@ -23,13 +27,3 @@ def handler_url(block, handler_name, suffix='', query='', thirdparty=False):
         url += '?' + query
 
     return url
-
-
-def local_resource_url(block, uri):
-    """
-    local_resource_url for Studio
-    """
-    return reverse('xblock_resource_url', kwargs={
-        'block_type': block.scope_ids.block_type,
-        'uri': uri,
-    })

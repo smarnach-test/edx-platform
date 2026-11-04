@@ -1,18 +1,15 @@
 """
 Defines a form for providing validation of CourseEmail templates.
 """
+
+
 import logging
 
 from django import forms
 from django.core.exceptions import ValidationError
 
-from bulk_email.models import CourseEmailTemplate, COURSE_EMAIL_MESSAGE_BODY_TAG, CourseAuthorization
-
-from opaque_keys import InvalidKeyError
-from xmodule.modulestore import ModuleStoreEnum
-from xmodule.modulestore.django import modulestore
-from opaque_keys.edx.keys import CourseKey
-from opaque_keys.edx.locations import SlashSeparatedCourseKey
+from lms.djangoapps.bulk_email.models import COURSE_EMAIL_MESSAGE_BODY_TAG, CourseAuthorization, CourseEmailTemplate
+from openedx.core.lib.courses import clean_course_id
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +19,7 @@ class CourseEmailTemplateForm(forms.ModelForm):
 
     name = forms.CharField(required=False)
 
-    class Meta(object):  # pylint: disable=missing-docstring
+    class Meta:
         model = CourseEmailTemplate
         fields = ('html_template', 'plain_template', 'name')
 
@@ -30,11 +27,11 @@ class CourseEmailTemplateForm(forms.ModelForm):
         """Check the template for required tags."""
         index = template.find(COURSE_EMAIL_MESSAGE_BODY_TAG)
         if index < 0:
-            msg = 'Missing tag: "{}"'.format(COURSE_EMAIL_MESSAGE_BODY_TAG)
+            msg = f'Missing tag: "{COURSE_EMAIL_MESSAGE_BODY_TAG}"'
             log.warning(msg)
             raise ValidationError(msg)
         if template.find(COURSE_EMAIL_MESSAGE_BODY_TAG, index + 1) >= 0:
-            msg = 'Multiple instances of tag: "{}"'.format(COURSE_EMAIL_MESSAGE_BODY_TAG)
+            msg = f'Multiple instances of tag: "{COURSE_EMAIL_MESSAGE_BODY_TAG}"'
             log.warning(msg)
             raise ValidationError(msg)
         # TODO: add more validation here, including the set of known tags
@@ -66,7 +63,7 @@ class CourseEmailTemplateForm(forms.ModelForm):
             try:
                 CourseEmailTemplate.get_template(name)
                 # already exists, this is no good
-                raise ValidationError('Name of "{}" already exists, this must be unique.'.format(name))
+                raise ValidationError(f'Name of "{name}" already exists, this must be unique.')
             except CourseEmailTemplate.DoesNotExist:
                 # this is actually the successful validation
                 pass
@@ -76,34 +73,12 @@ class CourseEmailTemplateForm(forms.ModelForm):
 class CourseAuthorizationAdminForm(forms.ModelForm):
     """Input form for email enabling, allowing us to verify data."""
 
-    class Meta(object):  # pylint: disable=missing-docstring
+    class Meta:
         model = CourseAuthorization
+        fields = '__all__'  # noqa: DJ007
 
     def clean_course_id(self):
-        """Validate the course id"""
-        cleaned_id = self.cleaned_data["course_id"]
-        try:
-            course_key = CourseKey.from_string(cleaned_id)
-        except InvalidKeyError:
-            try:
-                course_key = SlashSeparatedCourseKey.from_deprecated_string(cleaned_id)
-            except InvalidKeyError:
-                msg = u'Course id invalid.'
-                msg += u' --- Entered course id was: "{0}". '.format(cleaned_id)
-                msg += 'Please recheck that you have supplied a valid course id.'
-                raise forms.ValidationError(msg)
-
-        if not modulestore().has_course(course_key):
-            msg = u'COURSE NOT FOUND'
-            msg += u' --- Entered course id was: "{0}". '.format(course_key.to_deprecated_string())
-            msg += 'Please recheck that you have supplied a valid course id.'
-            raise forms.ValidationError(msg)
-
-        # Now, try and discern if it is a Studio course - HTML editor doesn't work with XML courses
-        is_studio_course = modulestore().get_modulestore_type(course_key) != ModuleStoreEnum.Type.xml
-        if not is_studio_course:
-            msg = "Course Email feature is only available for courses authored in Studio. "
-            msg += '"{0}" appears to be an XML backed course.'.format(course_key.to_deprecated_string())
-            raise forms.ValidationError(msg)
-
-        return course_key
+        """
+        Validate the course id
+        """
+        return clean_course_id(self)

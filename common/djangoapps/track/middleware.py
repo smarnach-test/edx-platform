@@ -7,19 +7,18 @@ framework.
 
 
 import hashlib
-import hmac
 import json
 import logging
 import re
 import sys
 
+import six  # pylint: disable=unused-import  # noqa: F401
 from django.conf import settings
-from ipware.ip import get_ip
-
-from track import views
-from track import contexts
+from django.utils.deprecation import MiddlewareMixin
 from eventtracking import tracker
+from ipware.ip import get_client_ip
 
+from common.djangoapps.track import contexts, views
 
 log = logging.getLogger(__name__)
 
@@ -35,13 +34,13 @@ META_KEY_TO_CONTEXT_KEY = {
 }
 
 
-class TrackMiddleware(object):
+class TrackMiddleware(MiddlewareMixin):
     """
     Tracks all requests made, as well as setting up context for other server
     emitted events.
     """
 
-    def process_request(self, request):
+    def process_request(self, request):  # pylint: disable=missing-function-docstring
         try:
             self.enter_request_context(request)
 
@@ -82,7 +81,7 @@ class TrackMiddleware(object):
             event = event[:512]
 
             views.server_track(request, request.META['PATH_INFO'], event)
-        except:
+        except:  # pylint: disable=bare-except
             ## Why do we have the overly broad except?
             ##
             ## I added instrumentation so if we drop events on the
@@ -94,7 +93,7 @@ class TrackMiddleware(object):
             event = {'event-type': 'exception', 'exception': repr(sys.exc_info()[0])}
             try:
                 views.server_track(request, request.META['PATH_INFO'], event)
-            except:
+            except:  # pylint: disable=bare-except
                 # At this point, things are really broken. We really
                 # should fail return a 500 to the user here.  However,
                 # the interim decision is to just fail in order to be
@@ -139,8 +138,14 @@ class TrackMiddleware(object):
             'username': self.get_username(request),
             'ip': self.get_request_ip_address(request),
         }
-        for header_name, context_key in META_KEY_TO_CONTEXT_KEY.iteritems():
-            context[context_key] = request.META.get(header_name, '')
+        for header_name, context_key in META_KEY_TO_CONTEXT_KEY.items():
+            # HTTP headers may contain Latin1 characters. Decoding using Latin1 encoding here
+            # avoids encountering UnicodeDecodeError exceptions when these header strings are
+            # output to tracking logs.
+            context_value = request.META.get(header_name, '')
+            if isinstance(context_value, bytes):
+                context_value = context_value.decode('latin1')
+            context[context_key] = context_value
 
         # Google Analytics uses the clientId to keep track of unique visitors. A GA cookie looks like
         # this: _ga=GA1.2.1033501218.1368477899. The clientId is this part: 1033501218.1368477899.
@@ -158,30 +163,53 @@ class TrackMiddleware(object):
         )
 
     def get_session_key(self, request):
-        """ Gets and encrypts the Django session key from the request or an empty string if it isn't found."""
+        """
+        Gets a key suitable for representing this Django session for tracking purposes.
+
+        Returns an empty string if there is no active session.
+        """
         try:
-            return self.encrypt_session_key(request.session.session_key)
+            return self.substitute_session_key(request.session.session_key)
         except AttributeError:
+            # NB: This can hide a missing SECRET_KEY
             return ''
 
-    def encrypt_session_key(self, session_key):
-        """Encrypts a Django session key to another 32-character hex value."""
+    def substitute_session_key(self, session_key):
+        """
+        Deterministically generate a tracking session key from the real one.
+
+        If a session key is not provided, returns empty string.
+
+        The tracking session ID is a 32-character hexadecimal string (matching
+        Django session key format for convenience, and in case something
+        downstream makes assumptions.) The tracking ID does not allow recovery
+        of the original session key but will always be the same unless server
+        secrets are changed, and will be unique for each session key.
+        """
         if not session_key:
             return ''
-
-        # Follow the model of django.utils.crypto.salted_hmac() and
-        # django.contrib.sessions.backends.base._hash() but use MD5
-        # instead of SHA1 so that the result has the same length (32)
-        # as the original session_key.
-
-        # TODO: Switch to SHA224, which is secure.
-        # If necessary, drop the last little bit of the hash to make it the same length.
-        # Using a known-insecure hash to shorten is silly.
-        # Also, why do we need same length?
-        key_salt = "common.djangoapps.track" + self.__class__.__name__
-        key = hashlib.md5(key_salt + settings.SECRET_KEY).digest()
-        encrypted_session_key = hmac.new(key, msg=session_key, digestmod=hashlib.md5).hexdigest()
-        return encrypted_session_key
+        # Prevent confirmation attacks by using SECRET_KEY as a pepper (see
+        # ADR: docs/decisions/0008-secret-key-usage.rst).
+        # Tracking ID and session key will only be linkable
+        # by someone in possession of the pepper.
+        #
+        # This assumes that session_key is high-entropy and unpredictable (which
+        # it should be anyway.)
+        #
+        # Use SHAKE-128 from SHA-3 hash family to generate a hash of arbitrary
+        # length.
+        hasher = hashlib.shake_128()
+        # This is one of several uses of SECRET_KEY.
+        #
+        # Impact of exposure: Could result in identifying the tracking data for
+        # users if their actual session keys are already known.
+        #
+        # Rotation process: Can be rotated at will. Results in a one-time
+        # discontinuity in tracking metrics and should be accompanied by a
+        # heads-up to data researchers.
+        hasher.update(settings.SECRET_KEY.encode())
+        hasher.update(session_key.encode())
+        return hasher.hexdigest(16)
 
     def get_user_primary_key(self, request):
         """Gets the primary key of the logged in Django user"""
@@ -199,7 +227,7 @@ class TrackMiddleware(object):
 
     def get_request_ip_address(self, request):
         """Gets the IP address of the request"""
-        ip_address = get_ip(request)
+        ip_address = get_client_ip(request)[0]
         if ip_address is not None:
             return ip_address
         else:

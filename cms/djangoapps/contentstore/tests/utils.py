@@ -1,24 +1,23 @@
 '''
 Utilities for contentstore tests
 '''
+
+
 import json
-import textwrap
-from mock import Mock
 
 from django.conf import settings
-from django.contrib.auth.models import User
+from django.contrib.auth.models import User  # pylint: disable=imported-auth-user
 from django.test.client import Client
-from opaque_keys.edx.locations import SlashSeparatedCourseKey, AssetLocation
+from opaque_keys.edx.keys import AssetKey
 
-from contentstore.utils import reverse_url  # pylint: disable=import-error
-from student.models import Registration  # pylint: disable=import-error
-from xmodule.modulestore.split_mongo.split import SplitMongoModuleStore
+from cms.djangoapps.contentstore.utils import reverse_url
+from common.djangoapps.student.models import Registration
+from openedx.core.djangoapps.video_config.tests.test_transcripts_utils import YoutubeVideoHTMLResponse
 from xmodule.contentstore.django import contentstore
-from xmodule.modulestore import ModuleStoreEnum
 from xmodule.modulestore.inheritance import own_metadata
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
+from xmodule.modulestore.split_mongo.split import SplitMongoModuleStore
+from xmodule.modulestore.tests.django_utils import TEST_DATA_SPLIT_MODULESTORE, ModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory
-from xmodule.modulestore.xml_importer import import_course_from_xml
 from xmodule.modulestore.tests.utils import ProceduralCourseTestMixin
 
 TEST_DATA_DIR = settings.COMMON_TEST_DATA_ROOT
@@ -26,7 +25,7 @@ TEST_DATA_DIR = settings.COMMON_TEST_DATA_ROOT
 
 def parse_json(response):
     """Parse response, which is assumed to be json"""
-    return json.loads(response.content)
+    return json.loads(response.content.decode('utf-8'))
 
 
 def user(email):
@@ -43,12 +42,13 @@ class AjaxEnabledTestClient(Client):
     """
     Convenience class to make testing easier.
     """
+
     def ajax_post(self, path, data=None, content_type="application/json", **kwargs):
         """
         Convenience method for client post which serializes the data into json and sets the accept type
         to json
         """
-        if not isinstance(data, basestring):
+        if not isinstance(data, str):
             data = json.dumps(data or {})
         kwargs.setdefault("HTTP_X_REQUESTED_WITH", "XMLHttpRequest")
         kwargs.setdefault("HTTP_ACCEPT", "application/json")
@@ -72,6 +72,8 @@ class CourseTestCase(ProceduralCourseTestMixin, ModuleStoreTestCase):
     Base class for Studio tests that require a logged in user and a course.
     Also provides helper methods for manipulating and verifying the course.
     """
+    MODULESTORE = TEST_DATA_SPLIT_MODULESTORE
+
     def setUp(self):
         """
         These tests need a user in the DB so that the django Test Client can log them in.
@@ -81,7 +83,7 @@ class CourseTestCase(ProceduralCourseTestMixin, ModuleStoreTestCase):
         afterwards.
         """
 
-        self.user_password = super(CourseTestCase, self).setUp()
+        super().setUp()
 
         self.client = AjaxEnabledTestClient()
         self.client.login(username=self.user.username, password=self.user_password)
@@ -97,7 +99,6 @@ class CourseTestCase(ProceduralCourseTestMixin, ModuleStoreTestCase):
         client = AjaxEnabledTestClient()
         if authenticate:
             client.login(username=nonstaff.username, password=password)
-        nonstaff.is_authenticated = lambda: authenticate
         return client, nonstaff
 
     def reload_course(self):
@@ -121,159 +122,7 @@ class CourseTestCase(ProceduralCourseTestMixin, ModuleStoreTestCase):
     SEQUENTIAL = 'vertical_sequential'
     DRAFT_HTML = 'draft_html'
     DRAFT_VIDEO = 'draft_video'
-    LOCKED_ASSET_KEY = AssetLocation.from_deprecated_string('/c4x/edX/toy/asset/sample_static.txt')
-
-    def import_and_populate_course(self):
-        """
-        Imports the test toy course and populates it with additional test data
-        """
-        content_store = contentstore()
-        import_course_from_xml(self.store, self.user.id, TEST_DATA_DIR, ['toy'], static_content_store=content_store)
-        course_id = SlashSeparatedCourseKey('edX', 'toy', '2012_Fall')
-
-        # create an Orphan
-        # We had a bug where orphaned draft nodes caused export to fail. This is here to cover that case.
-        vertical = self.store.get_item(course_id.make_usage_key('vertical', self.TEST_VERTICAL), depth=1)
-        vertical.location = vertical.location.replace(name='no_references')
-        self.store.update_item(vertical, self.user.id, allow_not_found=True)
-        orphan_vertical = self.store.get_item(vertical.location)
-        self.assertEqual(orphan_vertical.location.name, 'no_references')
-        self.assertEqual(len(orphan_vertical.children), len(vertical.children))
-
-        # create an orphan vertical and html; we already don't try to import
-        # the orphaned vertical, but we should make sure we don't import
-        # the orphaned vertical's child html, too
-        orphan_draft_vertical = self.store.create_item(
-            self.user.id, course_id, 'vertical', self.ORPHAN_DRAFT_VERTICAL
-        )
-        orphan_draft_html = self.store.create_item(
-            self.user.id, course_id, 'html', self.ORPHAN_DRAFT_HTML
-        )
-        orphan_draft_vertical.children.append(orphan_draft_html.location)
-        self.store.update_item(orphan_draft_vertical, self.user.id)
-
-        # create a Draft vertical
-        vertical = self.store.get_item(course_id.make_usage_key('vertical', self.TEST_VERTICAL), depth=1)
-        draft_vertical = self.store.convert_to_draft(vertical.location, self.user.id)
-        self.assertTrue(self.store.has_published_version(draft_vertical))
-
-        # create a Private (draft only) vertical
-        private_vertical = self.store.create_item(self.user.id, course_id, 'vertical', self.PRIVATE_VERTICAL)
-        self.assertFalse(self.store.has_published_version(private_vertical))
-
-        # create a Published (no draft) vertical
-        public_vertical = self.store.create_item(self.user.id, course_id, 'vertical', self.PUBLISHED_VERTICAL)
-        public_vertical = self.store.publish(public_vertical.location, self.user.id)
-        self.assertTrue(self.store.has_published_version(public_vertical))
-
-        # add the new private and new public as children of the sequential
-        sequential = self.store.get_item(course_id.make_usage_key('sequential', self.SEQUENTIAL))
-        sequential.children.append(private_vertical.location)
-        sequential.children.append(public_vertical.location)
-        self.store.update_item(sequential, self.user.id)
-
-        # create an html and video component to make drafts:
-        draft_html = self.store.create_item(self.user.id, course_id, 'html', self.DRAFT_HTML)
-        draft_video = self.store.create_item(self.user.id, course_id, 'video', self.DRAFT_VIDEO)
-
-        # add them as children to the public_vertical
-        public_vertical.children.append(draft_html.location)
-        public_vertical.children.append(draft_video.location)
-        self.store.update_item(public_vertical, self.user.id)
-        # publish changes to vertical
-        self.store.publish(public_vertical.location, self.user.id)
-        # convert html/video to draft
-        self.store.convert_to_draft(draft_html.location, self.user.id)
-        self.store.convert_to_draft(draft_video.location, self.user.id)
-
-        # lock an asset
-        content_store.set_attr(self.LOCKED_ASSET_KEY, 'locked', True)
-
-        # create a non-portable link - should be rewritten in new courses
-        html_module = self.store.get_item(course_id.make_usage_key('html', 'nonportable'))
-        new_data = html_module.data = html_module.data.replace(
-            '/static/',
-            '/c4x/{0}/{1}/asset/'.format(course_id.org, course_id.course)
-        )
-        self.store.update_item(html_module, self.user.id)
-
-        html_module = self.store.get_item(html_module.location)
-        self.assertEqual(new_data, html_module.data)
-
-        return course_id
-
-    def check_populated_course(self, course_id):
-        """
-        Verifies the content of the given course, per data that was populated in import_and_populate_course
-        """
-        items = self.store.get_items(
-            course_id,
-            qualifiers={'category': 'vertical'},
-            revision=ModuleStoreEnum.RevisionOption.published_only
-        )
-        self.check_verticals(items)
-
-        def verify_item_publish_state(item, publish_state):
-            """Verifies the publish state of the item is as expected."""
-            self.assertEqual(self.store.has_published_version(item), publish_state)
-
-        def get_and_verify_publish_state(item_type, item_name, publish_state):
-            """
-            Gets the given item from the store and verifies the publish state
-            of the item is as expected.
-            """
-            item = self.store.get_item(course_id.make_usage_key(item_type, item_name))
-            verify_item_publish_state(item, publish_state)
-            return item
-
-        # verify draft vertical has a published version with published children
-        vertical = get_and_verify_publish_state('vertical', self.TEST_VERTICAL, True)
-        for child in vertical.get_children():
-            verify_item_publish_state(child, True)
-
-        # verify that it has a draft too
-        self.assertTrue(getattr(vertical, "is_draft", False))
-
-        # make sure that we don't have a sequential that is in draft mode
-        sequential = get_and_verify_publish_state('sequential', self.SEQUENTIAL, True)
-        self.assertFalse(getattr(sequential, "is_draft", False))
-
-        # verify that we have the private vertical
-        private_vertical = get_and_verify_publish_state('vertical', self.PRIVATE_VERTICAL, False)
-
-        # verify that we have the public vertical
-        public_vertical = get_and_verify_publish_state('vertical', self.PUBLISHED_VERTICAL, True)
-
-        # verify that we have the draft html
-        draft_html = self.store.get_item(course_id.make_usage_key('html', self.DRAFT_HTML))
-        self.assertTrue(getattr(draft_html, 'is_draft', False))
-
-        # verify that we have the draft video
-        draft_video = self.store.get_item(course_id.make_usage_key('video', self.DRAFT_VIDEO))
-        self.assertTrue(getattr(draft_video, 'is_draft', False))
-
-        # verify verticals are children of sequential
-        for vert in [vertical, private_vertical, public_vertical]:
-            self.assertIn(vert.location, sequential.children)
-
-        # verify draft html is the child of the public vertical
-        self.assertIn(draft_html.location, public_vertical.children)
-
-        # verify draft video is the child of the public vertical
-        self.assertIn(draft_video.location, public_vertical.children)
-
-        # verify textbook exists
-        course = self.store.get_course(course_id)
-        self.assertGreater(len(course.textbooks), 0)
-
-        # verify asset attributes of locked asset key
-        self.assertAssetsEqual(self.LOCKED_ASSET_KEY, self.LOCKED_ASSET_KEY.course_key, course_id)
-
-        # verify non-portable links are rewritten
-        html_module = self.store.get_item(course_id.make_usage_key('html', 'nonportable'))
-        self.assertIn('/static/foo.jpg', html_module.data)
-
-        return course
+    LOCKED_ASSET_KEY = AssetKey.from_string('asset-v1:edX+toy+2012_Fall+type@asset+block@sample_static.html')
 
     def assertCoursesEqual(self, course1_id, course2_id):
         """
@@ -281,12 +130,12 @@ class CourseTestCase(ProceduralCourseTestMixin, ModuleStoreTestCase):
         """
         course1_items = self.store.get_items(course1_id)
         course2_items = self.store.get_items(course2_id)
-        self.assertGreater(len(course1_items), 0)  # ensure it found content instead of [] == []
+        self.assertGreater(len(course1_items), 0)  # ensure it found content instead of [] == []  # noqa: PT009
         if len(course1_items) != len(course2_items):
-            course1_block_ids = set([item.location.block_id for item in course1_items])
-            course2_block_ids = set([item.location.block_id for item in course2_items])
+            course1_block_ids = {item.location.block_id for item in course1_items}
+            course2_block_ids = {item.location.block_id for item in course2_items}
             raise AssertionError(
-                u"Course1 extra blocks: {}; course2 extra blocks: {}".format(
+                "Course1 extra blocks: {}; course2 extra blocks: {}".format(  # noqa: UP032
                     course1_block_ids - course2_block_ids, course2_block_ids - course1_block_ids
                 )
             )
@@ -302,34 +151,39 @@ class CourseTestCase(ProceduralCourseTestMixin, ModuleStoreTestCase):
             course2_item = self.store.get_item(course2_item_loc)
 
             # compare published state
-            self.assertEqual(
+            self.assertEqual(  # noqa: PT009
                 self.store.has_published_version(course1_item),
                 self.store.has_published_version(course2_item)
             )
 
             # compare data
-            self.assertEqual(hasattr(course1_item, 'data'), hasattr(course2_item, 'data'))
+            self.assertEqual(hasattr(course1_item, 'data'), hasattr(course2_item, 'data'))  # noqa: PT009
             if hasattr(course1_item, 'data'):
-                self.assertEqual(course1_item.data, course2_item.data)
+                self.assertEqual(course1_item.data, course2_item.data)  # noqa: PT009
 
             # compare meta-data
-            self.assertEqual(own_metadata(course1_item), own_metadata(course2_item))
+            course1_metadata = own_metadata(course1_item)
+            course2_metadata = own_metadata(course2_item)
+            # Omit edx_video_id as it can be different in case of extrnal video imports.
+            course1_metadata.pop('edx_video_id', None)
+            course2_metadata.pop('edx_video_id', None)
+            self.assertEqual(course1_metadata, course2_metadata)  # noqa: PT009
 
             # compare children
-            self.assertEqual(course1_item.has_children, course2_item.has_children)
+            self.assertEqual(course1_item.has_children, course2_item.has_children)  # noqa: PT009
             if course1_item.has_children:
                 expected_children = []
                 for course1_item_child in course1_item.children:
                     expected_children.append(
                         course2_id.make_usage_key(course1_item_child.block_type, course1_item_child.block_id)
                     )
-                self.assertEqual(expected_children, course2_item.children)
+                self.assertEqual(expected_children, course2_item.children)  # noqa: PT009
 
         # compare assets
         content_store = self.store.contentstore
         course1_assets, count_course1_assets = content_store.get_all_content_for_course(course1_id)
         _, count_course2_assets = content_store.get_all_content_for_course(course2_id)
-        self.assertEqual(count_course1_assets, count_course2_assets)
+        self.assertEqual(count_course1_assets, count_course2_assets)  # noqa: PT009
         for asset in course1_assets:
             asset_son = asset.get('content_son', asset['_id'])
             self.assertAssetsEqual(asset_son, course1_id, course2_id)
@@ -337,10 +191,10 @@ class CourseTestCase(ProceduralCourseTestMixin, ModuleStoreTestCase):
     def check_verticals(self, items):
         """ Test getting the editing HTML for each vertical. """
         # assert is here to make sure that the course being tested actually has verticals (units) to check.
-        self.assertGreater(len(items), 0, "Course has no verticals (units) to check")
-        for descriptor in items:
-            resp = self.client.get_html(get_url('container_handler', descriptor.location))
-            self.assertEqual(resp.status_code, 200)
+        self.assertGreater(len(items), 0, "Course has no verticals (units) to check")  # noqa: PT009
+        for block in items:
+            resp = self.client.get_html(get_url('container_handler', block.location))
+            self.assertEqual(resp.status_code, 200)  # noqa: PT009
 
     def assertAssetsEqual(self, asset_son, course1_id, course2_id):
         """Verifies the asset of the given key has the same attributes in both given courses."""
@@ -349,41 +203,40 @@ class CourseTestCase(ProceduralCourseTestMixin, ModuleStoreTestCase):
         filename = asset_son.block_id if hasattr(asset_son, 'block_id') else asset_son['name']
         course1_asset_attrs = content_store.get_attrs(course1_id.make_asset_key(category, filename))
         course2_asset_attrs = content_store.get_attrs(course2_id.make_asset_key(category, filename))
-        self.assertEqual(len(course1_asset_attrs), len(course2_asset_attrs))
-        for key, value in course1_asset_attrs.iteritems():
+        self.assertEqual(len(course1_asset_attrs), len(course2_asset_attrs))  # noqa: PT009
+        for key, value in course1_asset_attrs.items():
             if key in ['_id', 'filename', 'uploadDate', 'content_son', 'thumbnail_location']:
                 pass
             else:
-                self.assertEqual(value, course2_asset_attrs[key])
+                self.assertEqual(value, course2_asset_attrs[key])  # noqa: PT009
 
 
-def mock_requests_get(*args, **kwargs):
+class HTTPGetResponse:
     """
-    Returns mock responses for the youtube API.
+    Generic object used to return results from a mock patch to an HTTP GET request
     """
-    # pylint: disable=unused-argument
-    response_transcript_list = """
-    <transcript_list>
-        <track id="1" name="Custom" lang_code="en" />
-        <track id="0" name="Custom1" lang_code="en-GB"/>
-    </transcript_list>
+
+    def __init__(self, status_code, response_string):
+        self.status_code = status_code
+        self.text = response_string
+        self.content = response_string.encode('utf-8')
+
+
+def setup_caption_responses(mock_get, language_code, caption_response_string, track_status_code=200):
     """
-    response_transcript = textwrap.dedent("""
-    <transcript>
-        <text start="100" dur="100">subs #1</text>
-        <text start="200" dur="40">subs #2</text>
-        <text start="240" dur="140">subs #3</text>
-    </transcript>
-    """)
+    When fetching youtube captions, two calls to requests.get() are required. The first fetches a
+    captions URL (link) from the video page, applicable to the selected language track. The second
+    fetches caption timing information from that track's captions URL.
 
-    if kwargs == {'params': {'lang': 'en', 'v': 'good_id_2'}}:
-        return Mock(status_code=200, text='')
-    elif kwargs == {'params': {'type': 'list', 'v': 'good_id_2'}}:
-        return Mock(status_code=200, text=response_transcript_list, content=response_transcript_list)
-    elif kwargs == {'params': {'lang': 'en', 'v': 'good_id_2', 'name': 'Custom'}}:
-        return Mock(status_code=200, text=response_transcript, content=response_transcript)
-
-    return Mock(status_code=404, text='')
+    This helper method assumes that the two operations are performed in order, and is used in conjunction
+    with mock patch() operations to return appropriate results for each of the two get operations.
+    """
+    caption_link_response = YoutubeVideoHTMLResponse.with_caption_track(language_code)
+    caption_track_response = HTTPGetResponse(track_status_code, caption_response_string)
+    mock_get.side_effect = [
+        caption_link_response,
+        caption_track_response,
+    ]
 
 
 def get_url(handler_name, key_value, key_name='usage_key_string', kwargs=None):
@@ -391,3 +244,13 @@ def get_url(handler_name, key_value, key_name='usage_key_string', kwargs=None):
     Helper function for getting HTML for a page in Studio and checking that it does not error.
     """
     return reverse_url(handler_name, key_name, key_value, kwargs)
+
+
+def routed_actions(view_func):
+    """
+    Return the method-to-action map a viewset mount was registered with.
+
+    DRF adds a ``head`` entry to a mount's ``actions`` the first time it serves
+    a GET, so two mounts compared directly differ by which was requested first.
+    """
+    return {method: action for method, action in view_func.actions.items() if method != 'head'}

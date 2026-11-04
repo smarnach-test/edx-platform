@@ -1,52 +1,30 @@
 """
 URLs for the credit app.
 """
-from django.conf.urls import patterns, url, include
 
-from openedx.core.djangoapps.credit import views, routers
-from openedx.core.djangoapps.credit.api.provider import get_credit_provider_info
 
-PROVIDER_ID_PATTERN = r'(?P<provider_id>[^/]+)'
+from django.urls import include, path, re_path
 
-V1_URLS = patterns(
-    '',
+from openedx.core.djangoapps.credit import models, routers, views
 
-    url(
-        r'^providers/$',
-        views.get_providers_detail,
-        name='providers_detail'
-    ),
+PROVIDER_ID_PATTERN = fr'(?P<provider_id>{models.CREDIT_PROVIDER_ID_REGEX})'
 
-    url(
-        r'^providers/{provider_id}/$'.format(provider_id=PROVIDER_ID_PATTERN),
-        get_credit_provider_info,
-        name='get_provider_info'
-    ),
+PROVIDER_URLS = [
+    path('request/', views.CreditProviderRequestCreateView.as_view(), name='create_request'),
+    re_path(r'^callback/?$', views.CreditProviderCallbackView.as_view(), name='provider_callback'),
+]
 
-    url(
-        r'^providers/{provider_id}/request/$'.format(provider_id=PROVIDER_ID_PATTERN),
-        views.create_credit_request,
-        name='create_request'
-    ),
-
-    url(
-        r'^providers/{provider_id}/callback/?$'.format(provider_id=PROVIDER_ID_PATTERN),
-        views.credit_provider_callback,
-        name='provider_callback'
-    ),
-
-    url(
-        r'^eligibility/$',
-        views.get_eligibility_for_user,
-        name='eligibility_details'
-    ),
-)
+V1_URLS = [
+    re_path(fr'^providers/{PROVIDER_ID_PATTERN}/', include(PROVIDER_URLS)),
+    path('eligibility/', views.CreditEligibilityView.as_view(), name='eligibility_details'),
+]
 
 router = routers.SimpleRouter()  # pylint: disable=invalid-name
 router.register(r'courses', views.CreditCourseViewSet)
+router.register(r'providers', views.CreditProviderViewSet)
 V1_URLS += router.urls
 
-urlpatterns = patterns(
-    '',
-    url(r'^v1/', include(V1_URLS)),
-)
+app_name = 'credit'
+urlpatterns = [
+    path('v1/', include(V1_URLS)),
+]

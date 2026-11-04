@@ -3,38 +3,19 @@ Helper functions for managing interactions with the LTI outcomes service defined
 in LTI v1.1.
 """
 
-from hashlib import sha1
-from base64 import b64encode
+
 import logging
 import uuid
 
+import requests
+import requests_oauthlib
 from lxml import etree
 from lxml.builder import ElementMaker
-from oauthlib.oauth1 import Client
-from oauthlib.common import to_unicode
-import requests
 from requests.exceptions import RequestException
-import requests_oauthlib
 
-from lti_provider.models import GradedAssignment, OutcomeService
+from lms.djangoapps.lti_provider.models import GradedAssignment, OutcomeService
 
 log = logging.getLogger("edx.lti_provider")
-
-
-class BodyHashClient(Client):
-    """
-    OAuth1 Client that adds body hash support (required by LTI).
-
-    The default Client doesn't support body hashes, so we have to add it ourselves.
-    The spec:
-        https://oauth.googlecode.com/svn/spec/ext/body_hash/1.0/oauth-bodyhash.html
-    """
-    def get_oauth_params(self, request):
-        """Override get_oauth_params to add the body hash."""
-        params = super(BodyHashClient, self).get_oauth_params(request)
-        digest = b64encode(sha1(request.body.encode('UTF-8')).digest())
-        params.append((u'oauth_body_hash', to_unicode(digest)))
-        return params
 
 
 def store_outcome_parameters(request_params, user, lti_consumer):
@@ -56,7 +37,7 @@ def store_outcome_parameters(request_params, user, lti_consumer):
             # the LTI consumer that the request comes from then we may be able
             # to figure out the result service URL. As it stands, though, this
             # is a badly-formed LTI request
-            log.warn(
+            log.warning(
                 "Outcome Service: lis_outcome_service_url parameter missing "
                 "from scored assignment; we will be unable to return a score. "
                 "Request parameters: %s",
@@ -89,25 +70,24 @@ def generate_replace_result_xml(result_sourcedid, score):
     consumer. The format of this message is defined in the LTI 1.1 spec.
     """
     # Pylint doesn't recognize members in the LXML module
-    # pylint: disable=no-member
     elem = ElementMaker(nsmap={None: 'http://www.imsglobal.org/services/ltiv1p1/xsd/imsoms_v1p0'})
-    xml = elem.imsx_POXEnvelopeRequest(
-        elem.imsx_POXHeader(
-            elem.imsx_POXRequestHeaderInfo(
-                elem.imsx_version('V1.0'),
-                elem.imsx_messageIdentifier(str(uuid.uuid4()))
+    xml = elem.imsx_POXEnvelopeRequest(  # pylint: disable=no-member
+        elem.imsx_POXHeader(  # pylint: disable=no-member
+            elem.imsx_POXRequestHeaderInfo(  # pylint: disable=no-member
+                elem.imsx_version('V1.0'),  # pylint: disable=no-member
+                elem.imsx_messageIdentifier(str(uuid.uuid4()))  # pylint: disable=no-member
             )
         ),
-        elem.imsx_POXBody(
-            elem.replaceResultRequest(
-                elem.resultRecord(
-                    elem.sourcedGUID(
-                        elem.sourcedId(result_sourcedid)
+        elem.imsx_POXBody(  # pylint: disable=no-member
+            elem.replaceResultRequest(  # pylint: disable=no-member
+                elem.resultRecord(  # pylint: disable=no-member
+                    elem.sourcedGUID(  # pylint: disable=no-member
+                        elem.sourcedId(result_sourcedid)  # pylint: disable=no-member
                     ),
-                    elem.result(
-                        elem.resultScore(
-                            elem.language('en'),
-                            elem.textString(str(score))
+                    elem.result(  # pylint: disable=no-member
+                        elem.resultScore(  # pylint: disable=no-member
+                            elem.language('en'),  # pylint: disable=no-member
+                            elem.textString(str(score))  # pylint: disable=no-member
                         )
                     )
                 )
@@ -117,7 +97,7 @@ def generate_replace_result_xml(result_sourcedid, score):
     return etree.tostring(xml, xml_declaration=True, encoding='UTF-8')
 
 
-def get_assignments_for_problem(problem_descriptor, user_id, course_key):
+def get_assignments_for_problem(problem_block, user_id, course_key):
     """
     Trace the parent hierarchy from a given problem to find all blocks that
     correspond to graded assignment launches for this user. A problem may
@@ -127,13 +107,13 @@ def get_assignments_for_problem(problem_descriptor, user_id, course_key):
     problem and as a problem in a vertical, for example).
 
     Returns a list of GradedAssignment objects that are associated with the
-    given descriptor for the current user.
+    given block for the current user.
     """
     locations = []
-    current_descriptor = problem_descriptor
-    while current_descriptor:
-        locations.append(current_descriptor.location)
-        current_descriptor = current_descriptor.get_parent()
+    current_block = problem_block
+    while current_block:
+        locations.append(current_block.location)
+        current_block = current_block.get_parent()
     assignments = GradedAssignment.objects.filter(
         user=user_id, course_key=course_key, usage_key__in=locations
     )
@@ -184,17 +164,12 @@ def sign_and_send_replace_result(assignment, xml):
     consumer_secret = consumer.consumer_secret
 
     # Calculate the OAuth signature for the replace_result message.
-    # TODO: According to the LTI spec, there should be an additional
-    # oauth_body_hash field that contains a digest of the replace_result
-    # message. Testing with Canvas throws an error when this field is included.
-    # This code may need to be revisited once we test with other LMS platforms,
-    # and confirm whether there's a bug in Canvas.
     oauth = requests_oauthlib.OAuth1(
         consumer_key,
         consumer_secret,
         signature_method='HMAC-SHA1',
-        client_class=BodyHashClient,
-        force_include_body=True
+        force_include_body=True,
+        decoding=None,
     )
 
     headers = {'content-type': 'application/xml'}
@@ -215,7 +190,6 @@ def check_replace_result_response(response):
     False if not. The format of this message is defined in the LTI 1.1 spec.
     """
     # Pylint doesn't recognize members in the LXML module
-    # pylint: disable=no-member
     if response.status_code != 200:
         log.error(
             "Outcome service response: Unexpected status code %s",

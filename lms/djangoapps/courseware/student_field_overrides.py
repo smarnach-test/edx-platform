@@ -2,10 +2,14 @@
 API related to providing field overrides for individual students.  This is used
 by the individual due dates feature.
 """
+
+
 import json
 
+from lms.djangoapps.courseware.models import StudentFieldOverride
+from openedx.core.lib.xblock_utils import is_xblock_aside
+
 from .field_overrides import FieldOverrideProvider
-from .models import StudentFieldOverride
 
 
 class IndividualStudentOverrideProvider(FieldOverrideProvider):
@@ -18,7 +22,7 @@ class IndividualStudentOverrideProvider(FieldOverrideProvider):
         return get_override_for_user(self.user, block, name, default)
 
     @classmethod
-    def enabled_for(cls, course):
+    def enabled_for(cls, course):  # pylint: disable=arguments-differ
         """This simple override provider is always enabled"""
         return True
 
@@ -43,9 +47,18 @@ def _get_overrides_for_user(user, block):
     Gets all of the individual student overrides for given user and block.
     Returns a dictionary of field override values keyed by field name.
     """
+    if (
+        hasattr(block, "scope_ids") and
+        hasattr(block.scope_ids, "usage_id") and
+        is_xblock_aside(block.scope_ids.usage_id)
+    ):
+        location = block.scope_ids.usage_id.usage_key
+    else:
+        location = block.location
+
     query = StudentFieldOverride.objects.filter(
-        course_id=block.runtime.course_id,
-        location=block.location,
+        course_id=block.scope_ids.usage_id.context_key,
+        location=location,
         student_id=user.id,
     )
     overrides = {}
@@ -63,7 +76,7 @@ def override_field_for_user(user, block, name, value):
     value to set for the given field.
     """
     override, _ = StudentFieldOverride.objects.get_or_create(
-        course_id=block.runtime.course_id,
+        course_id=block.scope_ids.usage_id.context_key,
         location=block.location,
         student_id=user.id,
         field=name)
@@ -81,7 +94,7 @@ def clear_override_for_user(user, block, name):
     """
     try:
         StudentFieldOverride.objects.get(
-            course_id=block.runtime.course_id,
+            course_id=block.scope_ids.usage_id.context_key,
             student_id=user.id,
             location=block.location,
             field=name).delete()

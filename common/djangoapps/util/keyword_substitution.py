@@ -18,8 +18,10 @@ Usage:
         - CMS: Not called
 """
 
-from django.contrib.auth.models import User
-from student.models import anonymous_id_for_user
+
+from django.contrib.auth.models import User  # pylint: disable=imported-auth-user
+
+from common.djangoapps.student.models import anonymous_id_for_user
 
 
 def anonymous_id_from_user_id(user_id):
@@ -48,7 +50,7 @@ def substitute_keywords(string, user_id, context):
         '%%COURSE_END_DATE%%': lambda: context.get('course_end_date'),
     }
 
-    for key in KEYWORD_FUNCTION_MAP.keys():
+    for key in KEYWORD_FUNCTION_MAP.keys():  # pylint: disable=consider-iterating-dictionary
         if key in string:
             substitutor = KEYWORD_FUNCTION_MAP[key]
             string = string.replace(key, substitutor())

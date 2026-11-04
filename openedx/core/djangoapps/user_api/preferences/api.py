@@ -1,27 +1,61 @@
 """
 API for managing user preferences.
 """
+
+
 import logging
-import analytics
-from eventtracking import tracker
 
 from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import IntegrityError
-from django.utils.translation import ugettext as _
-from django.utils.translation import ugettext_noop
+from django.utils.translation import gettext as _
+from django.utils.translation import gettext_noop
+from django_countries import countries
+from pytz import common_timezones, common_timezones_set, country_timezones
 
-from student.models import User, UserProfile
-from request_cache import get_request_or_stub
-from ..errors import (
-    UserAPIInternalError, UserAPIRequestError, UserNotFound, UserNotAuthorized,
-    PreferenceValidationError, PreferenceUpdateError
+from common.djangoapps.student.models import User, UserProfile
+from common.djangoapps.track import segment
+from openedx.core.lib.time_zone_utils import get_display_time_zone
+
+from ..errors import (  # pylint: disable=unused-import
+    CountryCodeError,  # noqa: F401
+    PreferenceUpdateError,
+    PreferenceValidationError,
+    UserAPIInternalError,
+    UserAPIRequestError,
+    UserNotAuthorized,
+    UserNotFound,
 )
-from ..helpers import intercept_errors
+from ..helpers import intercept_errors, serializer_is_dirty
 from ..models import UserOrgTag, UserPreference
-from ..serializers import UserSerializer, RawUserPreferenceSerializer
+from ..serializers import RawUserPreferenceSerializer
 
 log = logging.getLogger(__name__)
+
+
+@intercept_errors(UserAPIInternalError, ignore_errors=[UserAPIRequestError])
+def has_user_preference(requesting_user, preference_key, username=None):
+    """
+    Returns True if the user has preference with the specified key.
+
+    Args:
+        requesting_user (User): The user requesting the user preference check. Only the user with username
+            `username` or users with "is_staff" privileges can access the preferences.
+        preference_key (str): The key for the user preference.
+        username (str): Optional username for which to look up the preferences. If not specified,
+            `requesting_user.username` is assumed.
+
+    Returns:
+         (bool): Returns True if the user has preference with the specified key and False otherwise.
+
+    Raises:
+         UserNotFound: no user with username `username` exists (or `requesting_user.username` if
+            `username` is not specified)
+         UserNotAuthorized: the requesting_user does not have access to the user preference.
+         UserAPIInternalError: the operation failed due to an unexpected error.
+    """
+    existing_user = _get_authorized_user(requesting_user, username, allow_staff=True)
+    return UserPreference.has_value(existing_user, preference_key)
 
 
 @intercept_errors(UserAPIInternalError, ignore_errors=[UserAPIRequestError])
@@ -45,7 +79,7 @@ def get_user_preference(requesting_user, preference_key, username=None):
          UserNotAuthorized: the requesting_user does not have access to the user preference.
          UserAPIInternalError: the operation failed due to an unexpected error.
     """
-    existing_user = _get_user(requesting_user, username, allow_staff=True)
+    existing_user = _get_authorized_user(requesting_user, username, allow_staff=True)
     return UserPreference.get_value(existing_user, preference_key)
 
 
@@ -68,24 +102,13 @@ def get_user_preferences(requesting_user, username=None):
          UserNotAuthorized: the requesting_user does not have access to the user preference.
          UserAPIInternalError: the operation failed due to an unexpected error.
     """
-    existing_user = _get_user(requesting_user, username, allow_staff=True)
-
-    # Django Rest Framework V3 uses the current request to version
-    # hyperlinked URLS, so we need to retrieve the request and pass
-    # it in the serializer's context (otherwise we get an AssertionError).
-    # We're retrieving the request from the cache rather than passing it in
-    # as an argument because this is an implementation detail of how we're
-    # serializing data, which we want to encapsulate in the API call.
-    context = {
-        "request": get_request_or_stub()
-    }
-    user_serializer = UserSerializer(existing_user, context=context)
-    return user_serializer.data["preferences"]
+    existing_user = _get_authorized_user(requesting_user, username, allow_staff=True)
+    return UserPreference.get_all_preferences(existing_user)
 
 
 @intercept_errors(UserAPIInternalError, ignore_errors=[UserAPIRequestError])
-def update_user_preferences(requesting_user, update, username=None):
-    """Update the user preferences for the given username.
+def update_user_preferences(requesting_user, update, user=None):
+    """Update the user preferences for the given user.
 
     Note:
         It is up to the caller of this method to enforce the contract that this method is only called
@@ -98,8 +121,8 @@ def update_user_preferences(requesting_user, update, username=None):
             Some notes:
                 Values are expected to be strings. Non-string values will be converted to strings.
                 Null values for a preference will be treated as a request to delete the key in question.
-        username (str): Optional username specifying which account should be updated. If not specified,
-            `requesting_user.username` is assumed.
+        user (str/User): Optional, either username string or user object specifying which account should be updated.
+                If not specified, `requesting_user.username` is assumed.
 
     Raises:
         UserNotFound: no user with username `username` exists (or `requesting_user.username` if
@@ -110,7 +133,10 @@ def update_user_preferences(requesting_user, update, username=None):
         PreferenceUpdateError: the operation failed when performing the update.
         UserAPIInternalError: the operation failed due to an unexpected error.
     """
-    existing_user = _get_user(requesting_user, username)
+    if not user or isinstance(user, str):
+        user = _get_authorized_user(requesting_user, user)
+    else:
+        _check_authorized(requesting_user, user.username)
 
     # First validate each preference setting
     errors = {}
@@ -118,8 +144,9 @@ def update_user_preferences(requesting_user, update, username=None):
     for preference_key in update.keys():
         preference_value = update[preference_key]
         if preference_value is not None:
+            preference_value = str(preference_value)
             try:
-                serializer = create_user_preference_serializer(existing_user, preference_key, preference_value)
+                serializer = create_user_preference_serializer(user, preference_key, preference_value)
                 validate_user_preference_serializer(serializer, preference_key, preference_value)
                 serializers[preference_key] = serializer
             except PreferenceValidationError as error:
@@ -134,11 +161,14 @@ def update_user_preferences(requesting_user, update, username=None):
     for preference_key in update.keys():
         preference_value = update[preference_key]
         if preference_value is not None:
+            preference_value = str(preference_value)
             try:
                 serializer = serializers[preference_key]
-                serializer.save()
+
+                if serializer_is_dirty(serializer):
+                    serializer.save()
             except Exception as error:
-                raise _create_preference_update_error(preference_key, preference_value, error)
+                raise _create_preference_update_error(preference_key, preference_value, error)  # pylint: disable=raise-missing-from  # noqa: B904
         else:
             delete_user_preference(requesting_user, preference_key)
 
@@ -155,7 +185,7 @@ def set_user_preference(requesting_user, preference_key, preference_value, usern
         requesting_user (User): The user requesting to modify account information. Only the user with username
             'username' has permissions to modify account information.
         preference_key (str): The key for the user preference.
-        preference_value (str): The value to be stored. Non-string values will be converted to strings.
+        preference_value (str): The value to be stored. Non-string values are converted to strings.
         username (str): Optional username specifying which account should be updated. If not specified,
             `requesting_user.username` is assumed.
 
@@ -168,13 +198,17 @@ def set_user_preference(requesting_user, preference_key, preference_value, usern
         PreferenceUpdateError: the operation failed when performing the update.
         UserAPIInternalError: the operation failed due to an unexpected error.
     """
-    existing_user = _get_user(requesting_user, username)
+    existing_user = _get_authorized_user(requesting_user, username)
+    if preference_value is not None:
+        preference_value = str(preference_value)
     serializer = create_user_preference_serializer(existing_user, preference_key, preference_value)
     validate_user_preference_serializer(serializer, preference_key, preference_value)
-    try:
-        serializer.save()
-    except Exception as error:
-        raise _create_preference_update_error(preference_key, preference_value, error)
+
+    if serializer_is_dirty(serializer):
+        try:
+            serializer.save()
+        except Exception as error:
+            raise _create_preference_update_error(preference_key, preference_value, error)  # pylint: disable=raise-missing-from  # noqa: B904
 
 
 @intercept_errors(UserAPIInternalError, ignore_errors=[UserAPIRequestError])
@@ -203,7 +237,7 @@ def delete_user_preference(requesting_user, preference_key, username=None):
         PreferenceUpdateError: the operation failed when performing the update.
         UserAPIInternalError: the operation failed due to an unexpected error.
     """
-    existing_user = _get_user(requesting_user, username)
+    existing_user = _get_authorized_user(requesting_user, username)
     try:
         user_preference = UserPreference.objects.get(user=existing_user, key=preference_key)
     except ObjectDoesNotExist:
@@ -212,11 +246,11 @@ def delete_user_preference(requesting_user, preference_key, username=None):
     try:
         user_preference.delete()
     except Exception as error:
-        raise PreferenceUpdateError(
-            developer_message=u"Delete failed for user preference '{preference_key}': {error}".format(
+        raise PreferenceUpdateError(  # pylint: disable=raise-missing-from  # noqa: B904
+            developer_message="Delete failed for user preference '{preference_key}': {error}".format(  # noqa: UP032
                 preference_key=preference_key, error=error
             ),
-            user_message=_(u"Delete failed for user preference '{preference_key}'.").format(
+            user_message=_("Delete failed for user preference '{preference_key}'.").format(
                 preference_key=preference_key
             ),
         )
@@ -250,7 +284,7 @@ def update_email_opt_in(user, org, opt_in):
     try:
         user_profile = UserProfile.objects.get(user=user)
     except ObjectDoesNotExist:
-        raise UserNotFound()
+        raise UserNotFound()  # pylint: disable=raise-missing-from  # noqa: B904
     if user_profile.requires_parental_consent(
         age_limit=getattr(settings, 'EMAIL_OPTIN_MINIMUM_AGE', 13),
         default_requires_consent=False,
@@ -264,7 +298,9 @@ def update_email_opt_in(user, org, opt_in):
         if hasattr(settings, 'LMS_SEGMENT_KEY') and settings.LMS_SEGMENT_KEY:
             _track_update_email_opt_in(user.id, org, opt_in)
     except IntegrityError as err:
-        log.warn(u"Could not update organization wide preference due to IntegrityError: {}".format(err.message))
+        log.warning(
+            f"Could not update organization wide preference due to IntegrityError: {str(err)}"
+        )
 
 
 def _track_update_email_opt_in(user_id, organization, opt_in):
@@ -280,42 +316,48 @@ def _track_update_email_opt_in(user_id, organization, opt_in):
 
     """
     event_name = 'edx.bi.user.org_email.opted_in' if opt_in else 'edx.bi.user.org_email.opted_out'
-    tracking_context = tracker.get_tracker().resolve_context()
-
-    analytics.track(
+    segment.track(
         user_id,
         event_name,
         {
             'category': 'communication',
             'label': organization
         },
-        context={
-            'ip': tracking_context.get('ip'),
-            'Google Analytics': {
-                'clientId': tracking_context.get('client_id')
-            }
-        }
     )
 
 
-def _get_user(requesting_user, username=None, allow_staff=False):
+def _get_authorized_user(requesting_user, username=None, allow_staff=False):
     """
-    Helper method to return the user for a given username.
+    Helper method to return the authorized user for a given username.
     If username is not provided, requesting_user.username is assumed.
     """
     if username is None:
-        username = requesting_user.username
+        # If the user is one that has already been stored to the database, use that
+        if requesting_user.pk:
+            return requesting_user
+        else:
+            # Otherwise, treat this as a request against a separate user
+            username = requesting_user.username
+
+    _check_authorized(requesting_user, username, allow_staff)
 
     try:
         existing_user = User.objects.get(username=username)
     except ObjectDoesNotExist:
-        raise UserNotFound()
+        raise UserNotFound()  # pylint: disable=raise-missing-from  # noqa: B904
 
+    return existing_user
+
+
+def _check_authorized(requesting_user, username, allow_staff=False):
+    """
+    Helper method that raises UserNotAuthorized if requesting user
+    is not owner user or is not staff if access to staff is given
+    (i.e. 'allow_staff' = true)
+    """
     if requesting_user.username != username:
         if not requesting_user.is_staff or not allow_staff:
             raise UserNotAuthorized()
-
-    return existing_user
 
 
 def create_user_preference_serializer(user, preference_key, preference_value):
@@ -334,13 +376,13 @@ def create_user_preference_serializer(user, preference_key, preference_value):
     except ObjectDoesNotExist:
         existing_user_preference = None
     new_data = {
-        "user": user.id,
         "key": preference_key,
         "value": preference_value,
     }
     if existing_user_preference:
-        serializer = RawUserPreferenceSerializer(existing_user_preference, data=new_data)
+        serializer = RawUserPreferenceSerializer(existing_user_preference, data=new_data, partial=True)
     else:
+        new_data['user'] = user.id
         serializer = RawUserPreferenceSerializer(data=new_data)
     return serializer
 
@@ -356,24 +398,29 @@ def validate_user_preference_serializer(serializer, preference_key, preference_v
     Raises:
         PreferenceValidationError: the supplied key and/or value for a user preference are invalid.
     """
-    if preference_value is None or unicode(preference_value).strip() == '':
-        format_string = ugettext_noop(u"Preference '{preference_key}' cannot be set to an empty value.")
+    if preference_value is None or str(preference_value).strip() == '':
+        format_string = gettext_noop("Preference '{preference_key}' cannot be set to an empty value.")
         raise PreferenceValidationError({
             preference_key: {
                 "developer_message": format_string.format(preference_key=preference_key),
-                "user_message": _(format_string).format(preference_key=preference_key)
+                "user_message": _(format_string).format(preference_key=preference_key)  # pylint: disable=translation-of-non-string
             }
         })
     if not serializer.is_valid():
-        developer_message = u"Value '{preference_value}' not valid for preference '{preference_key}': {error}".format(
-            preference_key=preference_key, preference_value=preference_value, error=serializer.errors
+        errors = serializer.errors
+        # DRF error messages are of type ErrorDetail and serialize out as such. We want to coerce those
+        # messages into the strings only.
+        for key in errors:
+            errors[key] = [str(el) for el in errors[key]]
+        developer_message = "Value '{preference_value}' not valid for preference '{preference_key}': {error}".format(  # noqa: UP032  # pylint: disable=line-too-long
+            preference_key=preference_key, preference_value=preference_value, error=errors
         )
         if "key" in serializer.errors:
-            user_message = _(u"Invalid user preference key '{preference_key}'.").format(
+            user_message = _("Invalid user preference key '{preference_key}'.").format(
                 preference_key=preference_key
             )
         else:
-            user_message = _(u"Value '{preference_value}' is not valid for user preference '{preference_key}'.").format(
+            user_message = _("Value '{preference_value}' is not valid for user preference '{preference_key}'.").format(
                 preference_key=preference_key, preference_value=preference_value
             )
         raise PreferenceValidationError({
@@ -382,15 +429,73 @@ def validate_user_preference_serializer(serializer, preference_key, preference_v
                 "user_message": user_message,
             }
         })
+    if preference_key == "time_zone" and preference_value not in common_timezones_set:
+        developer_message = gettext_noop("Value '{preference_value}' not valid for preference '{preference_key}': Not in timezone set.")  # pylint: disable=line-too-long
+        user_message = gettext_noop("Value '{preference_value}' is not a valid time zone selection.")
+        raise PreferenceValidationError({
+            preference_key: {
+                "developer_message": developer_message.format(
+                    preference_key=preference_key, preference_value=preference_value
+                ),
+                "user_message": user_message.format(preference_key=preference_key, preference_value=preference_value)
+            }
+        })
 
 
 def _create_preference_update_error(preference_key, preference_value, error):
     """ Creates a PreferenceUpdateError with developer_message and user_message. """
     return PreferenceUpdateError(
-        developer_message=u"Save failed for user preference '{key}' with value '{value}': {error}".format(
+        developer_message="Save failed for user preference '{key}' with value '{value}': {error}".format(  # noqa: UP032
             key=preference_key, value=preference_value, error=error
         ),
-        user_message=_(u"Save failed for user preference '{key}' with value '{value}'.").format(
+        user_message=_("Save failed for user preference '{key}' with value '{value}'.").format(
             key=preference_key, value=preference_value
         ),
     )
+
+
+def get_country_time_zones(country_code=None):
+    """
+    Returns a sorted list of time zones commonly used in the specified
+    country.  If country_code is None (or unrecognized), or if the country
+    has no defined time zones, return a list of all time zones.
+
+    Arguments:
+        country_code (str): ISO 3166-1 Alpha-2 country code
+    """
+    if country_code is None or country_code.upper() not in set(countries.alt_codes):
+        return _get_sorted_time_zone_list(common_timezones)
+
+    # We can still get a failure here because there are some countries that are
+    # valid, but have no defined timezones in the pytz package (e.g. BV, HM)
+    try:
+        return _get_sorted_time_zone_list(country_timezones(country_code))
+    except KeyError:
+        return _get_sorted_time_zone_list(common_timezones)
+
+
+def _get_sorted_time_zone_list(time_zone_list):
+    """
+    Returns a list of time zone dictionaries sorted by their display values
+
+    :param time_zone_list (list): pytz time zone list
+    """
+    return sorted(
+        [_get_time_zone_dictionary(time_zone) for time_zone in time_zone_list],
+        key=lambda tz_dict: tz_dict['description']
+    )
+
+
+def _get_time_zone_dictionary(time_zone_name):
+    """
+    Returns a dictionary of time zone information:
+
+        * time_zone: Name of pytz time zone
+        * description: Display version of time zone [e.g. US/Pacific (PST, UTC-0800)]
+
+    :param time_zone_name (str): Name of pytz time zone
+    """
+    return {
+        'time_zone': time_zone_name,
+        'description': get_display_time_zone(time_zone_name),
+    }

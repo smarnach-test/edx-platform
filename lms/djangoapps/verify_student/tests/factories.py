@@ -1,16 +1,26 @@
 """
 Factories related to student verification.
 """
-
 from factory.django import DjangoModelFactory
-from verify_student.models import SoftwareSecurePhotoVerification
+
+from lms.djangoapps.verify_student.models import SoftwareSecurePhotoVerification, SSOVerification, VerificationAttempt
 
 
 class SoftwareSecurePhotoVerificationFactory(DjangoModelFactory):
     """
     Factory for SoftwareSecurePhotoVerification
     """
-    class Meta(object):  # pylint: disable=missing-docstring
+    class Meta:
         model = SoftwareSecurePhotoVerification
 
     status = 'approved'
+
+
+class SSOVerificationFactory(DjangoModelFactory):
+    class Meta():  # noqa: UP039
+        model = SSOVerification
+
+
+class VerificationAttemptFactory(DjangoModelFactory):
+    class Meta:
+        model = VerificationAttempt

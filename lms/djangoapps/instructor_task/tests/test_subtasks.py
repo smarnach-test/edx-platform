@@ -1,30 +1,31 @@
 """
 Unit tests for instructor_task subtasks.
 """
+
+
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
-from mock import Mock, patch
-
-from student.models import CourseEnrollment
-
-from instructor_task.subtasks import queue_subtasks_for_query
-from instructor_task.tests.factories import InstructorTaskFactory
-from instructor_task.tests.test_base import InstructorTaskCourseTestCase
+from common.djangoapps.student.models import CourseEnrollment
+from lms.djangoapps.instructor_task.data import InstructorTaskTypes
+from lms.djangoapps.instructor_task.subtasks import queue_subtasks_for_query
+from lms.djangoapps.instructor_task.tests.factories import InstructorTaskFactory
+from lms.djangoapps.instructor_task.tests.test_base import InstructorTaskCourseTestCase
 
 
 class TestSubtasks(InstructorTaskCourseTestCase):
     """Tests for subtasks."""
 
     def setUp(self):
-        super(TestSubtasks, self).setUp()
+        super().setUp()
         self.initialize_course()
 
-    def _enroll_students_in_course(self, course_id, num_students):
+    def _enroll_students_in_course(self, course_id, num_students):  # pylint: disable=unused-argument
         """Create and enroll some students in the course."""
 
         for _ in range(num_students):
             random_id = uuid4().hex[:8]
-            self.create_student(username='student{0}'.format(random_id))
+            self.create_student(username=f'student{random_id}')
 
     def _queue_subtasks(self, create_subtask_fcn, items_per_task, initial_count, extra_count):
         """Queue subtasks while enrolling more students into course in the middle of the process."""
@@ -34,7 +35,7 @@ class TestSubtasks(InstructorTaskCourseTestCase):
             course_id=self.course.id,
             task_id=task_id,
             task_key='dummy_task_key',
-            task_type='bulk_course_email',
+            task_type=InstructorTaskTypes.BULK_COURSE_EMAIL,
         )
 
         self._enroll_students_in_course(self.course.id, initial_count)
@@ -45,7 +46,7 @@ class TestSubtasks(InstructorTaskCourseTestCase):
             self._enroll_students_in_course(self.course.id, extra_count)
             return {}
 
-        with patch('instructor_task.subtasks.initialize_subtask_info') as mock_initialize_subtask_info:
+        with patch('lms.djangoapps.instructor_task.subtasks.initialize_subtask_info') as mock_initialize_subtask_info:
             mock_initialize_subtask_info.side_effect = initialize_subtask_info
             queue_subtasks_for_query(
                 entry=instructor_task,
@@ -65,9 +66,9 @@ class TestSubtasks(InstructorTaskCourseTestCase):
 
         # Check number of items for each subtask
         mock_create_subtask_fcn_args = mock_create_subtask_fcn.call_args_list
-        self.assertEqual(len(mock_create_subtask_fcn_args[0][0][0]), 3)
-        self.assertEqual(len(mock_create_subtask_fcn_args[1][0][0]), 3)
-        self.assertEqual(len(mock_create_subtask_fcn_args[2][0][0]), 2)
+        assert len(mock_create_subtask_fcn_args[0][0][0]) == 3
+        assert len(mock_create_subtask_fcn_args[1][0][0]) == 3
+        assert len(mock_create_subtask_fcn_args[2][0][0]) == 2
 
     def test_queue_subtasks_for_query2(self):
         """Test queue_subtasks_for_query() if the last subtask needs to accommodate > items_per_task items."""
@@ -77,6 +78,6 @@ class TestSubtasks(InstructorTaskCourseTestCase):
 
         # Check number of items for each subtask
         mock_create_subtask_fcn_args = mock_create_subtask_fcn.call_args_list
-        self.assertEqual(len(mock_create_subtask_fcn_args[0][0][0]), 3)
-        self.assertEqual(len(mock_create_subtask_fcn_args[1][0][0]), 3)
-        self.assertEqual(len(mock_create_subtask_fcn_args[2][0][0]), 5)
+        assert len(mock_create_subtask_fcn_args[0][0][0]) == 3
+        assert len(mock_create_subtask_fcn_args[1][0][0]) == 3
+        assert len(mock_create_subtask_fcn_args[2][0][0]) == 5

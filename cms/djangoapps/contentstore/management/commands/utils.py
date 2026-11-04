@@ -1,8 +1,11 @@
 """
 Common methods for cms commands to use
 """
-from django.contrib.auth.models import User
+
+
+from django.contrib.auth.models import User  # pylint: disable=imported-auth-user
 from opaque_keys.edx.keys import CourseKey
+
 from xmodule.modulestore.django import modulestore
 
 

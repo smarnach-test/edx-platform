@@ -1,7 +1,7 @@
 """
 An :class:`~xblock.runtime.KeyValueStore` that stores data in the django session
 """
-from __future__ import absolute_import
+
 
 from xblock.runtime import KeyValueStore
 
@@ -10,8 +10,8 @@ def stringify(key):
     return repr(tuple(key))
 
 
-class SessionKeyValueStore(KeyValueStore):
-    def __init__(self, request):
+class SessionKeyValueStore(KeyValueStore):  # pylint: disable=missing-class-docstring
+    def __init__(self, request):  # pylint: disable=super-init-not-called
         self._session = request.session
 
     def get(self, key):

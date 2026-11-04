@@ -12,6 +12,7 @@
   .bar-mod-title {
     @extend %t-title6;
     @extend %t-strong;
+
     display: block;
     padding: ($baseline/2) ($baseline*0.75);
     background-color: $gray-l4;
@@ -19,20 +20,23 @@
 
   .bar-mod-content {
     @extend %t-copy-sub1;
+
     border-bottom: 1px solid $gray-l4;
     padding: ($baseline*0.75) ($baseline*0.75) $baseline ($baseline*0.75);
 
     .title {
       @extend %t-title8;
       @extend %t-strong;
+
       margin-bottom: ($baseline/4);
-      color: $gray-l2;
+      color: $gray-d2;
       text-transform: uppercase;
     }
 
     .meta {
       @extend %t-copy-sub2;
-      color: $gray-l1;
+
+      color: $gray-d2;
     }
   }
 }
@@ -41,6 +45,7 @@
 // --------------------
 %bar-module-blue {
   @extend %bar-module;
+
   border-top: 5px solid $blue;
 
   .bar-mod-title {
@@ -52,6 +57,7 @@
 // --------------------
 %bar-module-green {
   @extend %bar-module;
+
   border-top: 5px solid $green;
 
   .bar-mod-title {
@@ -63,6 +69,7 @@
 // --------------------
 %bar-module-yellow {
   @extend %bar-module;
+
   border-top: 5px solid $orange-l2;
 
   .bar-mod-title {
@@ -74,6 +81,7 @@
 // --------------------
 %bar-module-red {
   @extend %bar-module;
+
   border-top: 5px solid $red-l2;
 
   .bar-mod-title {
@@ -84,6 +92,7 @@
 // black bar and title bg version
 %bar-module-black {
   @extend %bar-module;
+
   border-top: 5px solid $black;
 
   .bar-mod-title {
@@ -109,8 +118,9 @@
     h5 {
       @extend %t-title5;
       @extend %t-strong;
+
       margin-bottom: ($baseline*0.75);
-      color: $green-d1;
+      color: $uxpl-green-base;
     }
 
     // add component - list of green buttons
@@ -124,28 +134,41 @@
       // green button
       .add-xblock-component-button {
         @extend %t-action3;
+
         @include margin-right($baseline*0.75);
+
         position: relative;
         display: inline-block;
-        width: ($baseline*5);
-        height: ($baseline*5);
+        width: ($baseline*6.25);
+        height: ($baseline*7);
         margin-bottom: ($baseline/2);
-        box-shadow: 0 1px 1px $shadow, 0 1px 0 rgba(255, 255, 255, .4) inset;
-        border: 1px solid $green-d2;
+        box-shadow: 0 1px 1px $shadow, 0 1px 0 rgba(255, 255, 255, 0.4) inset;
         border-radius: ($baseline/4);
         padding: 0;
-        background-color: $green-l1;
         text-align: center;
-        color: $white;
+        vertical-align: top;
 
-        &:hover {
-          background: $green-s1;
-        }
+        @extend %btn-primary-green;
 
         .name {
-          @include box-sizing(border-box);
+          box-sizing: border-box;
           display: block;
           color: $white;
+        }
+
+        .beta {
+          margin-top: 3px;
+          margin-bottom: -20px;
+          padding: 4px;
+          display: inline-block;
+
+          color: $uxpl-green-base;
+          background-color: theme-color("inverse");
+          border-color: theme-color("inverse");
+          border-radius: 3px;
+
+          font-size: 90%;
+          line-height: 90%;
         }
       }
     }
@@ -156,12 +179,13 @@
   // --------------------
   .new-component-templates {
     @include clearfix();
+
     display: none;
     margin: $baseline ($baseline*2);
     border-radius: 3px;
     border: 1px solid $mediumGrey;
     background-color: $white;
-    box-shadow: 0 1px 1px $shadow, 0 1px 0 rgba(255, 255, 255, .4) inset;
+    box-shadow: 0 1px 1px $shadow, 0 1px 0 rgba(255, 255, 255, 0.4) inset;
 
     .cancel-button {
       @include white-button;
@@ -174,11 +198,40 @@
 
     // specific menu types
     &.new-component-problem {
-      padding-bottom: ($baseline/2);
-
       .problem-type-tabs {
         display: inline-block;
       }
+    }
+
+    .support-documentation {
+      float: right;
+
+      @include margin($baseline, 0, ($baseline/2), ($baseline/2));
+      @include font-size(14);
+
+      .support-documentation-level {
+        padding-right: ($baseline/2);
+      }
+
+      .support-documentation-link {
+        // Override JQuery ui-widget-content link color (black) with our usual link color and hover action.
+        color: theme-color("primary");
+        text-decoration: none;
+        padding-right: ($baseline/2);
+
+        &:hover {
+          color: $uxpl-blue-hover-active;
+          text-decoration: underline;
+        }
+      }
+    }
+
+    .support-level {
+      padding-right: ($baseline/2);
+    }
+
+    .icon {
+      color: $uxpl-primary-accent;
     }
   }
 
@@ -186,6 +239,8 @@
   // --------------------
   .new-component-template {
     @include clearfix();
+
+    margin-bottom: 0;
 
     li {
       border: none;
@@ -196,22 +251,30 @@
       }
     }
 
-  .button-component {
+    .button-component {
       @include clearfix();
       @include transition(none);
+
       @extend %t-demi-strong;
+
       display: block;
       width: 100%;
-      border: 0px;
+      border: 0;
       padding: 7px $baseline;
       background: $white;
       color: $gray-d3;
       text-align: left;
+      font-family: $f-sans-serif;
 
       &:hover {
         @include transition(background-color $tmg-f2 linear 0s);
-        background: tint($green,30%);
+
+        background: tint($green, 30%);
         color: $white;
+
+        .icon {
+          color: $white;
+        }
       }
     }
   }
@@ -219,7 +282,8 @@
   // basic and advanced problem tabs - also handled by jquery-ui tabs
   // --------------------
   .problem-type-tabs {
-    @include linear-gradient(top, rgba(255, 255, 255, .4), rgba(255, 255, 255, 0));
+    @include linear-gradient(top, rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0));
+
     list-style-type: none;
     width: 100%;
     border-radius: 0;
@@ -231,9 +295,12 @@
     }
 
     li {
-      @include linear-gradient(top, rgba(255, 255, 255, .4), rgba(255, 255, 255, 0));
+      @include linear-gradient(top, rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0));
+
       opacity: 0.8;
+
       @include float(left);
+
       display: inline-block;
       width: auto;
       box-shadow: 0 1px 0 rgba(255, 255, 255, 0.2) inset, 0 -1px 0 $shadow inset;
@@ -247,8 +314,9 @@
 
       &.ui-state-active {
         @include active;
-        border: 0px;
-        opacity: 1.0;
+
+        border: 0;
+        opacity: 1;
       }
 
       // reset to remove jquery-ui float
@@ -259,11 +327,112 @@
 
     a {
       @extend %t-action3;
+
       display: block;
       padding: ($baseline*0.75) ($baseline*1.25);
       text-align: center;
       color: $gray-d3;
       text-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+    }
+  }
+}
+// New "Paste component" menu, shown on the Unit and outline page to users with a component in their clipboard
+.paste-component {
+  margin: $baseline ($baseline/2);
+
+  .paste-component-button {
+    display: block;
+    width: 100%;
+    // Override what we're extending from ui-btn-flat-outline:
+    &.button {
+      font-size: 1.5rem;
+      padding: 10px 0;
+    }
+
+    @extend %ui-btn-flat-outline;
+  }
+
+  .paste-component-whats-in-clipboard {
+    position: relative;
+    margin-left: auto;
+    width: fit-content;
+    font-size: 1.2rem;
+    margin-top: 4px;
+    cursor: help;
+
+    &:hover, &:focus, &:focus-within {
+      .clipboard-details-popup {
+        display: block;
+      }
+    }
+
+    .clipboard-details-popup {
+      display: none;
+      position: absolute;
+      bottom: 3.3rem;
+      right: calc(50% - 125px);
+      width: 250px;
+      background: white;
+      border-radius: 2px;
+      box-shadow: 0 0 3px #ddd;
+      padding: 15px;
+      color: inherit;
+
+      // The callout triangle below this popup:
+      &::before {
+        content: '';
+        position: absolute;
+        width: 0;
+        height: 0;
+        top: 100%;
+        left: calc(50% - 0.4rem);
+        // Use different border widths to render a triangle:
+        border: .8rem solid transparent;
+        border-bottom: none;
+        border-top-color: #fff;
+        filter: drop-shadow(0 1px 1px rgba(0,0,0,0.1))
+      }
+
+      // This invisible rectangle makes it easy for users to move their mouse from the "What's in my clipboard?" widget
+      // to the popover without it disappearing on them.
+      &::after {
+        content: '';
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        height: 1rem;
+      }
+
+      .fa-external-link {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+      }
+
+      &.no-edit-link {
+        // If there is no "edit" URL available, make this not look like a link.
+        .fa-external-link {
+          display: none;
+        }
+
+        cursor: default;
+      }
+
+      .detail-block-name {
+        font-size: 1.5rem;
+      }
+
+      .detail-block-type {
+        color: #888;
+        font-size: 1rem;
+        display: block;
+        margin-top: -0.6rem;
+      }
+
+      .detail-course-name {
+        font-style: italic;
+      }
     }
   }
 }
@@ -287,14 +456,28 @@ $outline-indent-width: $baseline;
 
     .button-new {
       @extend %ui-btn-flat-outline;
+
       padding: ($baseline/2) $baseline;
       display: block;
 
       .icon {
         display: inline-block;
         vertical-align: middle;
+
         @include margin-right($baseline/2);
       }
+    }
+  }
+}
+
+// The "Paste new [Unit/Section/Subsection]" button on the course outline page, visible only when clipboard has the right thing in it
+.outline .paste-component {
+  margin: ($baseline/2) 0; // different margins for the "paste new unit/section/subsection" button on the outline vs. the unit page
+
+  .paste-component-button {
+    // Also there is a smaller font size for this button on the outline vs. the unit page:
+    &.button {
+      font-size: 1.2rem;
     }
   }
 }
@@ -303,10 +486,12 @@ $outline-indent-width: $baseline;
 %outline-item-status {
   @extend %t-copy-sub2;
   @extend %t-strong;
-  color: $color-copy-base;
+
+  color: $gray-d1;
 
   .icon {
     @extend %t-icon5;
+
     @include margin-right($baseline/4);
   }
 }
@@ -332,9 +517,33 @@ $outline-indent-width: $baseline;
     > .section-status,
     > .subsection-status,
     > .unit-status {
-
       .status-message .icon {
         color: $color-staff-only;
+      }
+    }
+  }
+
+  // CASE: is hidden from TOC
+  &.is-hidden-from-toc {
+    // needed to make sure direct children only
+    > .section-status,
+    > .subsection-status,
+    > .unit-status {
+      .status-message .icon {
+        color: $color-hide-from-toc;
+      }
+    }
+  }
+
+  // CASE: has gated content
+  &.is-gated {
+
+    // needed to make sure direct children only
+    > .section-status,
+    > .subsection-status,
+    > .unit-status {
+      .status-message .icon {
+        color: $color-gated;
       }
     }
   }
@@ -346,7 +555,6 @@ $outline-indent-width: $baseline;
     > .section-status .status-message,
     > .subsection-status .status-message,
     > .unit-status .status-message {
-
       .icon {
         color: $color-warning;
       }
@@ -395,8 +603,10 @@ $outline-indent-width: $baseline;
   // outline: sections
   .outline-section {
     @include transition(border-left-width $tmg-f2 linear 0s, border-left-color $tmg-f2 linear 0s, padding-left $tmg-f2 linear 0s);
+
     @extend %ui-window;
     @extend %outline-complex-item;
+
     border-left: 1px solid $color-draft;
     margin-bottom: $baseline;
     padding: ($baseline/4) ($baseline/2) ($baseline/2) ($baseline/2);
@@ -421,6 +631,16 @@ $outline-indent-width: $baseline;
         border-left-color: $color-staff-only;
       }
 
+      // CASE: is hidden from TOC
+      &.is-hidden-from-toc {
+        border-left-color: $color-hide-from-toc;
+      }
+
+      // CASE: has gated content
+      &.is-gated {
+        border-left-color: $color-gated;
+      }
+
       // CASE: has unpublished content
       &.has-warnings {
         border-left-color: $color-warning;
@@ -436,6 +656,7 @@ $outline-indent-width: $baseline;
     .section-title {
       @extend %t-title5;
       @extend %t-strong;
+
       color: $color-heading-base;
     }
 
@@ -448,17 +669,41 @@ $outline-indent-width: $baseline;
     .status-release,
     .explanatory-message {
       @include transition(opacity $tmg-f2 ease-in-out 0s);
+
       opacity: 0.65;
     }
 
     // status - message
-    .status-message {
+    .status-messages {
       margin-top: ($baseline/2);
       border-top: 1px solid $gray-l4;
       padding-top: ($baseline/4);
 
       .icon {
-        margin-right: ($baseline/4);
+        @include margin-right($baseline/4);
+      }
+
+      .status-message {
+        display: flex;
+        flex-direction: row;
+        justify-content: space-between;
+
+        @media (max-width: 768px) {
+          flex-direction: column;
+        }
+      }
+
+      .subsection-share-link-button {
+        border-radius: ($baseline/4);
+        font-size: 1.2rem;
+        font-weight: 600;
+        padding: 0.5rem 1rem;
+        margin: 0 1rem;
+
+        .icon-share-link {
+          color: $white !important;
+          transform: rotate(90deg);
+        }
       }
     }
 
@@ -468,12 +713,14 @@ $outline-indent-width: $baseline;
     }
 
     // STATE: hover/active
-    &:hover, &:active {
+    &:hover,
+    &:active {
 
       // status - release
       > .section-status .status-release,
-        .section-status .explanatory-message{
-        opacity: 1.0;
+      .section-status,
+      .explanatory-message {
+        opacity: 1;
       }
     }
   }
@@ -481,7 +728,9 @@ $outline-indent-width: $baseline;
   // outline: subsections
   .outline-subsection {
     @include transition(border-left-color $tmg-f2 linear 0s);
+
     @extend %outline-complex-item;
+
     margin-bottom: ($baseline/2);
     border: 1px solid $gray-l4;
     border-left: ($baseline/4) solid $color-draft;
@@ -505,6 +754,16 @@ $outline-indent-width: $baseline;
       border-left-color: $color-staff-only;
     }
 
+    // CASE: is hidden from TOC
+    &.is-hidden-from-toc {
+      border-left-color: $color-hide-from-toc;
+    }
+
+    // CASE: is presented for gated
+    &.is-gated {
+      border-left-color: $color-gated;
+    }
+
     // CASE: has unpublished content
     &.has-warnings {
       border-left-color: $color-warning;
@@ -516,18 +775,15 @@ $outline-indent-width: $baseline;
     }
 
     // STATE: hover/active
-    &:hover, &:active {
+    &:hover,
+    &:active {
       box-shadow: 0 1px 1px $shadow-l2;
-    }
-
-    // STATE: is-collapsed
-    &.is-collapsed {
-
     }
 
     // header - title
     .subsection-title {
       @extend %t-title6;
+
       color: $color-heading-base;
     }
 
@@ -537,35 +793,46 @@ $outline-indent-width: $baseline;
     }
 
     // STATE: hover/active
-    &:hover, &:active {
+    &:hover,
+    &:active {
 
       // status - release
       > .subsection-status .status-release {
-        opacity: 1.0;
+        opacity: 1;
       }
 
       // status - grading
       > .subsection-status .status-grading {
-        opacity: 1.0;
+        opacity: 1;
       }
 
       > .subsection-status .status-timed-proctored-exam {
-        opacity: 1.0;
+        opacity: 1;
+      }
+
+      > .subsection-status .status-hide-after-due {
+        opacity: 1;
       }
     }
 
     // status - grading
-    .status-grading, .status-timed-proctored-exam  {
+    .status-grading,
+    .status-timed-proctored-exam,
+    .status-hide-after-due {
       @include transition(opacity $tmg-f2 ease-in-out 0s);
-      opacity: 0.65;
+
+      opacity: 0.75;
     }
 
-    .status-grading-value, .status-proctored-exam-value {
+    .status-grading-value,
+    .status-proctored-exam-value,
+    .status-custom-grading-date {
       display: inline-block;
       vertical-align: middle;
     }
 
-    .status-grading-date, .status-due-date {
+    .status-grading-date,
+    .status-due-date {
       display: inline-block;
       vertical-align: middle;
       margin-left: ($baseline/4);
@@ -575,6 +842,7 @@ $outline-indent-width: $baseline;
   // outline: units
   .outline-unit {
     @extend %outline-complex-item;
+
     margin-bottom: ($baseline/2);
     border: 1px solid $gray-l4;
     padding: ($baseline/4) ($baseline/2);
@@ -582,6 +850,7 @@ $outline-indent-width: $baseline;
     // header - title
     .unit-title {
       @extend %t-title7;
+
       color: $color-heading-base;
     }
 
@@ -590,12 +859,13 @@ $outline-indent-width: $baseline;
     }
 
     // STATE: hover/active
-    &:hover, &:active {
+    &:hover,
+    &:active {
       box-shadow: 0 1px 1px $shadow-l2;
 
       // status - release
       .unit-status .status-release {
-        opacity: 1.0;
+        opacity: 1;
       }
     }
   }
@@ -607,6 +877,7 @@ $outline-indent-width: $baseline;
   // outline: sections
   .outline-section {
     @extend %outline-simple-item;
+
     margin-bottom: $baseline;
     padding: ($baseline/2);
 
@@ -614,6 +885,7 @@ $outline-indent-width: $baseline;
     .section-title {
       @extend %t-title5;
       @extend %t-strong;
+
       color: $color-heading-base;
     }
 
@@ -625,12 +897,14 @@ $outline-indent-width: $baseline;
     // status - release
     .status-release {
       @include transition(opacity $tmg-f2 ease-in-out 0s);
+
       opacity: 0.65;
     }
 
     // status - grading
     .status-grading {
       @include transition(opacity $tmg-f2 ease-in-out 0s);
+
       opacity: 0.65;
     }
 
@@ -665,12 +939,14 @@ $outline-indent-width: $baseline;
   // outline: subsections
   .outline-subsection {
     @extend %outline-simple-item;
+
     margin-bottom: ($baseline/2);
     padding: ($baseline/2);
 
     // header - title
     .subsection-title {
       @extend %t-title6;
+
       color: $color-heading-base;
     }
 
@@ -683,12 +959,14 @@ $outline-indent-width: $baseline;
   // outline: units
   .outline-unit {
     @extend %outline-simple-item;
+
     margin-bottom: ($baseline/4);
     padding: ($baseline/4) ($baseline/2);
 
     // header - title
     .unit-title {
       @extend %t-title7;
+
       color: $color-heading-base;
     }
 
@@ -698,3 +976,21 @@ $outline-indent-width: $baseline;
   }
 }
 
+// The "actions menu" for subsections, sections, and units on the Studio course outline page
+.outline .actions-list.nav-dd .wrapper-nav-sub {
+
+  @include text-align(left); // Undo the 'text-align: right' inherited from the parent
+
+  z-index: 10;  // stay in front of other components on the page.
+
+  .nav-item {
+    a {
+      // Match styling of ".wrapper-header nav .nav-item a" (dropdowns in Studio header)
+      color: $gray-d1;
+
+      &:hover {
+        color: $uxpl-blue-hover-active;
+      }
+    }
+  }
+}

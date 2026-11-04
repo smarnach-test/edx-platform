@@ -7,16 +7,14 @@
 // it is not included in any further polling.
 
 (function() {
-
-    var __bind = function(fn, me){ return function(){ return fn.apply(me, arguments); }; };
+    var __bind = function(fn, me) { return function() { return fn.apply(me, arguments); }; };
 
     this.InstructorTaskProgress = (function() {
-
         function InstructorTaskProgress(element) {
             this.update_progress = __bind(this.update_progress, this);
             this.get_status = __bind(this.get_status, this);
             this.element = element;
-            this.entries = $(element).find('.task-progress-entry')
+            this.entries = $(element).find('.task-progress-entry');
             if (window.queuePollerID) {
                 window.clearTimeout(window.queuePollerID);
             }
@@ -34,13 +32,14 @@
             // with a "task-state" and "in_progress" key and optionally a "message"
             // and a "task_progress.duration" key.
             var something_in_progress = false;
+            // eslint-disable-next-line guard-for-in
             for (task_id in response) {
                 var task_dict = response[task_id];
                 // find the corresponding entry, and update it:
                 entry = $(_this.element).find('[data-task-id="' + task_id + '"]');
-                entry.find('.task-state').text(task_dict.task_state)
+                entry.find('.task-state').text(task_dict.task_state);
                 var duration_value = (task_dict.task_progress && task_dict.task_progress.duration_ms
-                                        && Math.round(task_dict.task_progress.duration_ms/1000)) || 'unknown';
+                                        && Math.round(task_dict.task_progress.duration_ms / 1000)) || 'unknown';
                 entry.find('.task-duration').text(duration_value);
                 var progress_value = task_dict.message || '';
                 entry.find('.task-progress').text(progress_value);
@@ -49,7 +48,7 @@
                 if (task_dict.in_progress === true) {
                     something_in_progress = true;
                 } else {
-                    entry.data('inProgress', "False")
+                    entry.data('inProgress', 'False');
                 }
             }
 
@@ -62,7 +61,7 @@
             } else {
                 delete window.queuePollerID;
             }
-        }
+        };
 
         InstructorTaskProgress.prototype.get_status = function() {
             var _this = this;
@@ -73,7 +72,8 @@
             this.entries.each(function(idx, element) {
                 var task_id = $(element).data('taskId');
                 var in_progress = $(element).data('inProgress');
-                if (in_progress="True") {
+                // eslint-disable-next-line no-constant-condition, no-cond-assign
+                if (in_progress = 'True') {
                     task_ids.push(task_id);
                 }
             });
@@ -83,13 +83,12 @@
             // in the POST parameter that shows up on the Django server.
             // TODO: add error handler.
             var ajax_url = '/instructor_task_status/';
-            var data = {'task_ids': task_ids };
+            var data = {task_ids: task_ids};
             $.post(ajax_url, data).done(this.update_progress);
         };
 
         return InstructorTaskProgress;
-    })();
-
+    }());
 }).call(this);
 
 // once the page is rendered, create the progress object
@@ -97,4 +96,3 @@ var instructorTaskProgress;
 $(document).ready(function() {
     instructorTaskProgress = new InstructorTaskProgress($('#task-progress-wrapper'));
 });
-

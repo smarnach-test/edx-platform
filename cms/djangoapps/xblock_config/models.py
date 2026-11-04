@@ -4,15 +4,15 @@ Models used by Studio XBlock infrastructure.
 Includes:
     StudioConfig: A ConfigurationModel for managing Studio.
 """
-
-from django.db.models import TextField
-
 from config_models.models import ConfigurationModel
+from django.db.models import TextField
 
 
 class StudioConfig(ConfigurationModel):
     """
     Configuration for XBlockAsides.
+
+    .. no_pii:
     """
     disabled_blocks = TextField(
         default="about course_info static_tab",

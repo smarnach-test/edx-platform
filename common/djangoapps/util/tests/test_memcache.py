@@ -2,9 +2,11 @@
 Tests for memcache in util app
 """
 
+
+from django.core.cache import caches
 from django.test import TestCase
-from django.core.cache import get_cache
-from util.memcache import safe_key
+
+from common.djangoapps.util.memcache import safe_key
 
 
 class MemcacheTest(TestCase):
@@ -13,27 +15,27 @@ class MemcacheTest(TestCase):
     """
 
     # Test whitespace, control characters, and some non-ASCII UTF-16
-    UNICODE_CHAR_CODES = (range(30) + [127] +
+    UNICODE_CHAR_CODES = (list(range(30)) + [127] +
                           [129, 500, 2 ** 8 - 1, 2 ** 8 + 1, 2 ** 16 - 1])
 
     def setUp(self):
-        super(MemcacheTest, self).setUp()
-        self.cache = get_cache('default')
+        super().setUp()
+        self.cache = caches['default']
 
     def test_safe_key(self):
         key = safe_key('test', 'prefix', 'version')
-        self.assertEqual(key, 'prefix:version:test')
+        assert key == 'prefix:version:test'
 
     def test_numeric_inputs(self):
 
         # Numeric key
-        self.assertEqual(safe_key(1, 'prefix', 'version'), 'prefix:version:1')
+        assert safe_key(1, 'prefix', 'version') == 'prefix:version:1'
 
         # Numeric prefix
-        self.assertEqual(safe_key('test', 5, 'version'), '5:version:test')
+        assert safe_key('test', 5, 'version') == '5:version:test'
 
         # Numeric version
-        self.assertEqual(safe_key('test', 'prefix', 5), 'prefix:5:test')
+        assert safe_key('test', 'prefix', 5) == 'prefix:5:test'
 
     def test_safe_key_long(self):
 
@@ -47,64 +49,47 @@ class MemcacheTest(TestCase):
             key = safe_key(key, '', '')
 
             # The key should now be valid
-            self.assertTrue(self._is_valid_key(key),
-                            msg="Failed for key length {0}".format(length))
+            assert self._is_valid_key(key), f'Failed for key length {length}'
 
     def test_long_key_prefix_version(self):
 
         # Long key
         key = safe_key('a' * 300, 'prefix', 'version')
-        self.assertTrue(self._is_valid_key(key))
+        assert self._is_valid_key(key)
 
         # Long prefix
         key = safe_key('key', 'a' * 300, 'version')
-        self.assertTrue(self._is_valid_key(key))
+        assert self._is_valid_key(key)
 
         # Long version
         key = safe_key('key', 'prefix', 'a' * 300)
-        self.assertTrue(self._is_valid_key(key))
-
-    def test_safe_key_unicode(self):
-
-        for unicode_char in self.UNICODE_CHAR_CODES:
-
-            # Generate a key with that character
-            key = unichr(unicode_char)
-
-            # Make the key safe
-            key = safe_key(key, '', '')
-
-            # The key should now be valid
-            self.assertTrue(self._is_valid_key(key),
-                            msg="Failed for unicode character {0}".format(unicode_char))
+        assert self._is_valid_key(key)
 
     def test_safe_key_prefix_unicode(self):
 
         for unicode_char in self.UNICODE_CHAR_CODES:
 
             # Generate a prefix with that character
-            prefix = unichr(unicode_char)
+            prefix = chr(unicode_char)
 
             # Make the key safe
             key = safe_key('test', prefix, '')
 
             # The key should now be valid
-            self.assertTrue(self._is_valid_key(key),
-                            msg="Failed for unicode character {0}".format(unicode_char))
+            assert self._is_valid_key(key), f'Failed for unicode character {unicode_char}'
 
     def test_safe_key_version_unicode(self):
 
         for unicode_char in self.UNICODE_CHAR_CODES:
 
             # Generate a version with that character
-            version = unichr(unicode_char)
+            version = chr(unicode_char)
 
             # Make the key safe
             key = safe_key('test', '', version)
 
             # The key should now be valid
-            self.assertTrue(self._is_valid_key(key),
-                            msg="Failed for unicode character {0}".format(unicode_char))
+            assert self._is_valid_key(key), f'Failed for unicode character {unicode_char}'
 
     def _is_valid_key(self, key):
         """

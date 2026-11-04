@@ -6,23 +6,22 @@ backends.
 
 """
 
-from __future__ import absolute_import
 
 import abc
 
+import six  # noqa: F401
 
-# pylint: disable=unused-argument
-class BaseBackend(object):
+
+class BaseBackend(metaclass=abc.ABCMeta):
     """
     Abstract Base Class for event tracking backends.
 
     """
-    __metaclass__ = abc.ABCMeta
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs):  # noqa: B027
         pass
 
     @abc.abstractmethod
     def send(self, event):
         """Send event to tracker."""
-        pass
+        pass  # pylint: disable=unnecessary-pass

@@ -1,10 +1,10 @@
 """
 Tabs for courseware.
 """
-from openedx.core.lib.api.plugins import PluginManager
 
-_ = lambda text: text
+from functools import cmp_to_key  # pylint: disable=wrong-import-order
 
+from edx_django_utils.plugins import PluginManager
 
 # Stevedore extension point namespaces
 COURSE_TAB_NAMESPACE = 'openedx.course_tab'
@@ -42,6 +42,6 @@ class CourseTabPluginManager(PluginManager):
                 return 0
             else:
                 return 1
-        tab_types = cls.get_available_plugins().values()
-        tab_types.sort(cmp=compare_tabs)
+        tab_types = list(cls.get_available_plugins().values())
+        tab_types.sort(key=cmp_to_key(compare_tabs))
         return tab_types

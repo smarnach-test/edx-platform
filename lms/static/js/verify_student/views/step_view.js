@@ -1,3 +1,5 @@
+/* global jQuery, _, Backbone, gettext */
+
 /**
  * Base view for defining steps in the payment/verification flow.
  *
@@ -6,47 +8,47 @@
  * to move to the next step).
  *
  */
- var edx = edx || {};
+var edx = edx || {};
 
- (function( $, _, _s, Backbone, gettext ) {
+(function($, _, Backbone, gettext) {
     'use strict';
 
     edx.verify_student = edx.verify_student || {};
 
     edx.verify_student.StepView = Backbone.View.extend({
 
-        initialize: function( obj ) {
-            _.extend( this, obj );
+        initialize: function(obj) {
+            _.extend(this, obj);
 
             /* Mix non-conflicting functions from underscore.string
              * (all but include, contains, and reverse) into the
-             * Underscore namespace
+             * Underscore namespace.
              */
-            _.mixin( _s.exports() );
+            _.mixin(_.str.exports());
         },
 
         render: function() {
-            var templateHtml = $( "#" + this.templateName + "-tpl" ).html();
+            var templateHtml = $('#' + this.templateName + '-tpl').html();
 
             // Allow subclasses to add additional information
             // to the template context, perhaps asynchronously.
-            this.updateContext( this.templateContext() ).done(
-                function( templateContext ) {
+            this.updateContext(this.templateContext()).done(
+                function(templateContext) {
                     // Render the template into the DOM
-                    $( this.el ).html( _.template( templateHtml, templateContext ) );
+                    edx.HtmlUtils.setHtml($(this.el), edx.HtmlUtils.template(templateHtml)(templateContext));
 
                     // Allow subclasses to install custom event handlers
                     this.postRender();
                 }
-            ).fail( _.bind( this.handleError, this ) );
+            ).fail(_.bind(this.handleError, this));
 
             return this;
         },
 
-        handleError: function( errorTitle, errorMsg ) {
+        handleError: function(errorTitle, errorMsg) {
             this.errorModel.set({
-                errorTitle: errorTitle || gettext( "Error" ),
-                errorMsg: errorMsg || gettext( "An error has occurred. Please try reloading the page." ),
+                errorTitle: errorTitle || gettext('Error'),
+                errorMsg: errorMsg || gettext('An error has occurred. Please try reloading the page.'),
                 shown: true
             });
         },
@@ -55,7 +57,7 @@
             var context = {
                 nextStepTitle: this.nextStepTitle
             };
-            return _.extend( context, this.defaultContext(), this.stepData );
+            return _.extend(context, this.defaultContext(), this.stepData);
         },
 
         /**
@@ -77,11 +79,11 @@
          * after completing an AJAX request.
          * The default implementation is a no-op.
          */
-        updateContext: function( templateContext ) {
+        updateContext: function(templateContext) {
             var view = this;
             return $.Deferred(
-                function( defer ) {
-                    defer.resolveWith( view, [ templateContext ]);
+                function(defer) {
+                    defer.resolveWith(view, [templateContext]);
                 }
             ).promise();
         },
@@ -95,10 +97,9 @@
             this.trigger('next-step');
         },
 
-        goToStep: function( stepName ) {
-            this.trigger( 'go-to-step', stepName );
+        goToStep: function(stepName) {
+            this.trigger('go-to-step', stepName);
         }
 
     });
-
- })( jQuery, _, _.str, Backbone, gettext );
+}(jQuery, _, Backbone, gettext));

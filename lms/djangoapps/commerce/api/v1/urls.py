@@ -1,18 +1,24 @@
-""" API v1 URLs. """
+"""
+Commerce URLs
+"""
+
+
 from django.conf import settings
-from django.conf.urls import patterns, url, include
+from django.urls import include, path, re_path
 
-from commerce.api.v1 import views
+from . import views
 
+COURSE_URLS = ([
+    path('', views.CourseListView.as_view(), name='list'),
+    re_path(fr'^{settings.COURSE_ID_PATTERN}/$', views.CourseRetrieveUpdateView.as_view(), name='retrieve_update'),
+], 'courses')
 
-COURSE_URLS = patterns(
-    '',
-    url(r'^$', views.CourseListView.as_view(), name='list'),
-    url(r'^{}/$'.format(settings.COURSE_ID_PATTERN), views.CourseRetrieveUpdateView.as_view(), name='retrieve_update'),
-)
+ORDER_URLS = ([
+    re_path(r'^(?P<number>[-\w]+)/$', views.OrderView.as_view(), name='detail'),
+], 'orders')
 
-urlpatterns = patterns(
-    '',
-    url(r'^courses/', include(COURSE_URLS, namespace='courses')),
-
-)
+app_name = 'v1'
+urlpatterns = [
+    path('courses/', include(COURSE_URLS)),
+    path('orders/', include(ORDER_URLS)),
+]

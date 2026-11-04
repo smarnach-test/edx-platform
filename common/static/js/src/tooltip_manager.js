@@ -1,18 +1,19 @@
 (function() {
     'use strict';
-    var TooltipManager = function (element) {
+
+    var TooltipManager = function(element) {
         this.element = $(element);
         // If tooltip container already exist, use it.
         this.tooltip = $('div.' + this.className.split(/\s+/).join('.'));
         // Otherwise, create new one.
         if (!this.tooltip.length) {
             this.tooltip = $('<div />', {
-                'class': this.className
-            }).appendTo(this.element);
+                class: this.className
+            }).appendTo(this.element); // xss-lint: disable=javascript-jquery-insert-into-target
         }
 
         this.hide();
-        _.bindAll(this);
+        _.bindAll(this, 'show', 'hide', 'showTooltip', 'moveTooltip', 'hideTooltip', 'click');
         this.bindEvents();
     };
 
@@ -21,7 +22,7 @@
         className: 'tooltip',
         SELECTOR: '[data-tooltip]',
 
-        bindEvents: function () {
+        bindEvents: function() {
             this.element.on({
                 'mouseover.TooltipManager': this.showTooltip,
                 'mousemove.TooltipManager': this.moveTooltip,
@@ -30,18 +31,29 @@
             }, this.SELECTOR);
         },
 
-        getCoords: function (pageX, pageY) {
+        getCoords: function(pageX, pageY) {
+            let left = pageX - 0.5 * this.tooltip.outerWidth();
+            const top = pageY - (this.tooltip.outerHeight() + 15);
+            // Check if the tooltip is going off the right edge of the screen
+            if (left + this.tooltip.outerWidth() > window.innerWidth) {
+                left = window.innerWidth - this.tooltip.outerWidth();
+            }
+            // Check if the tooltip is going off the left edge of the screen
+            if (left < 0) {
+                left = 0;
+            }
+
             return {
-                'left': pageX - 0.5 * this.tooltip.outerWidth(),
-                'top': pageY - (this.tooltip.outerHeight() + 15)
+                left,
+                top,
             };
         },
 
-        show: function () {
+        show: function() {
             this.tooltip.show().css('opacity', 1);
         },
 
-        hide: function () {
+        hide: function() {
             this.tooltip.hide().css('opacity', 0);
         },
 
@@ -54,11 +66,13 @@
         },
 
         prepareTooltip: function(element, pageX, pageY) {
-            pageX = typeof pageX !== 'undefined' ? pageX : element.offset().left + element.width()/2;
-            pageY = typeof pageY !== 'undefined' ? pageY : element.offset().top + element.height()/2;
+            pageX = typeof pageX !== 'undefined' ? pageX : element.offset().left + element.width() / 2;
+            pageY = typeof pageY !== 'undefined' ? pageY : element.offset().top + element.height() / 2;
             var tooltipText = $(element).attr('data-tooltip');
+            // Tooltip content comes from data-tooltip attributes which are server-rendered
+            // with proper escaping using Text() and HTML() from openedx.core.djangolib.markup
             this.tooltip
-                .html(tooltipText)
+                .html(tooltipText)  // xss-lint: disable=javascript-jquery-html
                 .css(this.getCoords(pageX, pageY));
         },
 
@@ -94,7 +108,7 @@
             }
         },
 
-        destroy: function () {
+        destroy: function() {
             this.tooltip.remove();
             // Unbind all delegated event handlers in the ".TooltipManager"
             // namespace.
@@ -103,7 +117,7 @@
     };
 
     window.TooltipManager = TooltipManager;
-    $(document).ready(function () {
+    $(document).ready(function() {
         window.globalTooltipManager = new TooltipManager(document.body);
     });
 }());

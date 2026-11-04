@@ -1,15 +1,17 @@
 """
 Test CRUD for authorization.
 """
+
 import copy
 
-from django.contrib.auth.models import User
-
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-from contentstore.tests.utils import AjaxEnabledTestClient
-from contentstore.utils import reverse_url, reverse_course_url
-from student.roles import CourseInstructorRole, CourseStaffRole, OrgStaffRole, OrgInstructorRole
-from student import auth
+from cms.djangoapps.contentstore.tests.utils import AjaxEnabledTestClient
+from cms.djangoapps.contentstore.utils import reverse_url
+from common.djangoapps.student import auth
+from common.djangoapps.student.roles import CourseInstructorRole, CourseStaffRole, OrgInstructorRole, OrgStaffRole
+from common.djangoapps.student.tests.factories import UserFactory
+from xmodule.modulestore.tests.django_utils import (
+    ModuleStoreTestCase,  # pylint: disable=wrong-import-order
+)
 
 
 class TestCourseAccess(ModuleStoreTestCase):
@@ -22,10 +24,10 @@ class TestCourseAccess(ModuleStoreTestCase):
 
         Create a pool of users w/o granting them any permissions
         """
-        user_password = super(TestCourseAccess, self).setUp()
+        super().setUp()
 
         self.client = AjaxEnabledTestClient()
-        self.client.login(username=self.user.username, password=user_password)
+        self.client.login(username=self.user.username, password=self.user_password)
 
         # create a course via the view handler which has a different strategy for permissions than the factory
         self.course_key = self.store.make_course_key('myu', 'mydept.mycourse', 'myrun')
@@ -48,9 +50,9 @@ class TestCourseAccess(ModuleStoreTestCase):
         """
         users = []
         for i in range(8):
-            username = "user{}".format(i)
-            email = "test+user{}@edx.org".format(i)
-            user = User.objects.create_user(username, email, 'foo')
+            username = f"user{i}"
+            email = f"test+user{i}@edx.org"
+            user = UserFactory.create(username=username, email=email, password='foo')
             user.is_active = True
             user.save()
             users.append(user)
@@ -61,7 +63,7 @@ class TestCourseAccess(ModuleStoreTestCase):
         Reverse the setup
         """
         self.client.logout()
-        ModuleStoreTestCase.tearDown(self)
+        ModuleStoreTestCase.tearDown(self)  # pylint: disable=non-parent-method-called
 
     def test_get_all_users(self):
         """
@@ -70,7 +72,7 @@ class TestCourseAccess(ModuleStoreTestCase):
         """
         # first check the course creator.has explicit access (don't use has_access as is_staff
         # will trump the actual test)
-        self.assertTrue(
+        self.assertTrue(  # noqa: PT009
             CourseInstructorRole(self.course_key).has_user(self.user),
             "Didn't add creator as instructor."
         )
@@ -91,13 +93,7 @@ class TestCourseAccess(ModuleStoreTestCase):
             user = users.pop()
             group.add_users(user)
             user_by_role[role].append(user)
-            self.assertTrue(auth.has_course_author_access(user, self.course_key), "{} does not have access".format(user))
-
-        course_team_url = reverse_course_url('course_team_handler', self.course_key)
-        response = self.client.get_html(course_team_url)
-        for role in [CourseInstructorRole, CourseStaffRole]:  # Global and org-based roles don't appear on this page
-            for user in user_by_role[role]:
-                self.assertContains(response, user.email)
+            self.assertTrue(auth.has_course_author_access(user, self.course_key), f"{user} does not have access")  # pylint: disable=line-too-long  # noqa: PT009
 
         # test copying course permissions
         copy_course_key = self.store.make_course_key('copyu', 'copydept.mycourse', 'myrun')
@@ -124,9 +120,9 @@ class TestCourseAccess(ModuleStoreTestCase):
                 if hasattr(user, '_roles'):
                     del user._roles
 
-                self.assertTrue(auth.has_course_author_access(user, copy_course_key), "{} no copy access".format(user))
+                self.assertTrue(auth.has_course_author_access(user, copy_course_key), f"{user} no copy access")  # noqa: PT009  # pylint: disable=line-too-long
                 if (role is OrgStaffRole) or (role is OrgInstructorRole):
                     auth.remove_users(self.user, role(self.course_key.org), user)
                 else:
                     auth.remove_users(self.user, role(self.course_key), user)
-                self.assertFalse(auth.has_course_author_access(user, self.course_key), "{} remove didn't work".format(user))
+                self.assertFalse(auth.has_course_author_access(user, self.course_key), f"{user} remove didn't work")  # pylint: disable=line-too-long  # noqa: PT009

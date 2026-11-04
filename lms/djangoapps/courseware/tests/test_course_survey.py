@@ -2,62 +2,64 @@
 Python tests for the Survey workflows
 """
 
+
 from collections import OrderedDict
-from nose.plugins.attrib import attr
 from copy import deepcopy
+from urllib.parse import quote
 
-from django.core.urlresolvers import reverse
-from django.contrib.auth.models import User
-
-from survey.models import SurveyForm, SurveyAnswer
+from django.contrib.auth.models import User  # pylint: disable=imported-auth-user
+from django.urls import reverse
 
 from common.test.utils import XssTestMixin
+from lms.djangoapps.courseware.tests.helpers import LoginEnrollmentTestCase
+from lms.djangoapps.survey.models import SurveyAnswer, SurveyForm
+from openedx.features.course_experience import course_home_url
+from openedx.features.course_experience.url_helpers import make_learning_mfe_courseware_url
+from xmodule.modulestore.tests.django_utils import SharedModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-from courseware.tests.helpers import LoginEnrollmentTestCase
 
 
-@attr('shard_1')
-class SurveyViewsTests(LoginEnrollmentTestCase, ModuleStoreTestCase, XssTestMixin):
+class SurveyViewsTests(LoginEnrollmentTestCase, SharedModuleStoreTestCase, XssTestMixin):
     """
     All tests for the views.py file
     """
+    STUDENT_INFO = [('view@test.com', 'Password1234')]
 
-    STUDENT_INFO = [('view@test.com', 'foo')]
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.test_survey_name = 'TestSurvey'
+        cls.course = CourseFactory.create(
+            display_name='<script>alert("XSS")</script>',
+            course_survey_required=True,
+            course_survey_name=cls.test_survey_name
+        )
+
+        cls.course_with_bogus_survey = CourseFactory.create(
+            course_survey_required=True,
+            course_survey_name="DoesNotExist"
+        )
+
+        cls.course_without_survey = CourseFactory.create()
 
     def setUp(self):
         """
         Set up the test data used in the specific tests
         """
-        super(SurveyViewsTests, self).setUp()
+        super().setUp()
 
-        self.test_survey_name = 'TestSurvey'
         self.test_form = '<input name="field1"></input>'
-
         self.survey = SurveyForm.create(self.test_survey_name, self.test_form)
 
         self.student_answers = OrderedDict({
-            u'field1': u'value1',
-            u'field2': u'value2',
+            'field1': 'value1',
+            'field2': 'value2',
         })
-
-        self.course = CourseFactory.create(
-            display_name='<script>alert("XSS")</script>',
-            course_survey_required=True,
-            course_survey_name=self.test_survey_name
-        )
-
-        self.course_with_bogus_survey = CourseFactory.create(
-            course_survey_required=True,
-            course_survey_name="DoesNotExist"
-        )
-
-        self.course_without_survey = CourseFactory.create()
 
         # Create student accounts and activate them.
         for i in range(len(self.STUDENT_INFO)):
             email, password = self.STUDENT_INFO[i]
-            username = 'u{0}'.format(i)
+            username = f'u{i}'
             self.create_account(username, email, password)
             self.activate_user(email)
 
@@ -76,38 +78,56 @@ class SurveyViewsTests(LoginEnrollmentTestCase, ModuleStoreTestCase, XssTestMixi
         """
         Helper method to assert that all known redirect points do redirect as expected
         """
-        for view_name in ['courseware', 'info', 'progress']:
+        for view_name in ['courseware', 'progress']:
             resp = self.client.get(
                 reverse(
                     view_name,
-                    kwargs={'course_id': unicode(course.id)}
+                    kwargs={'course_id': str(course.id)}
                 )
             )
             self.assertRedirects(
                 resp,
-                reverse('course_survey', kwargs={'course_id': unicode(course.id)})
+                reverse('course_survey', kwargs={'course_id': str(course.id)})
             )
 
-    def _assert_no_redirect(self, course):
+    def _assert_no_survey_redirect(self, course):
         """
-        Helper method to asswer that all known conditionally redirect points do
-        not redirect as expected
+        Helper method to assert that all known conditionally redirecting endpoints do
+        not redirect to the survey as expected
         """
-        for view_name in ['courseware', 'info', 'progress']:
-            resp = self.client.get(
-                reverse(
-                    view_name,
-                    kwargs={'course_id': unicode(course.id)}
-                )
+
+        # Make sure we get to the progress page.
+        resp = self.client.get(
+            reverse(
+                'progress',
+                kwargs={'course_id': str(course.id)}
             )
-            self.assertEquals(resp.status_code, 200)
+        )
+        assert resp.status_code == 200
+
+        # Make sure we are redirected to the MFE for courseware
+        resp = self.client.get(
+            reverse(
+                'courseware',
+                kwargs={'course_id': str(course.id)}
+            )
+        )
+        assert resp.status_code == 302
+        expected_redirect_url = make_learning_mfe_courseware_url(
+            course.id,
+            None,
+            None,
+            params=None,
+            preview=False
+        )
+        assert resp.url == expected_redirect_url
 
     def test_visiting_course_without_survey(self):
         """
         Verifies that going to the courseware which does not have a survey does
         not redirect to a survey
         """
-        self._assert_no_redirect(self.course_without_survey)
+        self._assert_no_survey_redirect(self.course_without_survey)
 
     def test_visiting_course_with_survey_redirects(self):
         """
@@ -117,17 +137,20 @@ class SurveyViewsTests(LoginEnrollmentTestCase, ModuleStoreTestCase, XssTestMixi
 
     def test_anonymous_user_visiting_course_with_survey(self):
         """
-        Verifies that anonymous user going to the courseware info with an unanswered survey is not
-        redirected to survery and info page renders without server error.
+        Verifies that anonymous user going to the course with an unanswered survey is not
+        redirected to survey.
         """
         self.logout()
         resp = self.client.get(
             reverse(
-                'info',
-                kwargs={'course_id': unicode(self.course.id)}
+                'courseware',
+                kwargs={'course_id': str(self.course.id)}
             )
         )
-        self.assertEquals(resp.status_code, 200)
+        self.assertRedirects(
+            resp,
+            f'/login?next=/courses/{quote(str(self.course.id))}/courseware'
+        )
 
     def test_visiting_course_with_existing_answers(self):
         """
@@ -137,9 +160,9 @@ class SurveyViewsTests(LoginEnrollmentTestCase, ModuleStoreTestCase, XssTestMixi
             self.postback_url,
             self.student_answers
         )
-        self.assertEquals(resp.status_code, 200)
+        assert resp.status_code == 200
 
-        self._assert_no_redirect(self.course)
+        self._assert_no_survey_redirect(self.course)
 
     def test_course_id_field(self):
         """
@@ -149,13 +172,13 @@ class SurveyViewsTests(LoginEnrollmentTestCase, ModuleStoreTestCase, XssTestMixi
         resp = self.client.get(
             reverse(
                 'course_survey',
-                kwargs={'course_id': unicode(self.course.id)}
+                kwargs={'course_id': str(self.course.id)}
             )
         )
 
-        self.assertEqual(resp.status_code, 200)
-        expected = '<input type="hidden" name="course_id" value="{course_id}" />'.format(
-            course_id=unicode(self.course.id)
+        assert resp.status_code == 200
+        expected = '<input type="hidden" name="course_id" value="{course_id}" />'.format(  # noqa: UP032
+            course_id=str(self.course.id)
         )
 
         self.assertContains(resp, expected)
@@ -167,16 +190,16 @@ class SurveyViewsTests(LoginEnrollmentTestCase, ModuleStoreTestCase, XssTestMixi
 
         answers = deepcopy(self.student_answers)
         answers.update({
-            'course_id': unicode(self.course.id)
+            'course_id': str(self.course.id)
         })
 
         resp = self.client.post(
             self.postback_url,
             answers
         )
-        self.assertEquals(resp.status_code, 200)
+        assert resp.status_code == 200
 
-        self._assert_no_redirect(self.course)
+        self._assert_no_survey_redirect(self.course)
 
         # however we want to make sure we persist the course_id
         answer_objs = SurveyAnswer.objects.filter(
@@ -185,13 +208,13 @@ class SurveyViewsTests(LoginEnrollmentTestCase, ModuleStoreTestCase, XssTestMixi
         )
 
         for answer_obj in answer_objs:
-            self.assertEquals(answer_obj.course_key, self.course.id)
+            assert answer_obj.course_key == self.course.id
 
     def test_visiting_course_with_bogus_survey(self):
         """
         Verifies that going to the courseware with a required, but non-existing survey, does not redirect
         """
-        self._assert_no_redirect(self.course_with_bogus_survey)
+        self._assert_no_survey_redirect(self.course_with_bogus_survey)
 
     def test_visiting_survey_with_bogus_survey_name(self):
         """
@@ -201,12 +224,13 @@ class SurveyViewsTests(LoginEnrollmentTestCase, ModuleStoreTestCase, XssTestMixi
         resp = self.client.get(
             reverse(
                 'course_survey',
-                kwargs={'course_id': unicode(self.course_with_bogus_survey.id)}
+                kwargs={'course_id': str(self.course_with_bogus_survey.id)}
             )
         )
         self.assertRedirects(
             resp,
-            reverse('info', kwargs={'course_id': unicode(self.course_with_bogus_survey.id)})
+            course_home_url(self.course_with_bogus_survey.id),
+            fetch_redirect_response=False,
         )
 
     def test_visiting_survey_with_no_course_survey(self):
@@ -217,12 +241,13 @@ class SurveyViewsTests(LoginEnrollmentTestCase, ModuleStoreTestCase, XssTestMixi
         resp = self.client.get(
             reverse(
                 'course_survey',
-                kwargs={'course_id': unicode(self.course_without_survey.id)}
+                kwargs={'course_id': str(self.course_without_survey.id)}
             )
         )
         self.assertRedirects(
             resp,
-            reverse('info', kwargs={'course_id': unicode(self.course_without_survey.id)})
+            course_home_url(self.course_without_survey.id),
+            fetch_redirect_response=False,
         )
 
     def test_survey_xss(self):
@@ -230,7 +255,7 @@ class SurveyViewsTests(LoginEnrollmentTestCase, ModuleStoreTestCase, XssTestMixi
         response = self.client.get(
             reverse(
                 'course_survey',
-                kwargs={'course_id': unicode(self.course.id)}
+                kwargs={'course_id': str(self.course.id)}
             )
         )
-        self.assert_xss(response, '<script>alert("XSS")</script>')
+        self.assert_no_xss(response, '<script>alert("XSS")</script>')

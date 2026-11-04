@@ -1,27 +1,26 @@
-;(function (define) {
+(function(define) {
     'use strict';
+
     define([
         'jquery',
         'backbone',
         'jquery.url'
-    ], function ($, Backbone) {
-
+    ], function($, Backbone) {
         return Backbone.Model.extend({
             defaults: {
                 email: '',
-                password: '',
-                remember: false
+                password: ''
             },
 
             ajaxType: '',
             urlRoot: '',
 
-            initialize: function (attributes, options) {
+            initialize: function(attributes, options) {
                 this.ajaxType = options.method;
                 this.urlRoot = options.url;
             },
 
-            sync: function (method, model) {
+            sync: function(method, model) {
                 var headers = {'X-CSRFToken': $.cookie('csrftoken')},
                     data = {},
                     analytics,
@@ -44,10 +43,10 @@
                     type: model.ajaxType,
                     data: data,
                     headers: headers,
-                    success: function () {
+                    success: function() {
                         model.trigger('sync');
                     },
-                    error: function (error) {
+                    error: function(error) {
                         model.trigger('error', error);
                     }
                 });

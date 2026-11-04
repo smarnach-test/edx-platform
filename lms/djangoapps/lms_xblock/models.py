@@ -6,17 +6,21 @@ Includes:
         rendered in the LMS.
 """
 
-from django.db.models import TextField
 
 from config_models.models import ConfigurationModel
-
+from django.db.models import TextField
 from xblock.core import XBlockAside
 
 
 class XBlockAsidesConfig(ConfigurationModel):
     """
     Configuration for XBlockAsides.
+
+    .. no_pii:
     """
+
+    class Meta(ConfigurationModel.Meta):
+        app_label = "lms_xblock"
 
     disabled_blocks = TextField(
         default="about course_info static_tab",

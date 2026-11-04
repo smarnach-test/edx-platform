@@ -2,285 +2,332 @@ define(
     [
         'jquery', 'underscore', 'squire'
     ],
-function ($, _, Squire) {
-    'use strict';
-    // TODO: fix BLD-1100 Disabled due to intermittent failure on master and in PR builds
-    xdescribe('VideoTranslations', function () {
-        var TranslationsEntryTemplate = readFixtures(
-                'video/metadata-translations-entry.underscore'
-            ),
-            TranslationsItenTemplate = readFixtures(
-                'video/metadata-translations-item.underscore'
-            ),
-            modelStub = {
-                default_value: {
-                    'en': 'en.srt',
-                    'ru': 'ru.srt'
+    function($, _, Squire) {
+        'use strict';
+
+        // TODO: fix BLD-1100 Disabled due to intermittent failure on master and in PR builds
+        xdescribe('VideoTranslations', function() {
+            var TranslationsEntryTemplate = readFixtures(
+                    'video/metadata-translations-entry.underscore'
+                ),
+                TranslationsItenTemplate = readFixtures(
+                    'video/metadata-translations-item.underscore'
+                ),
+                modelStub = {
+                    default_value: {
+                        en: 'en.srt',
+                        ru: 'ru.srt'
+                    },
+                    display_name: 'Transcript Translation',
+                    explicitly_set: false,
+                    field_name: 'translations',
+                    help: 'Specifies the name for this component.',
+                    type: 'VideoTranslations',
+                    languages: [
+                        {code: 'zh', label: 'Chinese'},
+                        {code: 'en', label: 'English'},
+                        {code: 'fr', label: 'French'},
+                        {code: 'ru', label: 'Russian'},
+                        {code: 'uk', label: 'Ukrainian'}
+                    ],
+                    value: {
+                        en: 'en.srt',
+                        ru: 'ru.srt',
+                        uk: 'uk.srt',
+                        fr: 'fr.srt'
+                    }
                 },
-                display_name: 'Transcript Translation',
-                explicitly_set: false,
-                field_name: 'translations',
-                help: 'Specifies the name for this component.',
-                type: 'VideoTranslations',
-                languages: [
-                    {code: 'zh', label: 'Chinese'},
-                    {code: 'en', label: 'English'},
-                    {code: 'fr', label: 'French'},
-                    {code: 'ru', label: 'Russian'},
-                    {code: 'uk', label: 'Ukrainian'}
-                ],
-                value: {
-                    'en': 'en.srt',
-                    'ru': 'ru.srt',
-                    'uk': 'uk.srt',
-                    'fr': 'fr.srt'
-                }
-            },
-            self, injector;
+                self, injector;
 
-        var setValue = function (view, value) {
-            view.setValueInEditor(value);
-            view.updateModel();
-        };
+            var setValue = function(view, value) {
+                view.setValueInEditor(value);
+                view.updateModel();
+            };
 
-        var createPromptSpy = function (name) {
-            var spy = jasmine.createSpyObj(name, ['constructor', 'show', 'hide']);
-            spy.constructor.andReturn(spy);
-            spy.show.andReturn(spy);
-            spy.extend = jasmine.createSpy().andReturn(spy.constructor);
+            var createPromptSpy = function(name) {
+                var spy = jasmine.createSpyObj(name, ['constructor', 'show', 'hide']);
+                spy.constructor.and.returnValue(spy);
+                spy.show.and.returnValue(spy);
+                spy.extend = jasmine.createSpy().and.returnValue(spy.constructor);
 
-            return spy;
-        };
+                return spy;
+            };
 
-        beforeEach(function () {
-            self = this;
+            beforeEach(function(done) {
+                self = this;
 
-            this.addMatchers({
-                assertValueInView: function(expected) {
-                    var value = this.actual.getValueFromEditor();
-                    return this.env.equals_(value, expected);
-                },
-                assertCanUpdateView: function (expected) {
-                    var view = this.actual,
-                        value;
+                jasmine.addMatchers({
+                    assertValueInView: function() {
+                        return {
+                            compare: function(actual, expected) {
+                                var value = actual.getValueFromEditor();
+                                var passed = _.isEqual(value, expected);
 
-                    view.setValueInEditor(expected);
-                    value = view.getValueFromEditor();
+                                return {
+                                    pass: passed,
+                                    message: 'Expected ' + actual + (passed ? '' : ' not') + ' to equal ' + expected
+                                };
+                            }
+                        };
+                    },
+                    assertCanUpdateView: function() {
+                        return {
+                            compare: function(actual, expected) {
+                                var view = actual,
+                                    value,
+                                    passed;
 
-                    return this.env.equals_(value, expected);
-                },
-                assertClear: function (modelValue) {
-                    var env = this.env,
-                        view = this.actual,
-                        model = view.model;
+                                view.setValueInEditor(expected);
+                                value = view.getValueFromEditor();
+                                passed = _.isEqual(value, expected);
 
-                    return model.getValue() === null &&
-                           env.equals_(model.getDisplayValue(), modelValue) &&
-                           env.equals_(view.getValueFromEditor(), modelValue);
-                },
-                assertUpdateModel: function (originalValue, newValue) {
-                    var env = this.env,
-                        view = this.actual,
-                        model = view.model,
-                        expectOriginal;
+                                return {
+                                    pass: passed,
+                                    message: 'Expected ' + actual + (passed ? '' : ' not') + ' to equal ' + expected
+                                };
+                            }
+                        };
+                    },
+                    assertClear: function() {
+                        return {
+                            compare: function(actual, modelValue) {
+                                var view = actual,
+                                    model = view.model,
+                                    passed;
 
-                    view.setValueInEditor(newValue);
-                    expectOriginal = env.equals_(model.getValue(), originalValue);
-                    view.updateModel();
+                                passed = model.getValue() === null
+                                && _.isEqual(model.getDisplayValue(), modelValue)
+                                && _.isEqual(view.getValueFromEditor(), modelValue);
 
-                    return expectOriginal &&
-                           env.equals_(model.getValue(), newValue);
-                },
-                verifyKeysUnique: function (initial, expected, testData) {
-                    var env = this.env,
-                        view = this.actual,
-                        item, value;
+                                return {
+                                    pass: passed
+                                };
+                            }
+                        };
+                    },
+                    assertUpdateModel: function() {
+                        return {
+                            compare: function(actual, originalValue, newValue) {
+                                var view = actual,
+                                    model = view.model,
+                                    expectOriginal,
+                                    passed;
 
-                    view.setValueInEditor(initial);
-                    view.updateModel();
-                    view.$el.find('.create-setting').click();
-                    item = view.$el.find('.list-settings-item').last();
-                    item.find('select').val(testData.key);
-                    item.find('input:hidden').val(testData.value);
-                    value = view.getValueFromEditor();
+                                view.setValueInEditor(newValue);
+                                expectOriginal = _.isEqual(model.getValue(), originalValue);
+                                view.updateModel();
 
-                    return env.equals_(value, expected);
-                },
-                verifyButtons: function (upload, download, remove, index) {
-                    var view = this.actual,
-                        items = view.$el.find('.list-settings-item'),
-                        item  = index ? items.eq(index) : items.last(),
-                        uploadBtn = item.find('.upload-setting'),
-                        downloadBtn = item.find('.download-setting'),
-                        removeBtn = item.find('.remove-setting');
+                                passed = expectOriginal
+                                && _.isEqual(model.getValue(), newValue);
 
+                                return {
+                                    pass: passed
+                                };
+                            }
+                        };
+                    },
+                    verifyKeysUnique: function() {
+                        return {
+                            compare: function(actual, initial, expected, testData) {
+                                var view = this.actual,
+                                    item,
+                                    value,
+                                    passed;
 
-                    upload = upload ? uploadBtn.length : !uploadBtn.length;
-                    download = download ? downloadBtn.length : !downloadBtn.length;
-                    remove = remove ? removeBtn.length : !removeBtn.length;
+                                view.setValueInEditor(initial);
+                                view.updateModel();
+                                view.$el.find('.create-setting').click();
+                                item = view.$el.find('.list-settings-item').last();
+                                item.find('select').val(testData.key);
+                                item.find('input:hidden').val(testData.value);
+                                value = view.getValueFromEditor();
 
-                    return upload && download && remove;
+                                passed = _.isEqual(value, expected);
 
-                }
-            });
+                                return {
+                                    pass: passed
+                                };
+                            }
+                        };
+                    },
+                    verifyButtons: function() {
+                        return {
+                            compare: function(actual, upload, download, remove, index) {
+                                var view = this.actual,
+                                    items = view.$el.find('.list-settings-item'),
+                                    item = index ? items.eq(index) : items.last(),
+                                    uploadBtn = item.find('.upload-setting'),
+                                    downloadBtn = item.find('.download-setting'),
+                                    removeBtn = item.find('.remove-setting'),
+                                    passed;
 
-            appendSetFixtures($('<script>', {
-                id: 'metadata-translations-entry',
-                type: 'text/template'
-            }).text(TranslationsEntryTemplate));
+                                upload = upload ? uploadBtn.length : !uploadBtn.length;
+                                download = download ? downloadBtn.length : !downloadBtn.length;
+                                remove = remove ? removeBtn.length : !removeBtn.length;
 
-            appendSetFixtures($('<script>', {
-                id: 'metadata-translations-item',
-                type: 'text/template'
-            }).text(TranslationsItenTemplate));
+                                passed = upload && download && remove;
 
-            this.uploadSpies = createPromptSpy('UploadDialog');
+                                return {
+                                    pass: passed
+                                };
+                            }
+                        };
+                    }
+                });
 
-            injector = new Squire();
-            injector.mock('js/views/uploads', function () {
-                return self.uploadSpies;
-            });
+                appendSetFixtures($('<script>', {
+                    id: 'metadata-translations-entry',
+                    type: 'text/template'
+                }).text(TranslationsEntryTemplate));
 
-            runs(function() {
+                appendSetFixtures($('<script>', {
+                    id: 'metadata-translations-item',
+                    type: 'text/template'
+                }).text(TranslationsItenTemplate));
+
+                this.uploadSpies = createPromptSpy('UploadDialog');
+
+                injector = new Squire();
+                injector.mock('js/views/uploads', function() {
+                    return self.uploadSpies;
+                });
+
                 injector.require([
                     'js/models/metadata', 'js/views/video/translations_editor'
                 ],
                 function(MetadataModel, Translations) {
                     var model = new MetadataModel($.extend(true, {}, modelStub));
                     self.view = new Translations({model: model});
+
+                    done();
                 });
             });
 
-            waitsFor(function() {
-                return self.view;
-            }, 'VideoTranslations was not created', 1000);
-        });
-
-        afterEach(function () {
-            injector.clean();
-            injector.remove();
-        });
-
-        it('returns the initial value upon initialization', function () {
-            expect(this.view).assertValueInView({
-                'en': 'en.srt',
-                'ru': 'ru.srt',
-                'uk': 'uk.srt',
-                'fr': 'fr.srt'
+            afterEach(function() {
+                injector.clean();
+                injector.remove();
             });
 
-            expect(this.view).verifyButtons(true, true, true);
-        });
+            it('returns the initial value upon initialization', function() {
+                expect(this.view).assertValueInView({
+                    en: 'en.srt',
+                    ru: 'ru.srt',
+                    uk: 'uk.srt',
+                    fr: 'fr.srt'
+                });
 
-        it('updates its value correctly', function () {
-            expect(this.view).assertCanUpdateView({
-                'ru': 'ru.srt',
-                'uk': 'uk.srt',
-                'fr': 'fr.srt'
-            });
-        });
-
-        it('upload works correctly', function () {
-            var options;
-
-            setValue(this.view, {
-                'en': 'en.srt',
-                'ru': 'ru.srt',
-                'uk': 'uk.srt',
-                'fr': 'fr.srt',
-                'zh': ''
+                expect(this.view).verifyButtons(true, true, true);
             });
 
-            expect(this.view).verifyButtons(true, false, true);
-
-            this.view.$el.find('.upload-setting').last().click();
-
-            expect(this.uploadSpies.constructor).toHaveBeenCalled();
-            expect(this.uploadSpies.show).toHaveBeenCalled();
-
-            options = this.uploadSpies.constructor.mostRecentCall.args[0];
-            options.onSuccess({'filename': 'zh.srt'});
-
-            expect(this.view).verifyButtons(true, true, true);
-
-            expect(this.view.getValueFromEditor()).toEqual({
-                'en': 'en.srt',
-                'ru': 'ru.srt',
-                'uk': 'uk.srt',
-                'fr': 'fr.srt',
-                'zh': 'zh.srt'
-            });
-        });
-
-        it('has a clear method to revert to the model default', function () {
-            setValue(this.view, {
-                'fr': 'en.srt',
-                'uk': 'ru.srt'
+            it('updates its value correctly', function() {
+                expect(this.view).assertCanUpdateView({
+                    ru: 'ru.srt',
+                    uk: 'uk.srt',
+                    fr: 'fr.srt'
+                });
             });
 
-            this.view.$el.find('.create-setting').click();
+            it('upload works correctly', function() {
+                var options;
 
-            this.view.clear();
+                setValue(this.view, {
+                    en: 'en.srt',
+                    ru: 'ru.srt',
+                    uk: 'uk.srt',
+                    fr: 'fr.srt',
+                    zh: ''
+                });
 
-            expect(this.view).assertClear({
-                'en': 'en.srt',
-                'ru': 'ru.srt'
+                expect(this.view).verifyButtons(true, false, true);
+
+                this.view.$el.find('.upload-setting').last().click();
+
+                expect(this.uploadSpies.constructor).toHaveBeenCalled();
+                expect(this.uploadSpies.show).toHaveBeenCalled();
+
+                options = this.uploadSpies.constructor.calls.mostRecent().args[0];
+                options.onSuccess({filename: 'zh.srt'});
+
+                expect(this.view).verifyButtons(true, true, true);
+
+                expect(this.view.getValueFromEditor()).toEqual({
+                    en: 'en.srt',
+                    ru: 'ru.srt',
+                    uk: 'uk.srt',
+                    fr: 'fr.srt',
+                    zh: 'zh.srt'
+                });
             });
 
-            expect(this.view.$el.find('.create-setting')).not.toHaveClass('is-disabled');
-        });
+            it('has a clear method to revert to the model default', function() {
+                setValue(this.view, {
+                    fr: 'en.srt',
+                    uk: 'ru.srt'
+                });
 
-        it('has an update model method', function () {
-            expect(this.view).assertUpdateModel(null, {'fr': 'fr.srt'});
-        });
+                this.view.$el.find('.create-setting').click();
 
-        it('can add an entry', function () {
-            expect(_.keys(this.view.model.get('value')).length).toEqual(4);
-            this.view.$el.find('.create-setting').click();
-            expect(this.view.$el.find('select').length).toEqual(5);
-        });
+                this.view.clear();
 
-        it('can remove an entry', function () {
-            setValue(this.view, {
-                'en': 'en.srt',
-                'ru': 'ru.srt',
-                'fr': ''
+                expect(this.view).assertClear({
+                    en: 'en.srt',
+                    ru: 'ru.srt'
+                });
+
+                expect(this.view.$el.find('.create-setting')).not.toHaveClass('is-disabled');
             });
-            expect(_.keys(this.view.model.get('value')).length).toEqual(3);
-            this.view.$el.find('.remove-setting').last().click();
-            expect(_.keys(this.view.model.get('value')).length).toEqual(2);
-        });
 
-        it('only allows one blank entry at a time', function () {
-            expect(this.view.$el.find('select').length).toEqual(4);
-            this.view.$el.find('.create-setting').click();
-            this.view.$el.find('.create-setting').click();
-            expect(this.view.$el.find('select').length).toEqual(5);
-        });
+            it('has an update model method', function() {
+                expect(this.view).assertUpdateModel(null, {fr: 'fr.srt'});
+            });
 
-        it('only allows unique keys', function () {
-            expect(this.view).verifyKeysUnique(
-                {'ru': 'ru.srt'}, {'ru': 'ru.srt'}, {'key': 'ru', 'value': ''}
-            );
+            it('can add an entry', function() {
+                expect(_.keys(this.view.model.get('value')).length).toEqual(4);
+                this.view.$el.find('.create-setting').click();
+                expect(this.view.$el.find('select').length).toEqual(5);
+            });
 
-            expect(this.view).verifyKeysUnique(
-                {'ru': 'en.srt'}, {'ru': 'ru.srt'}, {'key': 'ru', 'value': 'ru.srt'}
-            );
+            it('can remove an entry', function() {
+                setValue(this.view, {
+                    en: 'en.srt',
+                    ru: 'ru.srt',
+                    fr: ''
+                });
+                expect(_.keys(this.view.model.get('value')).length).toEqual(3);
+                this.view.$el.find('.remove-setting').last().click();
+                expect(_.keys(this.view.model.get('value')).length).toEqual(2);
+            });
 
-            expect(this.view).verifyKeysUnique(
-                {'ru': 'ru.srt'}, {'ru': 'ru.srt'}, {'key': '', 'value': ''}
-            );
-        });
+            it('only allows one blank entry at a time', function() {
+                expect(this.view.$el.find('select').length).toEqual(4);
+                this.view.$el.find('.create-setting').click();
+                this.view.$el.find('.create-setting').click();
+                expect(this.view.$el.find('select').length).toEqual(5);
+            });
 
-        it('re-enables the add setting button after entering a new value', function () {
-            expect(this.view.$el.find('select').length).toEqual(4);
-            this.view.$el.find('.create-setting').click();
-            expect(this.view).verifyButtons(false, false, true);
-            expect(this.view.$el.find('.create-setting')).toHaveClass('is-disabled');
-            this.view.$el.find('select').last().val('zh');
-            this.view.$el.find('select').last().trigger('change');
-            expect(this.view).verifyButtons(true, false, true);
-            expect(this.view.$el.find('.create-setting')).not.toHaveClass('is-disabled');
+            it('only allows unique keys', function() {
+                expect(this.view).verifyKeysUnique(
+                    {ru: 'ru.srt'}, {ru: 'ru.srt'}, {key: 'ru', value: ''}
+                );
+
+                expect(this.view).verifyKeysUnique(
+                    {ru: 'en.srt'}, {ru: 'ru.srt'}, {key: 'ru', value: 'ru.srt'}
+                );
+
+                expect(this.view).verifyKeysUnique(
+                    {ru: 'ru.srt'}, {ru: 'ru.srt'}, {key: '', value: ''}
+                );
+            });
+
+            it('re-enables the add setting button after entering a new value', function() {
+                expect(this.view.$el.find('select').length).toEqual(4);
+                this.view.$el.find('.create-setting').click();
+                expect(this.view).verifyButtons(false, false, true);
+                expect(this.view.$el.find('.create-setting')).toHaveClass('is-disabled');
+                this.view.$el.find('select').last().val('zh');
+                this.view.$el.find('select').last().trigger('change');
+                expect(this.view).verifyButtons(true, false, true);
+                expect(this.view.$el.find('.create-setting')).not.toHaveClass('is-disabled');
+            });
         });
     });
-});

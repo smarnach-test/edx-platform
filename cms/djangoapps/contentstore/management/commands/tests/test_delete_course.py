@@ -1,117 +1,81 @@
 """
-Unittests for deleting a course in an chosen modulestore
+Delete course tests.
 """
 
-import unittest
-import mock
 
-from opaque_keys.edx.locations import SlashSeparatedCourseKey
-from django.core.management import CommandError
-from contentstore.management.commands.delete_course import Command  # pylint: disable=import-error
-from contentstore.tests.utils import CourseTestCase  # pylint: disable=import-error
-from xmodule.modulestore.tests.factories import CourseFactory
+from unittest import mock
+
+from django.core.management import CommandError, call_command
+
+from common.djangoapps.student.roles import CourseInstructorRole
+from common.djangoapps.student.tests.factories import UserFactory
+from xmodule.contentstore.content import StaticContent
+from xmodule.contentstore.django import contentstore
 from xmodule.modulestore.django import modulestore
+from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
+from xmodule.modulestore.tests.factories import CourseFactory
 
 
-class TestArgParsing(unittest.TestCase):
-    """
-    Tests for parsing arguments for the 'delete_course'  management command
-    """
-
-    def setUp(self):
-        super(TestArgParsing, self).setUp()
-
-        self.command = Command()
-
-    def test_no_args(self):
-        """
-        Testing 'delete_course' command with no arguments provided
-        """
-        errstring = "Arguments missing: 'org/number/run commit'"
-        with self.assertRaisesRegexp(CommandError, errstring):
-            self.command.handle()
-
-    def test_no_course_key(self):
-        """
-        Testing 'delete_course' command with no course key provided
-        """
-        errstring = "Delete_course requires a course_key <org/number/run> argument."
-        with self.assertRaisesRegexp(CommandError, errstring):
-            self.command.handle("commit")
-
-    def test_commit_argument(self):
-        """
-        Testing 'delete_course' command without 'commit' argument
-        """
-        errstring = "Delete_course requires a commit argument at the end"
-        with self.assertRaisesRegexp(CommandError, errstring):
-            self.command.handle("TestX/TS01/run")
-
-    def test_invalid_course_key(self):
-        """
-        Testing 'delete_course' command with an invalid course key argument
-        """
-        errstring = "Invalid course_key: 'TestX/TS01'. Proper syntax: 'org/number/run commit' "
-        with self.assertRaisesRegexp(CommandError, errstring):
-            self.command.handle("TestX/TS01", "commit")
-
-    def test_missing_commit_argument(self):
-        """
-        Testing 'delete_course' command with misspelled 'commit' argument
-        """
-        errstring = "Delete_course requires a commit argument at the end"
-        with self.assertRaisesRegexp(CommandError, errstring):
-            self.command.handle("TestX/TS01/run", "comit")
-
-    def test_too_many_arguments(self):
-        """
-        Testing 'delete_course' command with more than 2 arguments
-        """
-        errstring = "Too many arguments! Expected <course_key> <commit>"
-        with self.assertRaisesRegexp(CommandError, errstring):
-            self.command.handle("TestX/TS01/run", "commit", "invalid")
-
-
-class DeleteCourseTest(CourseTestCase):
+class DeleteCourseTests(ModuleStoreTestCase):
     """
     Test for course deleting functionality of the 'delete_course' command
     """
+    YESNO_PATCH_LOCATION = 'cms.djangoapps.contentstore.management.commands.delete_course.query_yes_no'
 
-    YESNO_PATCH_LOCATION = 'contentstore.management.commands.delete_course.query_yes_no'
+    def test_invalid_course_key(self):
+        course_run_key = 'foo/TestX/TS01/2015_Q7'
+        expected_error_message = 'Invalid course_key: ' + course_run_key
+        with self.assertRaisesRegex(CommandError, expected_error_message):  # noqa: PT027
+            call_command('delete_course', course_run_key)
 
-    def setUp(self):
-        super(DeleteCourseTest, self).setUp()
+    def test_course_not_found(self):
+        course_run_key = 'TestX/TS01/2015_Q7'
+        expected_error_message = 'Course not found: ' + course_run_key
+        with self.assertRaisesRegex(CommandError, expected_error_message):  # noqa: PT027
+            call_command('delete_course', course_run_key)
 
-        self.command = Command()
+    def test_asset_and_course_deletion(self):
+        course_run = CourseFactory()
+        self.assertIsNotNone(modulestore().get_course(course_run.id))  # noqa: PT009
 
-        org = 'TestX'
-        course_number = 'TS01'
-        course_run = '2015_Q1'
-
-        # Create a course using split modulestore
-        self.course = CourseFactory.create(
-            org=org,
-            number=course_number,
-            run=course_run
-        )
-
-    def test_course_key_not_found(self):
-        """
-        Test for when a non-existing course key is entered
-        """
-        errstring = "Course with 'TestX/TS01/2015_Q7' key not found."
-        with self.assertRaisesRegexp(CommandError, errstring):
-            self.command.handle('TestX/TS01/2015_Q7', "commit")
-
-    def test_course_deleted(self):
-        """
-        Testing if the entered course was deleted
-        """
-
-        #Test if the course that is about to be deleted exists
-        self.assertIsNotNone(modulestore().get_course(SlashSeparatedCourseKey("TestX", "TS01", "2015_Q1")))
+        store = contentstore()
+        asset_key = course_run.id.make_asset_key('asset', 'test.txt')
+        content = StaticContent(asset_key, 'test.txt', 'plain/text', b'test data')
+        store.save(content)
+        __, asset_count = store.get_all_content_for_course(course_run.id)
+        assert asset_count == 1
 
         with mock.patch(self.YESNO_PATCH_LOCATION) as patched_yes_no:
             patched_yes_no.return_value = True
-            self.command.handle('TestX/TS01/2015_Q1', "commit")
-            self.assertIsNone(modulestore().get_course(SlashSeparatedCourseKey("TestX", "TS01", "2015_Q1")))
+            call_command('delete_course', str(course_run.id))
+
+        assert modulestore().get_course(course_run.id) is None
+
+        __, asset_count = store.get_all_content_for_course(course_run.id)
+        assert asset_count == 1
+
+    def test_keep_instructors(self):
+        course_run = CourseFactory()
+        instructor = UserFactory()
+        CourseInstructorRole(course_run.id).add_users(instructor)
+
+        with mock.patch(self.YESNO_PATCH_LOCATION, return_value=True):
+            call_command('delete_course', str(course_run.id), '--keep-instructors')
+
+        assert CourseInstructorRole(course_run.id).has_user(instructor)
+
+    def test_remove_assets(self):
+        course_run = CourseFactory()
+        store = contentstore()
+
+        asset_key = course_run.id.make_asset_key('asset', 'test.txt')
+        content = StaticContent(asset_key, 'test.txt', 'plain/text', b'test data')
+        store.save(content)
+        __, asset_count = store.get_all_content_for_course(course_run.id)
+        assert asset_count == 1
+
+        with mock.patch(self.YESNO_PATCH_LOCATION, return_value=True):
+            call_command('delete_course', str(course_run.id), '--remove-assets')
+
+        __, asset_count = store.get_all_content_for_course(course_run.id)
+        assert asset_count == 0

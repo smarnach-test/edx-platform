@@ -8,27 +8,42 @@ changes. To do that,
 1. Go to the edx-platform dir
 2. ./manage.py lms schemamigration lti_provider --auto "description" --settings=devstack
 """
-from django.contrib.auth.models import User
-from django.db import models
+
+
 import logging
 
-from xmodule_django.models import CourseKeyField, UsageKeyField
+from django.contrib.auth.models import User  # pylint: disable=imported-auth-user
+from django.db import models
+from django.utils.translation import gettext as _
+from opaque_keys.edx.django.models import CourseKeyField, UsageKeyField
 
-from provider.utils import short_token, long_token
+from openedx.core.djangolib.fields import CharNullField
+from openedx.core.lib.hash_utils import short_token
 
 log = logging.getLogger("edx.lti_provider")
 
 
-class LtiConsumer(models.Model):
+class LtiConsumer(models.Model):  # noqa: DJ008
     """
     Database model representing an LTI consumer. This model stores the consumer
     specific settings, such as the OAuth key/secret pair and any LTI fields
     that must be persisted.
+
+    .. no_pii:
     """
     consumer_name = models.CharField(max_length=255, unique=True)
     consumer_key = models.CharField(max_length=32, unique=True, db_index=True, default=short_token)
-    consumer_secret = models.CharField(max_length=32, unique=True, default=long_token)
-    instance_guid = models.CharField(max_length=255, blank=True, null=True, unique=True)
+    consumer_secret = models.CharField(max_length=32, unique=True, default=short_token)
+    instance_guid = CharNullField(max_length=255, blank=True, null=True, unique=True)
+    require_user_account = models.BooleanField(blank=True, default=False, help_text=_(
+        "When checked, the LTI content will load only for learners who have an account "
+        "in this instance. This is required only for linking learner accounts with "
+        "the LTI consumer. See the Open edX LTI Provider documentation for more details."
+    ))
+    use_lti_pii = models.BooleanField(blank=True, default=False, help_text=_(
+        "When checked, the platform will automatically use any personal information provided "
+        "via LTI to create an account. Otherwise an anonymous account will be created."
+    ))
 
     @staticmethod
     def get_or_supplement(instance_guid, consumer_key):
@@ -73,7 +88,7 @@ class LtiConsumer(models.Model):
         return consumer
 
 
-class OutcomeService(models.Model):
+class OutcomeService(models.Model):  # noqa: DJ008
     """
     Model for a single outcome service associated with an LTI consumer. Note
     that a given consumer may have more than one outcome service URL over its
@@ -90,12 +105,14 @@ class OutcomeService(models.Model):
     Some LTI-specified fields use the prefix lis_; this refers to the IMS
     Learning Information Services standard from which LTI inherits some
     properties
+
+    .. no_pii:
     """
     lis_outcome_service_url = models.CharField(max_length=255, unique=True)
-    lti_consumer = models.ForeignKey(LtiConsumer)
+    lti_consumer = models.ForeignKey(LtiConsumer, on_delete=models.CASCADE)
 
 
-class GradedAssignment(models.Model):
+class GradedAssignment(models.Model):  # noqa: DJ008
     """
     Model representing a single launch of a graded assignment by an individual
     user. There will be a row created here only if the LTI consumer may require
@@ -108,34 +125,32 @@ class GradedAssignment(models.Model):
     Some LTI-specified fields use the prefix lis_; this refers to the IMS
     Learning Information Services standard from which LTI inherits some
     properties
+
+    .. no_pii:
     """
-    user = models.ForeignKey(User, db_index=True)
-    course_key = CourseKeyField(max_length=255, db_index=True)
-    usage_key = UsageKeyField(max_length=255, db_index=True)
-    outcome_service = models.ForeignKey(OutcomeService)
+    user = models.ForeignKey(User, db_index=True, on_delete=models.CASCADE)
+    course_key = CourseKeyField(db_index=True)
+    usage_key = UsageKeyField(db_index=True)
+    outcome_service = models.ForeignKey(OutcomeService, on_delete=models.CASCADE)
     lis_result_sourcedid = models.CharField(max_length=255, db_index=True)
     version_number = models.IntegerField(default=0)
 
-    class Meta(object):
-        """
-        Uniqueness constraints.
-        """
+    class Meta:
         unique_together = ('outcome_service', 'lis_result_sourcedid')
 
 
-class LtiUser(models.Model):
+class LtiUser(models.Model):  # noqa: DJ008
     """
     Model mapping the identity of an LTI user to an account on the edX platform.
     The LTI user_id field is guaranteed to be unique per LTI consumer (per
     to the LTI spec), so we guarantee a unique mapping from LTI to edX account
     by using the lti_consumer/lti_user_id tuple.
-    """
-    lti_consumer = models.ForeignKey(LtiConsumer)
-    lti_user_id = models.CharField(max_length=255)
-    edx_user = models.ForeignKey(User, unique=True)
 
-    class Meta(object):
-        """
-        Uniqueness constraints.
-        """
+    .. no_pii:
+    """
+    lti_consumer = models.ForeignKey(LtiConsumer, on_delete=models.CASCADE)
+    lti_user_id = models.CharField(max_length=255)
+    edx_user = models.ForeignKey(User, on_delete=models.CASCADE)
+
+    class Meta:
         unique_together = ('lti_consumer', 'lti_user_id')

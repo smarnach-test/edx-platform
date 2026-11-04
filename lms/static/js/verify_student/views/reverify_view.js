@@ -7,7 +7,7 @@
  *
  */
 
- var edx = edx || {};
+var edx = edx || {};
 
 (function($, _, Backbone, gettext) {
     'use strict';
@@ -18,20 +18,20 @@
         el: '#reverify-container',
 
         stepOrder: [
-            "face-photo-step",
-            "id-photo-step",
-            "review-photos-step",
-            "reverify-success-step"
+            'face-photo-step',
+            'id-photo-step',
+            'review-photos-step',
+            'reverify-success-step'
         ],
         stepViews: {},
 
-        initialize: function( obj ) {
+        initialize: function(obj) {
             this.errorModel = obj.errorModel || null;
-            this.initializeStepViews( obj.stepInfo || {} );
+            this.initializeStepViews(obj.stepInfo || {});
             this.currentStepIndex = 0;
         },
 
-        initializeStepViews: function( stepInfo ) {
+        initializeStepViews: function(stepInfo) {
             var verificationModel, stepViewConstructors, nextStepTitles;
 
             // We need to initialize this here, because
@@ -45,10 +45,10 @@
             };
 
             nextStepTitles = [
-                gettext( "Take a photo of your ID" ),
-                gettext( "Review your info" ),
-                gettext( "Confirm" ),
-                ""
+                gettext('Take a photo of your ID'),
+                gettext('Review your info'),
+                gettext('Confirm'),
+                ''
             ];
 
             // Create the verification model, which is shared
@@ -78,18 +78,21 @@
         },
 
         renderCurrentStep: function() {
-            var stepView, stepEl;
+            var stepView, $stepEl;
 
             // Get or create the step container
-            stepEl = $("#current-step-container");
-            if (!stepEl.length) {
-                stepEl = $('<div id="current-step-container"></div>').appendTo(this.el);
+            $stepEl = $('#current-step-container');
+            if (!$stepEl.length) {
+                $stepEl = edx.HtmlUtils.append(
+                    $(this.el),
+                    edx.HtmlUtils.HTML('<div id="current-step-container"></div>').toString()
+                );
             }
 
             // Render the step subview
             // When the view is rendered, it will overwrite the existing step in the DOM.
-            stepView = this.stepViews[ this.stepOrder[ this.currentStepIndex ] ];
-            stepView.el = stepEl;
+            stepView = this.stepViews[this.stepOrder[this.currentStepIndex]];
+            stepView.el = $stepEl;
             stepView.render();
         },
 
@@ -101,15 +104,14 @@
             this.render();
         },
 
-        goToStep: function( stepName ) {
+        goToStep: function(stepName) {
             var stepIndex = _.indexOf(this.stepOrder, stepName);
 
-            if ( stepIndex >= 0 ) {
+            if (stepIndex >= 0) {
                 this.currentStepIndex = stepIndex;
             }
 
             this.render();
         }
     });
-
-})(jQuery, _, Backbone, gettext);
+}(jQuery, _, Backbone, gettext));

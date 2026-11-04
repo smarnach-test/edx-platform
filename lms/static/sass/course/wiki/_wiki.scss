@@ -1,6 +1,4 @@
-section.wiki {
-  padding-top: 25px;
-
+.wiki-wrapper section.wiki {
   .pull-left {
     float: left;
   }
@@ -9,25 +7,27 @@ section.wiki {
     float: right;
   }
 
-  .wiki-wrapper {
-    @include clearfix();
+  .form-search .input-prepend > label {
+    display: inline-block;
+    vertical-align: bottom;
+  }
 
-    > header {
-      height: 33px;
-      padding: 24px 0 26px;
-      border-bottom: 1px solid $gray-l3;
-      border-radius: 3px 3px 0 0;
-      background-color: $sidebar-color;
-    }
+  @include clearfix();
+
+  .breadcrumbs-header {
+    height: 33px;
+    padding: 24px 0 26px;
+    border-bottom: 1px solid $gray-l3;
+    border-radius: 3px 3px 0 0;
+    background-color: $sidebar-color;
   }
 
 
+  // -----------------
 
-  /*-----------------
+  // Breadcrumbs
 
-    Breadcrumbs
-
-  -----------------*/
+  // -----------------
 
   .breadcrumb {
     list-style: none;
@@ -43,7 +43,6 @@ section.wiki {
         float: left;
         display: block;
         overflow: hidden;
-        height: 30px;
         line-height: 31px;
         max-width: 200px;
         height: 100%;
@@ -52,11 +51,11 @@ section.wiki {
         color: $link-color;
       }
 
-      &:after {
+      &::after {
         content: '›';
         display: inline;
         margin-left: ($baseline/2);
-        color: $base-font-color;
+        color: $body-color;
         height: 30px;
         line-height: 31px;
       }
@@ -69,11 +68,11 @@ section.wiki {
 
 
 
-  /*-----------------
+  // -----------------
 
-    Global Functions
+  // Global Functions
 
-  -----------------*/
+  // -----------------
 
   .global-functions {
     display: block;
@@ -83,12 +82,14 @@ section.wiki {
 
   .add-article-btn {
     @include button(simple, #eee);
+
     margin-left: 25px;
     padding: 7px 15px !important;
     font-size: 0.72em;
     font-weight: 600;
 
-    &:hover, &:focus {
+    &:hover,
+    &:focus {
       text-decoration: none;
     }
   }
@@ -104,9 +105,10 @@ section.wiki {
       border: 1px solid #c8c8c8;
       border-radius: 14px;
       box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12) inset;
-      font-family: $sans-serif;
+      font-family: $font-family-sans-serif;
       font-size: 12px;
-      @include transition(border-color .1s linear 0s);
+
+      @include transition(border-color 0.1s linear 0s);
 
       &:-webkit-input-placholder {
         font-style: italic;
@@ -120,18 +122,26 @@ section.wiki {
 
 
 
-  /*-----------------
+  // -----------------
 
-    Article
+  // Article
 
-  -----------------*/
-
-  .article-wrapper {
-
-  }
+  // -----------------
 
   h1 {
     font-weight: bold;
+    letter-spacing: 0;
+  }
+
+  .entry-title {
+    padding-bottom: 8px;
+    margin-bottom: 22px;
+    margin-top: 0;
+    border-bottom: 1px solid $light-gray;
+    font-size: 1.6em;
+    font-weight: bold;
+    color: $body-color;
+    text-transform: none;
     letter-spacing: 0;
   }
 
@@ -139,8 +149,8 @@ section.wiki {
     float: left;
     width: flex-grid(9);
     padding: 40px 0 40px 40px;
-    color: $base-font-color;
-    @include box-sizing(border-box);
+    color: $body-color;
+    box-sizing: border-box;
   }
 
   &.view .main-article {
@@ -150,7 +160,7 @@ section.wiki {
       border-bottom: 1px solid $light-gray;
       font-size: 1.6em;
       font-weight: bold;
-      color: $base-font-color;
+      color: $body-color;
       text-transform: none;
       letter-spacing: 0;
     }
@@ -171,17 +181,15 @@ section.wiki {
 
     h5 {
       margin: 20px 0 10px;
-      font-size: .8em;
+      font-size: 0.8em;
       font-weight: bold;
-      text-transform: uppercase;
     }
 
     h6 {
       margin: 20px 0 10px;
-      font-size: .8em;
+      font-size: 0.8em;
       font-weight: bold;
       color: #999;
-      text-transform: uppercase;
     }
 
     ul {
@@ -219,33 +227,31 @@ section.wiki {
 
 
 
-  /*-----------------
+  // -----------------
 
-    Sidebar
+  // Sidebar
 
-  -----------------*/
+  // -----------------
 
   .article-functions {
     float: left;
     width: flex-grid(3);
-    padding: 40px 40px;
-    @include box-sizing(border-box);
+    padding: 40px;
+    box-sizing: border-box;
 
-    .timestamp{
+    .timestamp {
       margin-top: ($baseline*0.75);
       padding: 15px 0 0 10px;
       border-top: 1px solid $light-gray;
 
       .label {
         font-size: 0.7em;
-        color: #aaa;
-        text-transform: uppercase;
+        color: $uxpl-gray-base;
       }
 
       .date {
         font-size: 0.9em;
       }
-
     }
 
     .see-children {
@@ -256,13 +262,14 @@ section.wiki {
       a {
         display: block;
         padding: 2px 4px 2px 10px;
-        border-radius: 3px;
         font-size: 0.9em;
         line-height: 25px;
+        border-left: 1px solid $m-blue;
 
-        &:hover, &:focus {
-          background-color: $gray-l6;
-          text-decoration: none;
+        &:hover,
+        &:focus {
+          color: $uxpl-blue-hover-active;
+          font-weight: bold;
         }
       }
     }
@@ -276,9 +283,11 @@ section.wiki {
     li {
       &.active {
         a {
-          color: $link-color;
+          color: $uxpl-blue-hover-active;
           font-weight: bold;
-          background-color: $gray-l4;
+          background-color: $light-gray1;
+          border-color: $uxpl-blue-hover-active;
+          border-left: 4px solid;
         }
       }
     }
@@ -300,9 +309,10 @@ section.wiki {
         padding-right: ($baseline/4);
       }
 
-      &:hover, &:focus {
-        background-color: $gray-l6;
-        text-decoration: none;
+      &:hover,
+      &:focus {
+        color: $uxpl-blue-hover-active;
+        font-weight: bold;
       }
     }
   }
@@ -310,23 +320,22 @@ section.wiki {
 
 
 
-  /*-----------------
+  // -----------------
 
-    Edit
+  // Edit
 
-  -----------------*/
+  // -----------------
 
   label {
-    font-family: $sans-serif;
+    font-family: $font-family-sans-serif;
     font-size: 0.9em;
     font-weight: bold;
     font-style: normal;
-    text-transform: uppercase;
-    color: #aaa;
+    color: $uxpl-gray-base;
   }
 
   input {
-    font-family: $sans-serif;
+    font-family: $font-family-sans-serif;
     font-style: normal;
     font-weight: normal;
   }
@@ -352,7 +361,7 @@ section.wiki {
     top: 10px;
     right: 0%;
     font-size: 12px;
-    text-align:right;
+    text-align: right;
   }
 
   .CodeMirror {
@@ -372,15 +381,16 @@ section.wiki {
       box-shadow: 0 0 1px 1px $shadow-l1, 0 1px 6px $shadow;
     }
 
-    &:before {
+    &::before {
       @extend %ui-depth4;
+
       content: 'click to edit schematic';
       position: absolute;
       top: 10px;
       left: 7px;
-      font-family: $sans-serif;
+      font-family: $font-family-sans-serif;
       font-size: 0.75em;
-      color: #aaa;
+      color: $uxpl-gray-base;
       pointer-events: none;
     }
   }
@@ -405,34 +415,39 @@ section.wiki {
   }
 
   button {
-    font-family: $sans-serif;
+    font-family: $font-family-sans-serif;
   }
 
   .btn {
     @include button(simple, #eee);
+
     font-size: 0.8em;
     margin-right: ($baseline/4);
     line-height: 1.2em;
     text-transform: none !important;
     letter-spacing: 0 !important;
 
-    &:hover, &:focus {
-      color: $base-font-color;
+    &:hover,
+    &:focus {
+      color: $body-color;
       text-decoration: none;
     }
 
     &.btn-primary {
-      @include button;
+      @include button(simple, $btn-default-color);
+
       font-size: 0.8em;
     }
 
     &.btn-danger {
       @include button(simple, $pink);
+
       font-size: 0.8em;
     }
 
     &.btn-info {
       @include button(simple, $gray-l3);
+
       font-size: 0.8em;
     }
   }
@@ -443,6 +458,7 @@ section.wiki {
 
   .modal {
     @extend %ui-depth4;
+
     width: 960px;
     min-height: 500px;
     margin-left: -480px;
@@ -491,8 +507,9 @@ section.wiki {
       padding: ($baseline/2) ($baseline/2) 0 ($baseline/2);
       margin-bottom: ($baseline/2);
 
-      h1, p {
-        color: $base-font-color;
+      h1,
+      p {
+        color: $body-color;
       }
 
       h1 {
@@ -559,6 +576,7 @@ section.wiki {
     text-align: left;
     padding: 20px;
     font-size: 14px;
+
     @include clearfix();
 
     h3 {
@@ -576,7 +594,7 @@ section.wiki {
     margin-top: ($baseline*2);
   }
 
-  #cheatsheet-body pre{
+  #cheatsheet-body pre {
     color: $black;
     text-align: left;
     background: #eee;
@@ -584,11 +602,11 @@ section.wiki {
     font-size: 12px;
   }
 
-  /*-----------------
+  // -----------------
 
-    Changes
+  // Changes
 
-  -----------------*/
+  // -----------------
 
   &.history {
     .accordion {
@@ -598,7 +616,8 @@ section.wiki {
       background: #f9f9f9;
       border-radius: 5px;
 
-      a:hover, a:focus {
+      a:hover,
+      a:focus {
         text-decoration: none;
       }
     }
@@ -606,7 +625,7 @@ section.wiki {
 
   .accordion small {
     font-size: 0.8em;
-    color: #aaa;
+    color: $uxpl-gray-base;
   }
 
   .accordion-toggle div {
@@ -629,7 +648,7 @@ section.wiki {
     }
 
     th {
-      font-family: $sans-serif;
+      font-family: $font-family-sans-serif;
       font-size: 0.7em;
     }
 
@@ -646,15 +665,16 @@ section.wiki {
 
 
 
-  /*-----------------
+  // -----------------
 
-    Settings
+  // Settings
 
-  -----------------*/
+  // -----------------
 
   #settings_form {
     .well {
       margin-bottom: ($baseline*0.75);
+
       @include clearfix();
     }
 
@@ -681,11 +701,11 @@ section.wiki {
 
 
 
-  /*-----------------
+  // -----------------
 
-    New
+  // New
 
-  -----------------*/
+  // -----------------
 
   .new-article {
     margin: auto;
@@ -726,11 +746,11 @@ section.wiki {
 
 
 
-  /*-----------------
+  // -----------------
 
-    Directory
+  // Directory
 
-  -----------------*/
+  // -----------------
   .directory-toolbar {
     background-color: $sidebar-color;
     padding: 9px;
@@ -747,29 +767,22 @@ section.wiki {
 
     + p {
       font-size: 0.9em;
-      color: #aaa;
+      color: $uxpl-gray-base;
     }
   }
 
   .filter-clear {
-    margin-right: ($baseline/2);
+    margin-left: ($baseline/2);
     margin-top: ($baseline/2);
-    font-size: .9em;
-
-    a {
-      color: #aaa;
-
-      &:hover, &:focus {
-        color: #777;
-      }
-    }
+    font-size: 0.9em;
   }
 
   .table.table-striped {
     width: 100%;
     margin-top: $baseline;
 
-    th, td {
+    th,
+    td {
       border-bottom: 1px solid $light-gray;
       padding: 8px;
       overflow: hidden;
@@ -777,6 +790,13 @@ section.wiki {
 
     a.list-children {
       margin-left: 3px;
+    }
+
+    a {
+      &:hover,
+      &:focus {
+        font-weight: bold;
+      }
     }
 
     tr:nth-child(even) {
@@ -787,11 +807,11 @@ section.wiki {
 
 
 
-  /*-----------------
+  // -----------------
 
-    Attachments
+  // Attachments
 
-  -----------------*/
+  // -----------------
 
   .attachment-options {
     height: 40px;
@@ -806,8 +826,8 @@ section.wiki {
 
     li {
       margin-bottom: ($baseline*0.75);
-      border: 1px solid #DDD;
-      background: #F9F9F9;
+      border: 1px solid #ddd;
+      background: #f9f9f9;
       border-radius: 5px;
     }
 
@@ -831,7 +851,7 @@ section.wiki {
         float: right;
         font-size: 0.6em;
         line-height: 20px;
-        color: #aaa;
+        color: $uxpl-gray-base;
       }
     }
 
@@ -857,11 +877,11 @@ section.wiki {
 
 
 
-  /*-----------------
+  // -----------------
 
-    Delete
+  // Delete
 
-  -----------------*/
+  // -----------------
 
   #div_id_confirm {
     position: relative;
@@ -888,27 +908,30 @@ section.wiki {
 
 
 
-  /*-----------------
+  // -----------------
 
-    Alerts
+  // Alerts
 
-  -----------------*/
+  // -----------------
 
   .alert {
     position: relative;
-    margin: 24px 40px;
+    width: auto;
+    margin: 24px 0;
     padding: 8px 12px;
-    border: 1px solid #EBE8BF;
+    border: 1px solid #ebe8bf;
     border-radius: 3px;
     background: $yellow;
+    color: $black;
     font-size: 0.9em;
+    min-width: inherit;
 
     .close {
       position: absolute;
       right: 12px;
       font-size: 1.3em;
       top: 6px;
-      color: #999;
+      color: $black;
       text-decoration: none;
     }
   }
@@ -939,11 +962,14 @@ section.wiki {
         color: $white;
         font-weight: bold;
         font-size: em(18);
+
         @include transition(none);
+
         text-align: center;
         -webkit-font-smoothing: antialiased;
 
-        &:hover, &:focus {
+        &:hover,
+        &:focus {
           background: darken($pink, 12%);
         }
       }
@@ -953,12 +979,13 @@ section.wiki {
 
 .modal-backdrop {
   @extend %ui-depth3;
+
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, .4);
+  background: rgba(0, 0, 0, 0.4);
 }
 
 .modal-preview {
@@ -972,58 +999,4 @@ section.wiki {
 .modal-preview .main-article {
   width: 100% !important;
   margin-left: 0;
-}
-
-
-#circuit_editor_modal.modal {
-  @extend %ui-depth4;
-  width: 648px;
-  margin-left: -325px;
-  top: 150px;
-
-  .modal-header {
-    h1, p {
-      color: $white;
-    }
-
-    h1 {
-      margin: 3px 12px 8px;
-      font-size: 1.1em;
-    }
-
-    p {
-      font-size: 0.9em;
-      margin: 5px 12px 20px;
-      line-height: 1em;
-    }
-  }
-
-  .modal-body {
-    padding-bottom: 8px;
-  }
-
-  .modal-footer {
-    margin: 12px;
-  }
-
-  .modal-footer .btn {
-    @include button(simple, #eee);
-    font-size: 0.8em;
-    margin-right: ($baseline/4);
-    line-height: 1.2em;
-    text-transform: none !important;
-    letter-spacing: 0 !important;
-
-    &:hover, &:focus {
-      color: $base-font-color;
-      text-decoration: none;
-    }
-
-    &.btn-primary {
-      @include button;
-      font-size: 0.8em;
-    }
-
-    margin-right: ($baseline/2);
-  }
 }

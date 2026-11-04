@@ -1,33 +1,38 @@
 """
 Tests for the course modes Django admin interface.
 """
-import unittest
+
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import ddt
-from pytz import timezone, UTC
-
 from django.conf import settings
-from django.core.urlresolvers import reverse
+from django.urls import reverse
+from pytz import timezone
 
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-from util.date_utils import get_time_display
-from xmodule.modulestore.tests.factories import CourseFactory
-from student.tests.factories import UserFactory
-from course_modes.models import CourseMode
-from course_modes.admin import CourseModeForm
+from common.djangoapps.course_modes.admin import CourseModeForm
+from common.djangoapps.course_modes.models import CourseMode
+from common.djangoapps.course_modes.tests.factories import CourseModeFactory
+from common.djangoapps.student.tests.factories import UserFactory
+from common.djangoapps.util.date_utils import get_time_display
 
 # Technically, we shouldn't be importing verify_student, since it's
 # defined in the LMS and course_modes is in common.  However, the benefits
 # of putting all this configuration in one place outweigh the downsides.
 # Once the course admin tool is deployed, we can remove this dependency.
-from verify_student.models import VerificationDeadline  # pylint: disable=import-error
+from lms.djangoapps.verify_student.models import VerificationDeadline
+from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
+from openedx.core.djangolib.testing.utils import skip_unless_lms
+from xmodule.modulestore.tests.django_utils import (
+    ModuleStoreTestCase,  # pylint: disable=wrong-import-order
+)
+from xmodule.modulestore.tests.factories import CourseFactory  # pylint: disable=wrong-import-order
 
 
 # We can only test this in the LMS because the course modes admin relies
 # on verify student, which is not an installed app in Studio, so the verification
 # deadline table will not be created.
-@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')
+@skip_unless_lms
 class AdminCourseModePageTest(ModuleStoreTestCase):
     """
     Test the course modes Django admin interface.
@@ -41,55 +46,58 @@ class AdminCourseModePageTest(ModuleStoreTestCase):
         user.save()
         course = CourseFactory.create()
         expiration = datetime(2015, 10, 20, 1, 10, 23, tzinfo=timezone(settings.TIME_ZONE))
+        CourseOverview.load_from_module_store(course.id)
 
         data = {
-            'course_id': unicode(course.id),
+            'course': str(course.id),
             'mode_slug': 'verified',
             'mode_display_name': 'verified',
             'min_price': 10,
             'currency': 'usd',
-            'expiration_datetime_0': expiration.date(),  # due to django admin datetime widget passing as seperate vals
-            'expiration_datetime_1': expiration.time(),
-
+            '_expiration_datetime_0': expiration.date(),  # due to django admin datetime widget passing as separate vals
+            '_expiration_datetime_1': expiration.time(),
         }
 
-        self.client.login(username=user.username, password='test')
+        self.client.login(username=user.username, password=self.TEST_PASSWORD)
 
         # Create a new course mode from django admin page
         response = self.client.post(reverse('admin:course_modes_coursemode_add'), data=data)
         self.assertRedirects(response, reverse('admin:course_modes_coursemode_changelist'))
+
+        course_mode = CourseMode.objects.get(course_id=str(course.id), mode_slug='verified')
 
         # Verify that datetime is appears on list page
         response = self.client.get(reverse('admin:course_modes_coursemode_changelist'))
         self.assertContains(response, get_time_display(expiration, '%B %d, %Y, %H:%M  %p'))
 
         # Verify that on the edit page the datetime value appears as UTC.
-        resp = self.client.get(reverse('admin:course_modes_coursemode_change', args=(1,)))
+        resp = self.client.get(reverse('admin:course_modes_coursemode_change', args=(course_mode.id,)))
         self.assertContains(resp, expiration.date())
         self.assertContains(resp, expiration.time())
 
         # Verify that the expiration datetime is the same as what we set
         # (hasn't changed because of a timezone translation).
-        course_mode = CourseMode.objects.get(pk=1)
-        self.assertEqual(course_mode.expiration_datetime.replace(tzinfo=None), expiration.replace(tzinfo=None))
+        course_mode.refresh_from_db()
+        assert course_mode.expiration_datetime.replace(tzinfo=None) == expiration.replace(tzinfo=None)
 
 
-@unittest.skipUnless(settings.ROOT_URLCONF == 'lms.urls', 'Test only valid in lms')
+@skip_unless_lms
 @ddt.ddt
 class AdminCourseModeFormTest(ModuleStoreTestCase):
     """
     Test the course modes Django admin form validation and saving.
     """
 
-    UPGRADE_DEADLINE = datetime.now(UTC)
+    UPGRADE_DEADLINE = datetime.now(ZoneInfo("UTC"))
     VERIFICATION_DEADLINE = UPGRADE_DEADLINE + timedelta(days=5)
 
     def setUp(self):
         """
         Create a test course.
         """
-        super(AdminCourseModeFormTest, self).setUp()
+        super().setUp()
         self.course = CourseFactory.create()
+        CourseOverview.load_from_module_store(self.course.id)
 
     @ddt.data(
         ("honor", False),
@@ -112,12 +120,9 @@ class AdminCourseModeFormTest(ModuleStoreTestCase):
         # but ONLY for verified modes.
         loaded_deadline = form.initial.get("verification_deadline")
         if expect_deadline:
-            self.assertEqual(
-                loaded_deadline.replace(tzinfo=None),
-                self.VERIFICATION_DEADLINE.replace(tzinfo=None)
-            )
+            assert loaded_deadline.replace(tzinfo=None) == self.VERIFICATION_DEADLINE.replace(tzinfo=None)
         else:
-            self.assertIs(loaded_deadline, None)
+            assert loaded_deadline is None
 
     @ddt.data("verified", "professional")
     def test_set_verification_deadline(self, course_mode):
@@ -136,7 +141,7 @@ class AdminCourseModeFormTest(ModuleStoreTestCase):
 
         # Check that the deadline was updated
         updated_deadline = VerificationDeadline.deadline_for_course(self.course.id)
-        self.assertEqual(updated_deadline, new_deadline)
+        assert updated_deadline == new_deadline
 
     def test_disable_verification_deadline(self):
         # Configure a verification deadline for the course
@@ -150,7 +155,7 @@ class AdminCourseModeFormTest(ModuleStoreTestCase):
         form.save()
 
         # Check that the deadline was disabled
-        self.assertIs(VerificationDeadline.deadline_for_course(self.course.id), None)
+        assert VerificationDeadline.deadline_for_course(self.course.id) is None
 
     @ddt.data("honor", "professional", "no-id-professional", "credit")
     def test_validate_upgrade_deadline_only_for_verified(self, course_mode):
@@ -160,6 +165,14 @@ class AdminCourseModeFormTest(ModuleStoreTestCase):
         self._assert_form_has_error(form, (
             'Only the "verified" mode can have an upgrade deadline.  '
             'For other modes, please set the enrollment end date in Studio.'
+        ))
+
+    def test_validate_expiration_datetime_is_explicit_only_with_upgrade_deadline(self):
+        # Only allow the expiration_datetime_is_explicit to be True if the upgrade_deadline is
+        # defined with a date, otherwise cause a validation error.
+        form = self._admin_form("verified", expiration_datetime_is_explicit=True)
+        self._assert_form_has_error(form, (
+            "An upgrade deadline must be specified when setting Lock upgrade deadline date to True."
         ))
 
     @ddt.data("honor", "no-id-professional", "credit")
@@ -178,7 +191,7 @@ class AdminCourseModeFormTest(ModuleStoreTestCase):
 
     def _configure(self, mode, upgrade_deadline=None, verification_deadline=None):
         """Configure course modes and deadlines. """
-        course_mode = CourseMode.objects.create(
+        course_mode = CourseModeFactory.create(
             mode_slug=mode,
             mode_display_name=mode,
         )
@@ -191,17 +204,18 @@ class AdminCourseModeFormTest(ModuleStoreTestCase):
 
         return CourseModeForm(instance=course_mode)
 
-    def _admin_form(self, mode, upgrade_deadline=None):
+    def _admin_form(self, mode, upgrade_deadline=None, expiration_datetime_is_explicit=False):
         """Load the course mode admin form. """
-        course_mode = CourseMode.objects.create(
+        course_mode = CourseModeFactory.create(
             course_id=self.course.id,
             mode_slug=mode,
         )
         return CourseModeForm({
-            "course_id": unicode(self.course.id),
+            "course": str(self.course.id),
             "mode_slug": mode,
             "mode_display_name": mode,
-            "expiration_datetime": upgrade_deadline,
+            "_expiration_datetime": upgrade_deadline,
+            "expiration_datetime_is_explicit": expiration_datetime_is_explicit,
             "currency": "usd",
             "min_price": 10,
         }, instance=course_mode)
@@ -217,4 +231,4 @@ class AdminCourseModeFormTest(ModuleStoreTestCase):
     def _assert_form_has_error(self, form, error):
         """Check that a form has a validation error. """
         validation_errors = form.errors.get("__all__", [])
-        self.assertIn(error, validation_errors)
+        assert error in validation_errors

@@ -1,10 +1,14 @@
-from django.core.files.uploadhandler import FileUploadHandler
+""" Upload file handler to help test progress bars in uploads. """
+
+
 import time
 
+from django.core.files.uploadhandler import FileUploadHandler
 
-class DebugFileUploader(FileUploadHandler):
+
+class DebugFileUploader(FileUploadHandler):  # pylint: disable=missing-class-docstring
     def __init__(self, request=None):
-        super(DebugFileUploader, self).__init__(request)
+        super().__init__(request)
         self.count = 0
 
     def receive_data_chunk(self, raw_data, start):

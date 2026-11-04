@@ -1,70 +1,140 @@
-# -*- coding: utf-8 -*-
 """Tests for LinkedIn Add to Profile configuration. """
 
-import ddt
-from urllib import urlencode
+from types import SimpleNamespace
+from urllib.parse import quote
 
+import ddt
+from django.conf import settings
 from django.test import TestCase
-from opaque_keys.edx.locator import CourseLocator
-from student.models import LinkedInAddToProfileConfiguration
+
+from lms.djangoapps.certificates.tests.factories import LinkedInAddToProfileConfigurationFactory
+from openedx.core.djangoapps.site_configuration.tests.test_util import with_site_configuration_context
 
 
 @ddt.ddt
 class LinkedInAddToProfileUrlTests(TestCase):
     """Tests for URL generation of LinkedInAddToProfileConfig. """
 
-    COURSE_KEY = CourseLocator(org="edx", course="DemoX", run="Demo_Course")
-    COURSE_NAME = u"Test Course ☃"
-    CERT_URL = u"http://s3.edx/cert"
+    COURSE_NAME = 'Test Course ☃'
+    CERT_URL = 'http://s3.edx/cert'
+    COURSE_ORGANIZATION = 'TEST+ORGANIZATION'
+    SITE_CONFIGURATION = {
+        'SOCIAL_SHARING_SETTINGS': {
+            'CERTIFICATE_LINKEDIN_MODE_TO_CERT_NAME': {
+                'honor': '{platform_name} Honor Code Credential for {course_name}',
+                'verified': '{platform_name} Verified Credential for {course_name}',
+                'professional': '{platform_name} Professional Credential for {course_name}',
+                'no-id-professional': '{platform_name} Professional Credential for {course_name}',
+            }
+        }
+    }
+    SITE_CONFIGURATION_COURSE_LEVEL_ORG = {
+        'SOCIAL_SHARING_SETTINGS': {
+            'CERTIFICATE_LINKEDIN_DEFAULTS_TO_COURSE_ORGANIZATION_NAME': True,
+            'CERTIFICATE_LINKEDIN_MODE_TO_CERT_NAME': {
+                'honor': '{platform_name} Honor Code Credential for {course_name}',
+                'verified': '{platform_name} Verified Credential for {course_name}',
+                'professional': '{platform_name} Professional Credential for {course_name}',
+                'no-id-professional': '{platform_name} Professional Credential for {course_name}',
+            }
+        }
+    }
 
     @ddt.data(
-        ('honor', u'edX+Honor+Code+Certificate+for+Test+Course+%E2%98%83'),
-        ('verified', u'edX+Verified+Certificate+for+Test+Course+%E2%98%83'),
-        ('professional', u'edX+Professional+Certificate+for+Test+Course+%E2%98%83'),
-        ('default_mode', u'edX+Certificate+for+Test+Course+%E2%98%83')
+        ('honor', 'Honor+Code+Certificate+for+Test+Course+%E2%98%83'),
+        ('verified', 'Verified+Certificate+for+Test+Course+%E2%98%83'),
+        ('professional', 'Professional+Certificate+for+Test+Course+%E2%98%83'),
+        ('default_mode', 'Certificate+for+Test+Course+%E2%98%83')
     )
     @ddt.unpack
     def test_linked_in_url(self, cert_mode, expected_cert_name):
-        config = LinkedInAddToProfileConfiguration(
-            company_identifier='0_mC_o2MizqdtZEmkVXjH4eYwMj4DnkCWrZP_D9',
-            enabled=True
-        )
+        config = LinkedInAddToProfileConfigurationFactory()
 
         expected_url = (
-            'http://www.linkedin.com/profile/add'
-            '?_ed=0_mC_o2MizqdtZEmkVXjH4eYwMj4DnkCWrZP_D9&'
-            'pfCertificationName={expected_cert_name}&'
-            'pfCertificationUrl=http%3A%2F%2Fs3.edx%2Fcert&'
-            'source=o'
-        ).format(expected_cert_name=expected_cert_name)
+            'https://www.linkedin.com/profile/add?startTask=CERTIFICATION_NAME&'
+            'name={platform}+{cert_name}&certUrl={cert_url}&'
+            'organizationId={company_identifier}'
+        ).format(
+            platform=quote(settings.PLATFORM_NAME.encode('utf-8')),
+            cert_name=expected_cert_name,
+            cert_url=quote(self.CERT_URL, safe=''),
+            company_identifier=config.company_identifier,
+        )
+
+        course_mock_object = SimpleNamespace(
+            display_name=self.COURSE_NAME, display_organization=self.COURSE_ORGANIZATION
+        )
 
         actual_url = config.add_to_profile_url(
-            self.COURSE_KEY,
-            self.COURSE_NAME,
-            cert_mode,
-            self.CERT_URL
+            course_mock_object, cert_mode, self.CERT_URL
         )
 
-        self.assertEqual(actual_url, expected_url)
+        self.assertEqual(actual_url, expected_url)  # noqa: PT009
 
-    def test_linked_in_url_tracking_code(self):
-        config = LinkedInAddToProfileConfiguration(
-            company_identifier="abcd123",
-            trk_partner_name="edx",
-            enabled=True
+    @ddt.data(
+        ('honor', 'Honor+Code+Credential+for+Test+Course+%E2%98%83'),
+        ('verified', 'Verified+Credential+for+Test+Course+%E2%98%83'),
+        ('professional', 'Professional+Credential+for+Test+Course+%E2%98%83'),
+        ('no-id-professional', 'Professional+Credential+for+Test+Course+%E2%98%83'),
+        ('default_mode', 'Certificate+for+Test+Course+%E2%98%83')
+    )
+    @ddt.unpack
+    def test_linked_in_url_with_cert_name_override(self, cert_mode, expected_cert_name):
+        config = LinkedInAddToProfileConfigurationFactory()
+
+        expected_url = (
+            'https://www.linkedin.com/profile/add?startTask=CERTIFICATION_NAME&'
+            'name={platform}+{cert_name}&certUrl={cert_url}&'
+            'organizationId={company_identifier}'
+        ).format(
+            platform=quote(settings.PLATFORM_NAME.encode('utf-8')),
+            cert_name=expected_cert_name,
+            cert_url=quote(self.CERT_URL, safe=''),
+            company_identifier=config.company_identifier,
         )
-
-        expected_param = urlencode({
-            'trk': u'edx-{course_key}_honor-dashboard'.format(
-                course_key=self.COURSE_KEY
+        with with_site_configuration_context(configuration=self.SITE_CONFIGURATION):
+            course_mock_object = SimpleNamespace(
+                display_name=self.COURSE_NAME,
+                display_organization=self.COURSE_ORGANIZATION,
             )
-        })
+            actual_url = config.add_to_profile_url(
+                course_mock_object, cert_mode, self.CERT_URL
+            )
+        self.assertEqual(actual_url, expected_url)  # noqa: PT009
 
-        actual_url = config.add_to_profile_url(
-            self.COURSE_KEY,
-            self.COURSE_NAME,
-            'honor',
-            self.CERT_URL
+    @ddt.data(
+        ('honor', 'Honor+Code+Credential+for+Test+Course+%E2%98%83'),
+        ('verified', 'Verified+Credential+for+Test+Course+%E2%98%83'),
+        ('professional', 'Professional+Credential+for+Test+Course+%E2%98%83'),
+        ('no-id-professional', 'Professional+Credential+for+Test+Course+%E2%98%83'),
+        ('default_mode', 'Certificate+for+Test+Course+%E2%98%83')
+    )
+    @ddt.unpack
+    def test_linked_in_url_with_course_org_name_override(
+        self, cert_mode, expected_cert_name
+    ):
+        config = LinkedInAddToProfileConfigurationFactory()
+
+        expected_url = (
+            'https://www.linkedin.com/profile/add?startTask=CERTIFICATION_NAME&'
+            'name={platform}+{cert_name}&certUrl={cert_url}&'
+            'organizationName={course_organization_name}'
+        ).format(
+            platform=quote(settings.PLATFORM_NAME.encode('utf-8')),
+            cert_name=expected_cert_name,
+            cert_url=quote(self.CERT_URL, safe=''),
+            course_organization_name=quote(self.COURSE_ORGANIZATION.encode('utf-8')),
         )
 
-        self.assertIn(expected_param, actual_url)
+        with with_site_configuration_context(
+            configuration=self.SITE_CONFIGURATION_COURSE_LEVEL_ORG
+        ):
+            course_mock_object = SimpleNamespace(
+                display_name=self.COURSE_NAME,
+                display_organization=self.COURSE_ORGANIZATION,
+            )
+            actual_url = config.add_to_profile_url(
+                course_mock_object, cert_mode, self.CERT_URL
+            )
+
+        self.assertEqual(actual_url, expected_url)  # noqa: PT009

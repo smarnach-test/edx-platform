@@ -1,7 +1,9 @@
 """
 Model Managers for Course Actions
 """
+
 import traceback
+
 from django.db import models, transaction
 
 
@@ -10,7 +12,7 @@ class CourseActionStateManager(models.Manager):
     An abstract Model Manager class for Course Action State models.
     This abstract class expects child classes to define the ACTION (string) field.
     """
-    class Meta(object):
+    class Meta:
         """Abstract manager class, with subclasses defining the ACTION (string) field."""
         abstract = True
 
@@ -19,7 +21,7 @@ class CourseActionStateManager(models.Manager):
         Finds and returns all entries for this action and the given field names-and-values in kwargs.
         The exclude_args dict allows excluding entries with the field names-and-values in exclude_args.
         """
-        return self.filter(action=self.ACTION, **kwargs).exclude(**(exclude_args or {}))  # pylint: disable=no-member
+        return self.filter(action=self.ACTION, **kwargs).exclude(**(exclude_args or {}))
 
     def find_first(self, exclude_args=None, **kwargs):
         """
@@ -31,10 +33,10 @@ class CourseActionStateManager(models.Manager):
         There may or may not be greater than one entry, depending on the usage pattern for this Action.
         """
         objects = self.find_all(exclude_args=exclude_args, **kwargs)
-        if len(objects) == 0:
+        if len(objects) == 0:  # pylint: disable=no-else-raise
             raise CourseActionStateItemNotFoundError(
-                "No entry found for action {action} with filter {filter}, excluding {exclude}".format(
-                    action=self.ACTION,  # pylint: disable=no-member
+                "No entry found for action {action} with filter {filter}, excluding {exclude}".format(  # noqa: UP032
+                    action=self.ACTION,
                     filter=kwargs,
                     exclude=exclude_args,
                 ))
@@ -55,7 +57,7 @@ class CourseActionUIStateManager(CourseActionStateManager):
     """
 
     # add transaction protection to revert changes by get_or_create if an exception is raised before the final save.
-    @transaction.commit_on_success
+    @transaction.atomic
     def update_state(
             self, course_key, new_state, should_display=True, message="", user=None, allow_not_found=False, **kwargs
     ):
@@ -65,15 +67,15 @@ class CourseActionUIStateManager(CourseActionStateManager):
         Raises CourseActionStateException if allow_not_found is False and an entry for the given course
             for this Action doesn't exist.
         """
-        state_object, created = self.get_or_create(course_key=course_key, action=self.ACTION)  # pylint: disable=no-member
+        state_object, created = self.get_or_create(course_key=course_key, action=self.ACTION)
 
         if created:
             if allow_not_found:
                 state_object.created_user = user
             else:
                 raise CourseActionStateItemNotFoundError(
-                    "Cannot update non-existent entry for course_key {course_key} and action {action}".format(
-                        action=self.ACTION,  # pylint: disable=no-member
+                    "Cannot update non-existent entry for course_key {course_key} and action {action}".format(  # noqa: UP032  # pylint: disable=line-too-long
+                        action=self.ACTION,
                         course_key=course_key,
                     ))
 
@@ -87,7 +89,7 @@ class CourseActionUIStateManager(CourseActionStateManager):
 
         # update any additional fields in kwargs
         if kwargs:
-            for key, value in kwargs.iteritems():
+            for key, value in kwargs.items():
                 setattr(state_object, key, value)
 
         state_object.save()
@@ -106,7 +108,7 @@ class CourseRerunUIStateManager(CourseActionUIStateManager):
     """
     ACTION = "rerun"
 
-    class State(object):
+    class State:
         """
         An Enum class for maintaining the list of possible states for Reruns.
         """
@@ -149,4 +151,4 @@ class CourseRerunUIStateManager(CourseActionUIStateManager):
 
 class CourseActionStateItemNotFoundError(Exception):
     """An exception class for errors specific to Course Action states."""
-    pass
+    pass  # pylint: disable=unnecessary-pass

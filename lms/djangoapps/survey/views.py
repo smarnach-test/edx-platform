@@ -2,23 +2,21 @@
 View endpoints for Survey
 """
 
-import logging
+
 import json
+import logging
 
-from django.contrib.auth.decorators import login_required
-from django.http import (
-    HttpResponse, HttpResponseRedirect, HttpResponseNotFound
-)
-from django.core.urlresolvers import reverse
-from django.views.decorators.http import require_POST
 from django.conf import settings
+from django.contrib.auth.decorators import login_required
+from django.http import HttpResponse, HttpResponseNotFound, HttpResponseRedirect
+from django.urls import reverse
 from django.utils.html import escape
-
+from django.views.decorators.http import require_POST
 from opaque_keys.edx.keys import CourseKey
 
-from edxmako.shortcuts import render_to_response
-from survey.models import SurveyForm
-from microsite_configuration import microsite
+from common.djangoapps.edxmako.shortcuts import render_to_response
+from lms.djangoapps.survey.models import SurveyForm
+from openedx.core.djangoapps.site_configuration import helpers as configuration_helpers
 
 log = logging.getLogger("edx.survey")
 
@@ -28,9 +26,7 @@ def view_survey(request, survey_name):
     """
     View to render the survey to the end user
     """
-    redirect_url = request.GET.get('redirect_url')
-
-    return view_student_survey(request.user, survey_name, redirect_url=redirect_url)
+    return view_student_survey(request.user, survey_name)
 
 
 def view_student_survey(user, survey_name, course=None, redirect_url=None, is_required=False, skip_redirect_url=None):
@@ -51,7 +47,7 @@ def view_student_survey(user, survey_name, course=None, redirect_url=None, is_re
     # just remove that outer key to make the JSON payload simplier
     existing_answers = survey.get_answers(user=user).get(user.id, {})
 
-    platform_name = microsite.get_value('platform_name', settings.PLATFORM_NAME)
+    platform_name = configuration_helpers.get_value('platform_name', settings.PLATFORM_NAME)
 
     context = {
         'existing_data_json': json.dumps(existing_answers),
@@ -61,7 +57,7 @@ def view_student_survey(user, survey_name, course=None, redirect_url=None, is_re
         'dashboard_redirect_url': dashboard_redirect_url,
         'survey_form': survey.form,
         'is_required': is_required,
-        'mail_to_link': microsite.get_value('email_from_address', settings.CONTACT_EMAIL),
+        'mail_to_link': configuration_helpers.get_value('email_from_address', settings.CONTACT_EMAIL),
         'platform_name': platform_name,
         'course': course,
     }
@@ -90,9 +86,7 @@ def submit_answers(request, survey_name):
         array_val = request.POST.getlist(key)
         answers[key] = request.POST[key] if len(array_val) == 0 else ','.join(array_val)
 
-    # the URL we are supposed to redirect to is
-    # in a hidden form field
-    redirect_url = answers['_redirect_url'] if '_redirect_url' in answers else reverse('dashboard')
+    redirect_url = reverse('dashboard')
 
     course_key = CourseKey.from_string(answers['course_id']) if 'course_id' in answers else None
 
@@ -101,7 +95,7 @@ def submit_answers(request, survey_name):
     # scrub the answers to make sure nothing malicious from the user gets stored in
     # our database, e.g. JavaScript
     filtered_answers = {}
-    for answer_key in answers.keys():
+    for answer_key in answers.keys():  # pylint: disable=consider-iterating-dictionary
         # only allow known input fields
         if answer_key in allowed_field_names:
             filtered_answers[answer_key] = escape(answers[answer_key])

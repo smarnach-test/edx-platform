@@ -11,11 +11,13 @@
  *   of items this list contains.  For example, 'Group Configuration'.
  *   Note that it must be translated.
  * - emptyMessage (string): Text to render when the list is empty.
+ * - restrictEditing (bool) : Boolean flag for hiding edit and remove options, defaults to false.
  */
 define([
     'js/views/baseview'
 ], function(BaseView) {
     'use strict';
+
     var ListView = BaseView.extend({
         events: {
             'click .action-add': 'onAddItem',
@@ -25,6 +27,7 @@ define([
         listContainerCss: '.list-items',
 
         initialize: function() {
+            this.restrictEditing = this.options.restrictEditing || false;
             this.listenTo(this.collection, 'add', this.addNewItemView);
             this.listenTo(this.collection, 'remove', this.onRemoveItem);
             this.template = this.loadTemplate('list');
@@ -36,17 +39,22 @@ define([
         },
 
         render: function(model) {
-            this.$el.html(this.template({
+            var template = this.template({
                 itemCategoryDisplayName: this.itemCategoryDisplayName,
                 newItemMessage: this.newItemMessage,
                 emptyMessage: this.emptyMessage,
                 length: this.collection.length,
                 isEditing: model && model.get('editing'),
-                canCreateNewItem: this.canCreateItem(this.collection)
-            }));
+                canCreateNewItem: this.canCreateItem(this.collection),
+                restrictEditing: this.restrictEditing
+            });
+            edx.HtmlUtils.setHtml(this.$el, edx.HtmlUtils.HTML(template));
 
+            // eslint-disable-next-line no-shadow
             this.collection.each(function(model) {
-                this.$(this.listContainerCss).append(this.createItemView({model: model}).render().el);
+                this.$(this.listContainerCss).append(
+                    this.createItemView({model: model, restrictEditing: this.restrictEditing}).render().el
+                );
             }, this);
 
             return this;
@@ -71,7 +79,7 @@ define([
             }
         },
 
-        addNewItemView: function (model) {
+        addNewItemView: function(model) {
             var view = this.createItemView({model: model});
 
             // If items already exist, just append one new.
@@ -101,7 +109,7 @@ define([
             this.collection.add({editing: true}, this.newModelOptions);
         },
 
-        onRemoveItem: function () {
+        onRemoveItem: function() {
             if (this.collection.length === 0) {
                 this.render();
             }

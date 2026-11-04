@@ -2,17 +2,18 @@
 Views for serving static textbooks.
 """
 
+
+from urllib.parse import quote
+
 from django.contrib.auth.decorators import login_required
 from django.http import Http404
-from edxmako.shortcuts import render_to_response
+from django.views.decorators.clickjacking import xframe_options_exempt
+from opaque_keys.edx.keys import CourseKey
 
-from opaque_keys.edx.locations import SlashSeparatedCourseKey
-from xmodule.annotator_token import retrieve_token
-
-from courseware.access import has_access
-from courseware.courses import get_course_with_access
-from notes.utils import notes_enabled_for_course
-from static_replace import replace_static_urls
+from common.djangoapps.edxmako.shortcuts import render_to_response
+from common.djangoapps.static_replace import replace_static_urls
+from lms.djangoapps.courseware.access import has_access
+from lms.djangoapps.courseware.courses import get_course_with_access
 
 
 @login_required
@@ -20,13 +21,13 @@ def index(request, course_id, book_index, page=None):
     """
     Serve static image-based textbooks.
     """
-    course_key = SlashSeparatedCourseKey.from_deprecated_string(course_id)
+    course_key = CourseKey.from_string(course_id)
     course = get_course_with_access(request.user, 'load', course_key)
     staff_access = bool(has_access(request.user, 'staff', course))
 
     book_index = int(book_index)
     if book_index < 0 or book_index >= len(course.textbooks):
-        raise Http404("Invalid book index value: {0}".format(book_index))
+        raise Http404(f"Invalid book index value: {book_index}")
     textbook = course.textbooks[book_index]
     table_of_contents = textbook.table_of_contents
 
@@ -62,6 +63,7 @@ def remap_static_url(original_url, course):
 
 
 @login_required
+@xframe_options_exempt
 def pdf_index(request, course_id, book_index, chapter=None, page=None):
     """
     Display a PDF textbook.
@@ -77,21 +79,29 @@ def pdf_index(request, course_id, book_index, chapter=None, page=None):
 
     page:  (optional) one-based page number to display within the PDF.  Defaults to first page.
     """
-    course_key = SlashSeparatedCourseKey.from_deprecated_string(course_id)
+    course_key = CourseKey.from_string(course_id)
     course = get_course_with_access(request.user, 'load', course_key)
     staff_access = bool(has_access(request.user, 'staff', course))
 
     book_index = int(book_index)
     if book_index < 0 or book_index >= len(course.pdf_textbooks):
-        raise Http404("Invalid book index value: {0}".format(book_index))
+        raise Http404(f"Invalid book index value: {book_index}")
     textbook = course.pdf_textbooks[book_index]
 
     viewer_params = '&file='
     current_url = ''
 
+    # The PDF URL is passed as the `file` query parameter to pdf.js's viewer.
+    # Modern pdf.js parses that query string with URLSearchParams, which
+    # decodes `+` as a space -- and opaque-key asset URLs use `+` as a
+    # structural separator (e.g. `asset-v1:org+course+run+type@asset+block@…`).
+    # Percent-encode the URL value here so the viewer reads it back intact.
+    def _encode_file_value(url):
+        return quote(url, safe='/:@')
+
     if 'url' in textbook:
         textbook['url'] = remap_static_url(textbook['url'], course)
-        viewer_params += textbook['url']
+        viewer_params += _encode_file_value(textbook['url'])
         current_url = textbook['url']
 
     # then remap all the chapter URLs as well, if they are provided.
@@ -99,16 +109,16 @@ def pdf_index(request, course_id, book_index, chapter=None, page=None):
     if 'chapters' in textbook:
         for entry in textbook['chapters']:
             entry['url'] = remap_static_url(entry['url'], course)
-        if chapter is not None:
+        if chapter is not None and int(chapter) <= (len(textbook['chapters'])):
             current_chapter = textbook['chapters'][int(chapter) - 1]
         else:
             current_chapter = textbook['chapters'][0]
-        viewer_params += current_chapter['url']
+        viewer_params += _encode_file_value(current_chapter['url'])
         current_url = current_chapter['url']
 
     viewer_params += '#zoom=page-fit&disableRange=true'
     if page is not None:
-        viewer_params += '&amp;page={}'.format(page)
+        viewer_params += f'&page={page}'
 
     if request.GET.get('viewer', '') == 'true':
         template = 'pdf_viewer.html'
@@ -145,14 +155,13 @@ def html_index(request, course_id, book_index, chapter=None):
         Defaults to first chapter.  Specifying this assumes that there are separate HTML files for
         each chapter in a textbook.
     """
-    course_key = SlashSeparatedCourseKey.from_deprecated_string(course_id)
+    course_key = CourseKey.from_string(course_id)
     course = get_course_with_access(request.user, 'load', course_key)
     staff_access = bool(has_access(request.user, 'staff', course))
-    notes_enabled = notes_enabled_for_course(course)
 
     book_index = int(book_index)
     if book_index < 0 or book_index >= len(course.html_textbooks):
-        raise Http404("Invalid book index value: {0}".format(book_index))
+        raise Http404(f"Invalid book index value: {book_index}")
     textbook = course.html_textbooks[book_index]
 
     if 'url' in textbook:
@@ -172,8 +181,5 @@ def html_index(request, course_id, book_index, chapter=None):
             'chapter': chapter,
             'student': student,
             'staff_access': staff_access,
-            'notes_enabled': notes_enabled,
-            'storage': course.annotation_storage_url,
-            'token': retrieve_token(student.email, course.annotation_token_secret),
         },
     )

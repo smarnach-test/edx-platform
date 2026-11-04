@@ -1,10 +1,29 @@
-<%! from django.utils.translation import ugettext as _ %>
+<%page expression_filter="h"/>
+<%namespace name='static' file='../static_content.html'/>
+<%!
+from django.utils.translation import gettext as _
+from openedx.core.djangolib.markup import HTML, Text
+%>
 <%inherit file="../main.html" />
 
 <%block name="pagetitle">${_("Page Not Found")}</%block>
 
-<section class="outside-app">
-<h1>${_("Page not found")}</h1>
-<p>${_('The page that you were looking for was not found. Go back to the {link_start}homepage{link_end} or let us know about any pages that may have been moved at {email}.').format(
-    link_start='<a href="/">', link_end='</a>', email='<a href="mailto:{email}">{email}</a>'.format(email=settings.TECH_SUPPORT_EMAIL))}</p>
-</section>
+<main id="main" aria-label="Content" tabindex="-1">
+    <section class="outside-app">
+        <h1>
+            <%block name="pageheader">${page_header or _("Page not found")}</%block>
+        </h1>
+        <p>
+            <%block name="pagecontent">
+                % if page_content:
+                    ${page_content}
+                % else:
+                    ${Text(_('The page that you were looking for was not found. Go back to the {link_start}homepage{link_end} .')).format(
+                    link_start=HTML('<a href="/">'),
+                    link_end=HTML('</a>')
+                    )}
+                % endif
+            </%block>
+        </p>
+    </section>
+</main>

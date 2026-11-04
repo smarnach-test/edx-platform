@@ -9,10 +9,12 @@ file and check it in at the same time as your model changes. To do that,
 3. It adds the migration file to edx-platform/common/djangoapps/course_action_state/migrations/
 
 """
-from django.contrib.auth.models import User
+
+from django.contrib.auth.models import User  # pylint: disable=imported-auth-user
 from django.db import models
-from xmodule_django.models import CourseKeyField
-from course_action_state.managers import CourseActionStateManager, CourseRerunUIStateManager
+from opaque_keys.edx.django.models import CourseKeyField
+
+from common.djangoapps.course_action_state.managers import CourseActionStateManager, CourseRerunUIStateManager
 
 
 class CourseActionState(models.Model):
@@ -21,7 +23,7 @@ class CourseActionState(models.Model):
     For example: course copying (reruns), import, export, and validation.
     """
 
-    class Meta(object):
+    class Meta:
         """
         For performance reasons, we disable "concrete inheritance", by making the Model base class abstract.
         With the "abstract base class" inheritance model, tables are only created for derived models, not for
@@ -33,7 +35,7 @@ class CourseActionState(models.Model):
     # FIELDS
 
     # Created is the time this action was initiated
-    created_time = models.DateTimeField(auto_now_add=True)
+    created_time = models.DateTimeField(auto_now_add=True)  # noqa: DJ012
 
     # Updated is the last time this entry was modified
     updated_time = models.DateTimeField(auto_now=True)
@@ -70,14 +72,14 @@ class CourseActionState(models.Model):
     state = models.CharField(max_length=50)
 
     # MANAGERS
-    objects = CourseActionStateManager()
+    objects = CourseActionStateManager()  # noqa: DJ012
 
 
 class CourseActionUIState(CourseActionState):
     """
     An abstract django model that is a sub-class of CourseActionState with additional fields related to UI.
     """
-    class Meta(object):
+    class Meta:
         """
         See comment in CourseActionState on disabling "concrete inheritance".
         """
@@ -90,18 +92,20 @@ class CourseActionUIState(CourseActionState):
     # FIELDS
 
     # Whether or not the status should be displayed to users
-    should_display = models.BooleanField()
+    should_display = models.BooleanField(default=False)  # noqa: DJ012
 
     # Message related to the status
     message = models.CharField(max_length=MAX_MESSAGE_LENGTH)
 
 
 # Rerun courses also need these fields. All rerun course actions will have a row here as well.
-class CourseRerunState(CourseActionUIState):
+class CourseRerunState(CourseActionUIState):  # noqa: DJ008
     """
     A concrete django model for maintaining state specifically for the Action Course Reruns.
+
+    .. no_pii:
     """
-    class Meta(object):
+    class Meta:
         """
         Set the (destination) course_key field to be unique for the rerun action
         Although multiple reruns can be in progress simultaneously for a particular source course_key,
@@ -114,8 +118,8 @@ class CourseRerunState(CourseActionUIState):
     source_course_key = CourseKeyField(max_length=255, db_index=True)
 
     # Display name for destination course
-    display_name = models.CharField(max_length=255, default="", blank=True)
+    display_name = models.CharField(max_length=255, default="", blank=True)  # noqa: DJ012
 
     # MANAGERS
     # Override the abstract class' manager with a Rerun-specific manager that inherits from the base class' manager.
-    objects = CourseRerunUIStateManager()
+    objects = CourseRerunUIStateManager()  # noqa: DJ012

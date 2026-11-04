@@ -2,12 +2,19 @@
 Helper functions for the account/profile Python APIs.
 This is NOT part of the public API.
 """
+
+
+import json
+import logging
+import traceback
 from collections import defaultdict
 from functools import wraps
-import logging
-import json
-from django.http import HttpResponseBadRequest
 
+from django import forms
+from django.conf import settings
+from django.core.serializers.json import DjangoJSONEncoder
+from django.utils.encoding import force_str
+from django.utils.functional import Promise
 
 LOGGER = logging.getLogger(__name__)
 
@@ -49,59 +56,34 @@ def intercept_errors(api_error, ignore_errors=None):
                 for ignored in ignore_errors or []:
                     if isinstance(ex, ignored):
                         msg = (
-                            u"A handled error occurred when calling '{func_name}' "
-                            u"with arguments '{args}' and keyword arguments '{kwargs}': "
-                            u"{exception}"
+                            "A handled error occurred when calling '{func_name}' "
+                            "with arguments '{args}' and keyword arguments '{kwargs}': "
+                            "{exception}"
                         ).format(
-                            func_name=func.func_name,
+                            func_name=func.__name__,
                             args=args,
                             kwargs=kwargs,
-                            exception=ex.developer_message if hasattr(ex, 'developer_message') else repr(ex)
+                            exception=ex.developer_message if hasattr(ex, 'developer_message') else repr(ex)  # pylint: disable=no-member
                         )
                         LOGGER.warning(msg)
                         raise
 
+                caller = traceback.format_stack(limit=2)[0]
+
                 # Otherwise, log the error and raise the API-specific error
                 msg = (
-                    u"An unexpected error occurred when calling '{func_name}' "
-                    u"with arguments '{args}' and keyword arguments '{kwargs}': "
-                    u"{exception}"
+                    "An unexpected error occurred when calling '{func_name}' "
+                    "with arguments '{args}' and keyword arguments '{kwargs}' from {caller}: "
+                    "{exception}"
                 ).format(
-                    func_name=func.func_name,
+                    func_name=func.__name__,
                     args=args,
                     kwargs=kwargs,
-                    exception=ex.developer_message if hasattr(ex, 'developer_message') else repr(ex)
+                    exception=ex.developer_message if hasattr(ex, 'developer_message') else repr(ex),  # pylint: disable=no-member
+                    caller=caller.strip(),
                 )
                 LOGGER.exception(msg)
-                raise api_error(msg)
-        return _wrapped
-    return _decorator
-
-
-def require_post_params(required_params):
-    """
-    View decorator that ensures the required POST params are
-    present.  If not, returns an HTTP response with status 400.
-
-    Args:
-        required_params (list): The required parameter keys.
-
-    Returns:
-        HttpResponse
-
-    """
-    def _decorator(func):  # pylint: disable=missing-docstring
-        @wraps(func)
-        def _wrapped(*args, **_kwargs):  # pylint: disable=missing-docstring
-            request = args[0]
-            missing_params = set(required_params) - set(request.POST.keys())
-            if len(missing_params) > 0:
-                msg = u"Missing POST parameters: {missing}".format(
-                    missing=", ".join(missing_params)
-                )
-                return HttpResponseBadRequest(msg)
-            else:
-                return func(request)
+                raise api_error(msg)  # pylint: disable=raise-missing-from  # noqa: B904
         return _wrapped
     return _decorator
 
@@ -110,21 +92,32 @@ class InvalidFieldError(Exception):
     """The provided field definition is not valid. """
 
 
-class FormDescription(object):
+class FormDescription:
     """Generate a JSON representation of a form. """
 
-    ALLOWED_TYPES = ["text", "email", "select", "textarea", "checkbox", "password"]
+    ALLOWED_TYPES = ["text", "email", "select", "textarea", "checkbox", "plaintext", "password", "hidden"]
 
     ALLOWED_RESTRICTIONS = {
         "text": ["min_length", "max_length"],
-        "password": ["min_length", "max_length"],
-        "email": ["min_length", "max_length"],
+        "password": ["min_length", "max_length", "min_upper", "min_lower",
+                     "min_punctuation", "min_symbol", "min_numeric", "min_alphabetic"],
+        "email": ["min_length", "max_length", "readonly"],
+    }
+
+    FIELD_TYPE_MAP = {
+        forms.CharField: "text",
+        forms.PasswordInput: "password",
+        forms.ChoiceField: "select",
+        forms.TypedChoiceField: "select",
+        forms.Textarea: "textarea",
+        forms.BooleanField: "checkbox",
+        forms.EmailField: "email",
     }
 
     OVERRIDE_FIELD_PROPERTIES = [
         "label", "type", "defaultValue", "placeholder",
         "instructions", "required", "restrictions",
-        "options"
+        "options", "supplementalLink", "supplementalText"
     ]
 
     def __init__(self, method, submit_url):
@@ -141,9 +134,10 @@ class FormDescription(object):
         self._field_overrides = defaultdict(dict)
 
     def add_field(
-        self, name, label=u"", field_type=u"text", default=u"",
-        placeholder=u"", instructions=u"", required=True, restrictions=None,
-        options=None, include_default_option=False, error_messages=None
+            self, name, label="", field_type="text", default="",
+            placeholder="", instructions="", exposed=None, required=True, restrictions=None,
+            options=None, include_default_option=False, error_messages=None,
+            supplementalLink="", supplementalText=""
     ):
         """Add a field to the form description.
 
@@ -165,6 +159,9 @@ class FormDescription(object):
             instructions (unicode): Short instructions for using the field
                 (e.g. "This is the email address you used when you registered.")
 
+            exposed (boolean): Whether the field is shown if not required.
+                If the field is not set, the field will be visible if it's required.
+
             required (boolean): Whether the field is required or optional.
 
             restrictions (dict): Validation restrictions for the field.
@@ -184,16 +181,25 @@ class FormDescription(object):
                 that the messages should be displayed if the user does
                 not provide a value for a required field.
 
+            supplementalLink (unicode): A qualified URL to provide supplemental information
+                for the form field. An example may be a link to documentation for creating
+                strong passwords.
+
+            supplementalText (unicode): The visible text for the supplemental link above.
+
         Raises:
             InvalidFieldError
 
         """
         if field_type not in self.ALLOWED_TYPES:
-            msg = u"Field type '{field_type}' is not a valid type.  Allowed types are: {allowed}.".format(
+            msg = "Field type '{field_type}' is not a valid type.  Allowed types are: {allowed}.".format(
                 field_type=field_type,
                 allowed=", ".join(self.ALLOWED_TYPES)
             )
             raise InvalidFieldError(msg)
+
+        if exposed is None:
+            exposed = required
 
         field_dict = {
             "name": name,
@@ -202,40 +208,49 @@ class FormDescription(object):
             "defaultValue": default,
             "placeholder": placeholder,
             "instructions": instructions,
+            "exposed": exposed,
             "required": required,
             "restrictions": {},
             "errorMessages": {},
+            "supplementalLink": supplementalLink,
+            "supplementalText": supplementalText,
+            "loginIssueSupportLink": settings.LOGIN_ISSUE_SUPPORT_LINK,
         }
+
+        field_override = self._field_overrides.get(name, {})
 
         if field_type == "select":
             if options is not None:
                 field_dict["options"] = []
 
-                # Include an empty "default" option at the beginning of the list
+                # Get an existing default value from the field override
+                existing_default_value = field_override.get('defaultValue')
+
+                # Include an empty "default" option at the beginning of the list;
+                # preselect it if there isn't an overriding default.
                 if include_default_option:
                     field_dict["options"].append({
                         "value": "",
                         "name": "--",
-                        "default": True
+                        "default": existing_default_value is None
                     })
-
                 field_dict["options"].extend([
-                    {"value": option_value, "name": option_name}
-                    for option_value, option_name in options
+                    {
+                        'value': option_value,
+                        'name': option_name,
+                        'default': option_value == existing_default_value
+                    } for option_value, option_name in options
                 ])
             else:
                 raise InvalidFieldError("You must provide options for a select field.")
 
         if restrictions is not None:
             allowed_restrictions = self.ALLOWED_RESTRICTIONS.get(field_type, [])
-            for key, val in restrictions.iteritems():
+            for key, val in restrictions.items():
                 if key in allowed_restrictions:
                     field_dict["restrictions"][key] = val
                 else:
-                    msg = "Restriction '{restriction}' is not allowed for field type '{field_type}'".format(
-                        restriction=key,
-                        field_type=field_type
-                    )
+                    msg = f"Restriction '{key}' is not allowed for field type '{field_type}'"
                     raise InvalidFieldError(msg)
 
         if error_messages is not None:
@@ -243,7 +258,7 @@ class FormDescription(object):
 
         # If there are overrides for this field, apply them now.
         # Any field property can be overwritten (for example, the default value or placeholder)
-        field_dict.update(self._field_overrides.get(name, {}))
+        field_dict.update(field_override)
 
         self.fields.append(field_dict)
 
@@ -260,12 +275,13 @@ class FormDescription(object):
                     "label": "Cheese or Wine?",
                     "defaultValue": "cheese",
                     "type": "select",
+                    "exposed": True,
                     "required": True,
                     "placeholder": "",
                     "instructions": "",
                     "options": [
-                        {"value": "cheese", "name": "Cheese"},
-                        {"value": "wine", "name": "Wine"}
+                        {"value": "cheese", "name": "Cheese", "default": False},
+                        {"value": "wine", "name": "Wine", "default": False}
                     ]
                     "restrictions": {},
                     "errorMessages": {},
@@ -275,6 +291,7 @@ class FormDescription(object):
                     "label": "comments",
                     "defaultValue": "",
                     "type": "text",
+                    "exposed": False,
                     "required": False,
                     "placeholder": "Any comments?",
                     "instructions": "Please enter additional comments here."
@@ -297,7 +314,7 @@ class FormDescription(object):
             "method": self.method,
             "submit_url": self.submit_url,
             "fields": self.fields
-        })
+        }, cls=LocalizedJSONEncoder)
 
     def override_field_properties(self, field_name, **kwargs):
         """Override properties of a field.
@@ -325,143 +342,31 @@ class FormDescription(object):
 
         self._field_overrides[field_name].update({
             property_name: property_value
-            for property_name, property_value in kwargs.iteritems()
+            for property_name, property_value in kwargs.items()
             if property_name in self.OVERRIDE_FIELD_PROPERTIES
         })
 
 
-def shim_student_view(view_func, check_logged_in=False):
-    """Create a "shim" view for a view function from the student Django app.
-
-    Specifically, we need to:
-    * Strip out enrollment params, since the client for the new registration/login
-        page will communicate with the enrollment API to update enrollments.
-
-    * Return responses with HTTP status codes indicating success/failure
-        (instead of always using status 200, but setting "success" to False in
-        the JSON-serialized content of the response)
-
-    * Use status code 403 to indicate a login failure.
-
-    The shim will preserve any cookies set by the view.
-
-    Arguments:
-        view_func (function): The view function from the student Django app.
-
-    Keyword Args:
-        check_logged_in (boolean): If true, check whether the user successfully
-            authenticated and if not set the status to 403.
-
-    Returns:
-        function
-
+class LocalizedJSONEncoder(DjangoJSONEncoder):
     """
-    @wraps(view_func)
-    def _inner(request):  # pylint: disable=missing-docstring
-        # Ensure that the POST querydict is mutable
-        request.POST = request.POST.copy()
+    JSON handler that evaluates gettext_lazy promises.
+    """
+    # pylint: disable=method-hidden
 
-        # The login and registration handlers in student view try to change
-        # the user's enrollment status if these parameters are present.
-        # Since we want the JavaScript client to communicate directly with
-        # the enrollment API, we want to prevent the student views from
-        # updating enrollments.
-        if "enrollment_action" in request.POST:
-            del request.POST["enrollment_action"]
-        if "course_id" in request.POST:
-            del request.POST["course_id"]
+    def default(self, obj):  # pylint: disable=arguments-differ
+        """
+        Forces evaluation of gettext_lazy promises.
+        """
+        if isinstance(obj, Promise):
+            return force_str(obj)
+        super().default(obj)
 
-        # Include the course ID if it's specified in the analytics info
-        # so it can be included in analytics events.
-        if "analytics" in request.POST:
-            try:
-                analytics = json.loads(request.POST["analytics"])
-                if "enroll_course_id" in analytics:
-                    request.POST["course_id"] = analytics.get("enroll_course_id")
-            except (ValueError, TypeError):
-                LOGGER.error(
-                    u"Could not parse analytics object sent to user API: {analytics}".format(
-                        analytics=analytics
-                    )
-                )
 
-        # Call the original view to generate a response.
-        # We can safely modify the status code or content
-        # of the response, but to be safe we won't mess
-        # with the headers.
-        response = view_func(request)
-
-        # Most responses from this view are JSON-encoded
-        # dictionaries with keys "success", "value", and
-        # (sometimes) "redirect_url".
-        #
-        # We want to communicate some of this information
-        # using HTTP status codes instead.
-        #
-        # We ignore the "redirect_url" parameter, because we don't need it:
-        # 1) It's used to redirect on change enrollment, which
-        # our client will handle directly
-        # (that's why we strip out the enrollment params from the request)
-        # 2) It's used by third party auth when a user has already successfully
-        # authenticated and we're not sending login credentials.  However,
-        # this case is never encountered in practice: on the old login page,
-        # the login form would be submitted directly, so third party auth
-        # would always be "trumped" by first party auth.  If a user has
-        # successfully authenticated with us, we redirect them to the dashboard
-        # regardless of how they authenticated; and if a user is completing
-        # the third party auth pipeline, we redirect them from the pipeline
-        # completion end-point directly.
-        try:
-            response_dict = json.loads(response.content)
-            msg = response_dict.get("value", u"")
-            success = response_dict.get("success")
-        except (ValueError, TypeError):
-            msg = response.content
-            success = True
-
-        # If the user is not authenticated when we expect them to be
-        # send the appropriate status code.
-        # We check whether the user attribute is set to make
-        # it easier to test this without necessarily running
-        # the request through authentication middleware.
-        is_authenticated = (
-            getattr(request, 'user', None) is not None
-            and request.user.is_authenticated()
-        )
-        if check_logged_in and not is_authenticated:
-            # If we get a 403 status code from the student view
-            # this means we've successfully authenticated with a
-            # third party provider, but we don't have a linked
-            # EdX account.  Send a helpful error code so the client
-            # knows this occurred.
-            if response.status_code == 403:
-                response.content = "third-party-auth"
-
-            # Otherwise, it's a general authentication failure.
-            # Ensure that the status code is a 403 and pass
-            # along the message from the view.
-            else:
-                response.status_code = 403
-                response.content = msg
-
-        # If an error condition occurs, send a status 400
-        elif response.status_code != 200 or not success:
-            # The student views tend to send status 200 even when an error occurs
-            # If the JSON-serialized content has a value "success" set to False,
-            # then we know an error occurred.
-            if response.status_code == 200:
-                response.status_code = 400
-            response.content = msg
-
-        # If the response is successful, then return the content
-        # of the response directly rather than including it
-        # in a JSON-serialized dictionary.
-        else:
-            response.content = msg
-
-        # Return the response, preserving the original headers.
-        # This is really important, since the student views set cookies
-        # that are used elsewhere in the system (such as the marketing site).
-        return response
-
-    return _inner
+def serializer_is_dirty(preference_serializer):
+    """
+    Return True if saving the supplied (Raw)UserPreferenceSerializer would change the database.
+    """
+    return (
+        preference_serializer.instance is None or
+        preference_serializer.instance.value != preference_serializer.validated_data['value']
+    )

@@ -1,28 +1,32 @@
-# -*- coding: utf-8 -*-
 """
 Code to manage fetching and storing the metadata of IdPs.
 """
-#pylint: disable=no-member
-from celery.task import task  # pylint: disable=import-error,no-name-in-module
-import datetime
-import dateutil.parser
+
+
 import logging
-from lxml import etree
+
 import requests
-from onelogin.saml2.utils import OneLogin_Saml2_Utils
-from third_party_auth.models import SAMLConfiguration, SAMLProviderConfig, SAMLProviderData
+from celery import shared_task
+from django.core.exceptions import ObjectDoesNotExist
+from lxml import etree
+from requests import exceptions
+from social_django.models import UserSocialAuth
+
+from common.djangoapps.third_party_auth.models import SAMLConfiguration, SAMLProviderConfig
+from common.djangoapps.third_party_auth.utils import (
+    MetadataParseError,
+    SAMLMetadataURLError,
+    create_or_update_bulk_saml_provider_data,
+    parse_metadata_xml,
+    validate_saml_metadata_url,
+)
 
 log = logging.getLogger(__name__)
 
 SAML_XML_NS = 'urn:oasis:names:tc:SAML:2.0:metadata'  # The SAML Metadata XML namespace
 
 
-class MetadataParseError(Exception):
-    """ An error occurred while parsing the SAML metadata from an IdP """
-    pass
-
-
-@task(name='third_party_auth.fetch_saml_metadata')
+@shared_task
 def fetch_saml_metadata():
     """
     Fetch and store/update the metadata of all IdPs
@@ -31,127 +35,161 @@ def fetch_saml_metadata():
     It's OK to run this whether or not SAML is enabled.
 
     Return value:
-        tuple(num_changed, num_failed, num_total)
-        num_changed: Number of providers that are either new or whose metadata has changed
+        tuple(num_skipped, num_attempted, num_updated, num_failed, failure_messages)
+        num_total: Total number of providers found in the database
+        num_skipped: Number of providers skipped for various reasons (see L52)
+        num_attempted: Number of providers whose metadata was fetched
+        num_updated: Number of providers that are either new or whose metadata has changed
         num_failed: Number of providers that could not be updated
-        num_total: Total number of providers whose metadata was fetched
+        failure_messages: List of error messages for the providers that could not be updated
     """
-    if not SAMLConfiguration.is_enabled():
-        return (0, 0, 0)  # Nothing to do until SAML is enabled.
-
-    num_changed, num_failed = 0, 0
 
     # First make a list of all the metadata XML URLs:
+    saml_providers = SAMLProviderConfig.key_values('slug', flat=True)
+    num_total = len(saml_providers)
+    num_skipped = 0
     url_map = {}
-    for idp_slug in SAMLProviderConfig.key_values('idp_slug', flat=True):
+    for idp_slug in saml_providers:
         config = SAMLProviderConfig.current(idp_slug)
-        if not config.enabled:
+        saml_config_slug = config.saml_configuration.slug if config.saml_configuration else 'default'
+
+        # Skip SAML provider configurations which do not qualify for fetching
+        if any([
+            not config.enabled,
+            not config.automatic_refresh_enabled,
+            not SAMLConfiguration.is_enabled(config.site, saml_config_slug)
+        ]):
+            num_skipped += 1
             continue
+
         url = config.metadata_source
         if url not in url_map:
             url_map[url] = []
         if config.entity_id not in url_map[url]:
             url_map[url].append(config.entity_id)
-    # Now fetch the metadata:
+
+    # Now attempt to fetch the metadata for the remaining SAML providers:
+    num_attempted = len(url_map)
+    num_updated = 0
+    failure_messages = []  # We return the length of this array for num_failed
     for url, entity_ids in url_map.items():
         try:
+            validate_saml_metadata_url(url)
             log.info("Fetching %s", url)
-            if not url.lower().startswith('https'):
-                log.warning("This SAML metadata URL is not secure! It should use HTTPS. (%s)", url)
-            response = requests.get(url, verify=True)  # May raise HTTPError or SSLError or ConnectionError
+            response = requests.get(url, verify=True, timeout=30)  # May raise HTTPError or SSLError or ConnectionError
             response.raise_for_status()  # May raise an HTTPError
 
             try:
                 parser = etree.XMLParser(remove_comments=True)
                 xml = etree.fromstring(response.content, parser)
-            except etree.XMLSyntaxError:
+            except etree.XMLSyntaxError:  # pylint: disable=try-except-raise
                 raise
             # TODO: Can use OneLogin_Saml2_Utils to validate signed XML if anyone is using that
 
             for entity_id in entity_ids:
-                log.info(u"Processing IdP with entityID %s", entity_id)
-                public_key, sso_url, expires_at = _parse_metadata_xml(xml, entity_id)
-                changed = _update_data(entity_id, public_key, sso_url, expires_at)
+                log.info("Processing IdP with entityID %s", entity_id)
+                public_keys, sso_url, expires_at = parse_metadata_xml(xml, entity_id)
+                changed = create_or_update_bulk_saml_provider_data(entity_id, public_keys, sso_url, expires_at)
                 if changed:
-                    log.info(u"→ Created new record for SAMLProviderData")
-                    num_changed += 1
+                    log.info(f"→ Created new record for SAMLProviderData for entityID {entity_id}")
+                    num_updated += 1
                 else:
-                    log.info(u"→ Updated existing SAMLProviderData. Nothing has changed.")
-        except Exception as err:  # pylint: disable=broad-except
-            log.exception(err.message)
-            num_failed += 1
-    return (num_changed, num_failed, len(url_map))
+                    log.info(f"→ Updated existing SAMLProviderData. Nothing has changed for entityID {entity_id}")
+        except (
+            exceptions.SSLError,
+            exceptions.HTTPError,
+            exceptions.RequestException,
+            MetadataParseError,
+            SAMLMetadataURLError,
+        ) as error:
+            # Catch and process exception in case of errors during fetching and processing saml metadata.
+            # Here is a description of each exception.
+            # SSLError is raised in case of errors caused by SSL (e.g. SSL cer verification failure etc.)
+            # HTTPError is raised in case of unexpected status code (e.g. 500 error etc.)
+            # RequestException is the base exception for any request related error that "requests" lib raises.
+            # MetadataParseError is raised if there is error in the fetched meta data (e.g. missing @entityID etc.)
+
+            log.exception(str(error))
+            failure_messages.append(
+                "{error_type}: {error_message}\nMetadata Source: {url}\nEntity IDs: \n{entity_ids}.".format(
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                    url=url,
+                    entity_ids="\n".join(
+                        [f"\t{count}: {item}" for count, item in enumerate(entity_ids, start=1)],
+                    )
+                )
+            )
+        except etree.XMLSyntaxError as error:
+            log.exception(str(error))
+            failure_messages.append(
+                "XMLSyntaxError: {error_message}\nMetadata Source: {url}\nEntity IDs: \n{entity_ids}.".format(
+                    error_message=str(error.error_log),  # pylint: disable=no-member
+                    url=url,
+                    entity_ids="\n".join(
+                        [f"\t{count}: {item}" for count, item in enumerate(entity_ids, start=1)],
+                    )
+                )
+            )
+
+    # Return counts for total, skipped, attempted, updated, and failed, along with any failure messages
+    return num_total, num_skipped, num_attempted, num_updated, len(failure_messages), failure_messages
 
 
-def _parse_metadata_xml(xml, entity_id):
+@shared_task
+def update_saml_users_social_auth_uid(reader, slug):
     """
-    Given an XML document containing SAML 2.0 metadata, parse it and return a tuple of
-    (public_key, sso_url, expires_at) for the specified entityID.
+    Update the UserSocialAuth UID for users based on a CSV reader input.
 
-    Raises MetadataParseError if anything is wrong.
+    This function reads old and new UIDs from a CSV reader, fetches the corresponding
+    SAMLProviderConfig object using the provided slug, and updates the UserSocialAuth
+    records accordingly.
+
+    Args:
+        reader (csv.DictReader): A CSV reader object that iterates over rows containing 'old-uid' and 'new-uid'.
+        slug (str): The slug of the SAMLProviderConfig object to be fetched.
+
+    Returns:
+        None
     """
-    if xml.tag == etree.QName(SAML_XML_NS, 'EntityDescriptor'):
-        entity_desc = xml
-    else:
-        if xml.tag != etree.QName(SAML_XML_NS, 'EntitiesDescriptor'):
-            raise MetadataParseError("Expected root element to be <EntitiesDescriptor>, not {}".format(xml.tag))
-        entity_desc = xml.find(
-            ".//{}[@entityID='{}']".format(etree.QName(SAML_XML_NS, 'EntityDescriptor'), entity_id)
-        )
-        if not entity_desc:
-            raise MetadataParseError("Can't find EntityDescriptor for entityID {}".format(entity_id))
+    log_prefix = "UpdateSamlUsersAuthUID"
+    log.info(f"{log_prefix}: Updated user UID request received with slug: {slug}")
 
-    expires_at = None
-    if "validUntil" in xml.attrib:
-        expires_at = dateutil.parser.parse(xml.attrib["validUntil"])
-    if "cacheDuration" in xml.attrib:
-        cache_expires = OneLogin_Saml2_Utils.parse_duration(xml.attrib["cacheDuration"])
-        if expires_at is None or cache_expires < expires_at:
-            expires_at = cache_expires
-
-    sso_desc = entity_desc.find(etree.QName(SAML_XML_NS, "IDPSSODescriptor"))
-    if not sso_desc:
-        raise MetadataParseError("IDPSSODescriptor missing")
-    if 'urn:oasis:names:tc:SAML:2.0:protocol' not in sso_desc.get("protocolSupportEnumeration"):
-        raise MetadataParseError("This IdP does not support SAML 2.0")
-
-    # Now we just need to get the public_key and sso_url
-    public_key = sso_desc.findtext("./{}//{}".format(
-        etree.QName(SAML_XML_NS, "KeyDescriptor"), "{http://www.w3.org/2000/09/xmldsig#}X509Certificate"
-    ))
-    if not public_key:
-        raise MetadataParseError("Public Key missing. Expected an <X509Certificate>")
-    public_key = public_key.replace(" ", "")
-    binding_elements = sso_desc.iterfind("./{}".format(etree.QName(SAML_XML_NS, "SingleSignOnService")))
-    sso_bindings = {element.get('Binding'): element.get('Location') for element in binding_elements}
     try:
-        # The only binding supported by python-saml and python-social-auth is HTTP-Redirect:
-        sso_url = sso_bindings['urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Redirect']
-    except KeyError:
-        raise MetadataParseError("Unable to find SSO URL with HTTP-Redirect binding.")
-    return public_key, sso_url, expires_at
+        # Fetching the SAMLProviderConfig object with slug
+        saml_provider_config = SAMLProviderConfig.objects.current_set().get(slug=slug)
+    except SAMLProviderConfig.DoesNotExist:
+        log.error(f"{log_prefix}: SAMLProviderConfig with slug {slug} does not exist")
+        return
+    except Exception as e:  # pylint: disable=broad-except
+        log.error(f"{log_prefix}: An error occurred while fetching SAMLProviderConfig: {str(e)}")
+        return
 
+    success_count = 0
+    error_count = 0
 
-def _update_data(entity_id, public_key, sso_url, expires_at):
-    """
-    Update/Create the SAMLProviderData for the given entity ID.
-    Return value:
-        False if nothing has changed and existing data's "fetched at" timestamp is just updated.
-        True if a new record was created. (Either this is a new provider or something changed.)
-    """
-    data_obj = SAMLProviderData.current(entity_id)
-    fetched_at = datetime.datetime.now()
-    if data_obj and (data_obj.public_key == public_key and data_obj.sso_url == sso_url):
-        data_obj.expires_at = expires_at
-        data_obj.fetched_at = fetched_at
-        data_obj.save()
-        return False
-    else:
-        SAMLProviderData.objects.create(
-            entity_id=entity_id,
-            fetched_at=fetched_at,
-            expires_at=expires_at,
-            sso_url=sso_url,
-            public_key=public_key,
-        )
-        return True
+    for row in reader:
+        old_uid = row.get('old-uid')
+        new_uid = row.get('new-uid')
+
+        # Construct the UID using the SAML provider slug and old UID
+        uid = f'{saml_provider_config.slug}:{old_uid}'
+
+        try:
+            user_social_auth = UserSocialAuth.objects.get(uid=uid)
+            user_social_auth.uid = f'{saml_provider_config.slug}:{new_uid}'
+            user_social_auth.save()
+            log.info(f"{log_prefix}: Updated UID from {old_uid} to {new_uid} for user:{user_social_auth.user.id}.")
+            success_count += 1
+
+        except ObjectDoesNotExist:
+            log.error(f"{log_prefix}: UserSocialAuth with UID {uid} does not exist for old UID {old_uid}")
+            error_count += 1
+
+        except Exception as e:  # pylint: disable=broad-except
+            log.error(f"{log_prefix}: An error occurred while updating UID for old UID {old_uid}"
+                      f" to new UID {new_uid}: {str(e)}")
+            error_count += 1
+
+    log.info(f"{log_prefix}: Process completed for SAML configuration with slug: {slug}, {success_count} records"
+             f" successfully processed, {error_count} records encountered errors")

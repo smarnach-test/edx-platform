@@ -3,34 +3,35 @@ This file contains implementation override of SearchResultProcessor which will a
     * Blends in "location" property
     * Confirms user access to object
 """
-from django.core.urlresolvers import reverse
 
-from opaque_keys.edx.locations import SlashSeparatedCourseKey
+
+from django.urls import reverse
+from opaque_keys.edx.keys import CourseKey, UsageKey
 from search.result_processor import SearchResultProcessor
-from xmodule.modulestore.django import modulestore
 
-from courseware.access import has_access
+from lms.djangoapps.course_blocks.api import get_course_blocks
+from lms.djangoapps.courseware.access import has_access
+from xmodule.modulestore.django import modulestore  # pylint: disable=wrong-import-order
 
 
 class LmsSearchResultProcessor(SearchResultProcessor):
-
     """ SearchResultProcessor for LMS Search """
     _course_key = None
-    _course_name = None
     _usage_key = None
     _module_store = None
-    _module_temp_dictionary = {}
+    _course_blocks = {}
 
     def get_course_key(self):
         """ fetch course key object from string representation - retain result for subsequent uses """
         if self._course_key is None:
-            self._course_key = SlashSeparatedCourseKey.from_deprecated_string(self._results_fields["course"])
+            self._course_key = CourseKey.from_string(self._results_fields["course"])
         return self._course_key
 
     def get_usage_key(self):
         """ fetch usage key for component from string representation - retain result for subsequent uses """
         if self._usage_key is None:
-            self._usage_key = self.get_course_key().make_usage_key_from_deprecated_string(self._results_fields["id"])
+            usage_key = UsageKey.from_string(self._results_fields["id"])
+            self._usage_key = usage_key.map_into_course(self.get_course_key())
         return self._usage_key
 
     def get_module_store(self):
@@ -39,11 +40,13 @@ class LmsSearchResultProcessor(SearchResultProcessor):
             self._module_store = modulestore()
         return self._module_store
 
-    def get_item(self, usage_key):
-        """ fetch item from the modulestore - don't refetch if we've already retrieved it beforehand """
-        if usage_key not in self._module_temp_dictionary:
-            self._module_temp_dictionary[usage_key] = self.get_module_store().get_item(usage_key)
-        return self._module_temp_dictionary[usage_key]
+    def get_course_blocks(self, user):
+        """ fetch cached blocks for course - retain for subsequent use """
+        course_key = self.get_course_key()
+        if course_key not in self._course_blocks:
+            root_block_usage_key = self.get_module_store().make_course_usage_key(course_key)
+            self._course_blocks[course_key] = get_course_blocks(user, root_block_usage_key)
+        return self._course_blocks[course_key]
 
     @property
     def url(self):
@@ -60,10 +63,6 @@ class LmsSearchResultProcessor(SearchResultProcessor):
 
     def should_remove(self, user):
         """ Test to see if this result should be removed due to access restriction """
-        user_has_access = has_access(
-            user,
-            "load",
-            self.get_item(self.get_usage_key()),
-            self.get_course_key()
-        )
-        return not user_has_access
+        if has_access(user, 'staff', self.get_course_key()):
+            return False
+        return self.get_usage_key() not in self.get_course_blocks(user).get_block_keys()

@@ -10,343 +10,417 @@
 // #BASE
 // ------------------------------
 %layout-wrapper {
-    margin-bottom: spacing-vertical(base);
-    padding: 0 (gutter()*2);
+  margin-bottom: map-get($spacing-vertical, base);
+  padding: 0 5%;
 
-    @include susy-breakpoint($bp-medium, $susy) {
-        padding: 0 gutter();
-    }
+  @include media-breakpoint-up(md) {
+    padding: 0 2.5%;
+  }
 }
 
 %layout {
-    @include container();
+  @include grid-container();
 }
 
 // app header
 .wrapper-header {
-    @extend %layout-wrapper;
-    padding-top: spacing-vertical(small);
-    padding-bottom: spacing-vertical(small);
+  @extend %layout-wrapper;
+
+  padding-top: map-get($spacing-vertical, small);
+  padding-bottom: map-get($spacing-vertical, small);
 }
 
 .header-app {
-    @extend %layout;
+  @extend %layout;
 
-    .logo {
-        display: block;
-        @include size(rem(100) auto);
-        margin: 0 auto;
-    }
+  .logo {
+    display: block;
 
-    .logo-img {
-        display: block;
-        width: 100%;
-    }
+    @include size(rem(100), auto);
+
+    margin: 0 auto;
+  }
+
+  .logo-img {
+    display: block;
+    width: 100%;
+  }
 }
 
 .header-app-title {
-    margin: 0;
-    @include text-align(center);
+  @include text-align(center);
+  @include make-col(12);
+
+  margin: 0;
 }
 
 // banner
 .wrapper-banner {
-    @extend %layout-wrapper;
-    padding-top: spacing-vertical(small);
-    padding-bottom: spacing-vertical(small);
+  @extend %layout-wrapper;
 
-    .banner {
-        @extend %layout;
-    }
+  padding-top: map-get($spacing-vertical, small);
+  padding-bottom: map-get($spacing-vertical, small);
+
+  .banner {
+    @extend %layout;
+  }
 }
 
 // message to user-centric banner
 .wrapper-banner-user {
-    margin-top: -(spacing-vertical(base)); // abut the global header, plz
+  margin-top: -(map-get($spacing-vertical, base)); // abut the global header, plz
 }
 
 .banner-user {
-    @include text-align(center);
+  @include text-align(center);
 
-    @include susy-breakpoint($bp-large, $susy) {
-        @include text-align(left);
+  @include media-breakpoint-up(lg) {
+    @include text-align(left);
+  }
+
+  .wrapper-copy-and-actions {
+    @include grid-container();
+
+    .message-copy {
+      margin-bottom: map-get($spacing-vertical, small);
+      margin-top: 0;
     }
 
-    .wrapper-copy-and-actions {
-        @include container();
+    .message-actions {
+      @include make-col(12);
 
-        .message-copy {
-            margin-bottom: spacing-vertical(small);
+      .action {
+        display: block;
+        width: 100%;
+        margin: 0 auto map-get($spacing-vertical, small) auto;
+
+        &:last-child {
+          margin-bottom: 0;
         }
 
-        .message-actions .action {
-            display: block;
-            width: 100%;
-            margin: 0 auto spacing-vertical(small) auto;
+        // CASE: icon display only
+        &.icon-only {
+          @include media-breakpoint-up(md) {
+            padding: map-get($spacing-vertical, x-small) map-get($spacing-horizontal, base);
 
-            &:last-child {
-                margin-bottom: 0;
+            .icon {
+              @include margin-right(0);
             }
-
-            // CASE: icon display only
-            &.icon-only {
-
-                @include susy-breakpoint($bp-medium, $susy) {
-                    padding: spacing-vertical(x-small) spacing-horizontal(base);
-
-                    .icon {
-                        @include margin-right(0);
-                    }
-                }
-            }
-
-            @include susy-breakpoint($bp-medium, $susy) {
-                display: inline-block;
-                vertical-align: middle;
-                width: auto;
-                margin-bottom: 0;
-                margin-right: spacing-horizontal(mid-small);
-
-                &:last-child {
-                    margin-right: 0;
-                }
-            }
+          }
         }
+
+        @include media-breakpoint-up(md) {
+          display: inline-block;
+          vertical-align: middle;
+          min-width: 130px;
+          width: auto;
+          margin-bottom: 0;
+          margin-right: map-get($spacing-horizontal, mid-small);
+
+          &:last-child {
+            margin-right: 0;
+          }
+        }
+      }
     }
+  }
 }
 
 // app footer
 .wrapper-footer {
-    @extend %layout-wrapper;
+  @extend %layout-wrapper;
 }
 
 .footer-app {
-    @extend %layout;
+  @extend %layout;
 }
 
 .footer-app-copyright {
+  @extend %copy-micro;
 
-    @include susy-breakpoint($bp-medium, $susy) {
-        @include span(6 first);
-        margin-bottom: 0;
-    }
+  @include media-breakpoint-up(md) {
+    @include make-col(6);
+    @include margin-left(0);
+
+    margin-bottom: 0;
+  }
 }
 
 .footer-app-nav {
+  @include media-breakpoint-up(md) {
+    @include make-col(6);
+    @include margin-right(0);
+  }
 
-    @include susy-breakpoint($bp-medium, $susy) {
-        @include span(6 last);
+  .list {
+    .nav-item {
+      @extend %copy-meta;
+
+      display: block;
+      font-weight: 600;
+      margin-bottom: map-get($spacing-vertical, x-small);
+
+      @include media-breakpoint-up(md) {
+        display: inline-block;
+        vertical-align: middle;
+
+        @include margin-right(map-get($spacing-horizontal, base));
+
+        margin-bottom: 0;
+      }
     }
 
-    .list {
-
-        .nav-item {
-            display: block;
-            margin-bottom: spacing-vertical(x-small);
-
-            @include susy-breakpoint($bp-medium, $susy) {
-                display: inline-block;
-                vertical-align: middle;
-                @include margin-right(spacing-horizontal(base));
-                margin-bottom: 0;
-            }
-        }
+    .action {
+      @extend %link;
     }
+  }
 
-    .list-legal {
-
-        @include susy-breakpoint($bp-medium, $susy) {
-            @include text-align(right);
-        }
+  .list-legal {
+    @include media-breakpoint-up(md) {
+      @include text-align(right);
     }
+  }
 }
 
 // ------------------------------
 // #ACCOMPLISHMENT
 // ------------------------------
 .layout-accomplishment {
+  .wrapper-introduction {
+    @extend %layout-wrapper;
 
-    .wrapper-introduction {
-        @extend %layout-wrapper;
-        margin-bottom: spacing-vertical(large);
+    margin-bottom: map-get($spacing-vertical, large);
 
-        .introduction {
-            @extend %layout;
-        }
+    .introduction {
+      @extend %layout;
+    }
+  }
+
+  .wrapper-accomplishment-rendering {
+    @extend %layout-wrapper;
+
+    margin-bottom: map-get($spacing-vertical, small);
+  }
+
+  .accomplishment-rendering {
+    @extend %layout;
+
+    position: relative;
+    top: -(map-get($spacing-vertical, base));
+
+    .accomplishment-course,
+    .accomplishment-recipient,
+    .accomplishment-type {
+      @include make-col(12);
     }
 
-    .wrapper-accomplishment-rendering {
-        @extend %layout-wrapper;
-        margin-bottom: spacing-vertical(small);
+    .accomplishment-summary,
+    .accomplishment-statement-detail {
+      @include make-col(12);
+    }
+  }
+
+  .accomplishment-orgs {
+    @include make-container();
+
+    .wrapper-orgs {
+      @include text-align(center);
+
+      margin: 0;
+      padding: 0;
     }
 
-    .accomplishment-rendering {
-        @extend %layout;
-        position: relative;
-        top: -(spacing-vertical(base));
+    .wrapper-organization {
+      @include make-col(6);
 
-        .accomplishment-course,
-        .accomplishment-recipient {
-            width: span(12);
+      display: inline-block;
+      vertical-align: middle;
+      height: rem(100);
+      width: calc(50% - 1rem);
 
-            @include susy-breakpoint($bp-large, $susy) {
-                width: span(10);
-            }
-        }
+      &:last-child {
+        @include margin-right(0);
+      }
 
-        .accomplishment-summary,
-        .accomplishment-statement-detail {
-           width: span(12);
+      @include media-breakpoint-up(md) {
+        @include make-col(3);
+      }
 
-           @include susy-breakpoint($bp-large, $susy) {
-               width: span(8);
-           }
-        }
+      @include media-breakpoint-up(lg) {
+        @include make-col(2);
+      }
+
+      @include media-breakpoint-up(xl) {
+        @include make-col(2);
+      }
     }
 
-    .accomplishment-orgs {
+    .organization {
+      @include size(100%);
 
-        .wrapper-orgs {
-            @include text-align(center);
-        }
-
-        .wrapper-organization {
-            display: inline-block;
-            vertical-align: middle;
-            width: span(6);
-            height: rem(100);
-            @include margin-right(spacing-horizontal(base));
-            margin-bottom: spacing-vertical(small);
-
-            &:last-child {
-                @include margin-right(0);
-            }
-
-            @include susy-breakpoint($bp-medium, $susy) {
-                width: span(3);
-            }
-
-            @include susy-breakpoint($bp-large, $susy) {
-                width: span(2);
-            }
-
-            @include susy-breakpoint($bp-huge, $susy) {
-                width: span(2);
-            }
-        }
-
-        .organization {
-            @include size(100%);
-            position: relative;
-
-        }
-
-        .organization-logo {
-            max-width: 80%;
-            position: absolute;
-            top: 50%;
-            @include left(50%);
-            transform: translate(-50%, -50%);
-        }
+      position: relative;
     }
 
-    .accomplishment-signatories {
+    .organization-logo {
+      max-width: 80%;
+      position: absolute;
+      top: 50%;
 
-        .wrapper-signatories {
-            @include text-align(center);
-        }
+      @include left(50%);
 
-        .signatory {
-            display: inline-block;
-            vertical-align: middle;
-            width: span(12);
+      transform: translate(-50%, -50%);
 
-            @include susy-breakpoint($bp-medium, $susy) {
-                width: span(4);
-            }
+      @include rtl {
+        transform: translate(50%, -50%);
+      }
+    }
+  }
 
-            @include susy-breakpoint($bp-large, $susy) {
-                width: span(3);
-            }
-
-            @include susy-breakpoint($bp-huge, $susy) {
-                width: span(3);
-            }
-
-            .signatory-signature {
-                display: block;
-                max-width: 100%;
-                height: rem(100);
-                padding: spacing-vertical(small) spacing-horizontal(small);
-            }
-        }
+  .accomplishment-signatories {
+    .wrapper-signatories {
+      @include text-align(center);
     }
 
-    .wrapper-accomplishment-metadata {
-        @extend %layout-wrapper;
-
-        .accomplishment-metadata {
-            @extend %layout;
-        }
-
-        .wrapper-metadata .metadata {
-            @extend %divider-2;
-            margin-bottom: spacing-vertical(small);
-            border-bottom-color: palette(grayscale, x-light);
-            padding-bottom: spacing-vertical(small);
-
-            &:last-child {
-                border-bottom: none;
-                padding-bottom: 0;
-            }
-
-            @include susy-breakpoint($bp-medium, $susy) {
-                @include gallery(4);
-                border-bottom: none;
-                padding-bottom: 0;
-            }
-        }
+    @media print{
+      .list-signatories{
+        justify-content: center;
+        display: inline-flex !important;
+      }
     }
 
-    .wrapper-accomplishment-related {
-        @extend %layout-wrapper;
+    .signatory {
+      display: inline-block;
+      vertical-align: middle;
+      width: calc(100% - 1rem);
 
-        .accomplishment-related {
-            @extend %layout;
-        }
+      @include make-col(12);
 
-        .accomplishment-brief {
-            margin-bottom: spacing-vertical(small);
+      @include media-breakpoint-up(md) {
+        @include make-col(4);
+      }
 
-            @include susy-breakpoint($bp-medium, $susy) {
-                @include gallery(6);
-            }
+      @include media-breakpoint-up(lg) {
+        @include make-col(3);
+      }
 
-            .accomplishment-type-symbol {
-                @include size(rem(50));
-                @include margin-right(spacing-horizontal(base));
-            }
-        }
+      @include media-breakpoint-up(xl) {
+        @include make-col(3);
+      }
+
+      .signatory-signature {
+        display: block;
+        max-width: 100%;
+        max-height: rem(100);
+        padding: map-get($spacing-vertical, small) map-get($spacing-horizontal, small);
+      }
+    }
+  }
+
+  .wrapper-accomplishment-metadata {
+    @extend %layout-wrapper;
+
+    .accomplishment-metadata {
+      @extend %layout;
+
+      .accomplishment-metadata-title {
+        @include make-col(12);
+      }
     }
 
-    .wrapper-about {
-        @extend %layout-wrapper;
+    .wrapper-metadata {
+      @extend %layout;
 
-        .about {
-            @extend %layout;
+      @include make-container();
+
+      padding: 0;
+
+      .metadata {
+        @extend %divider-2;
+
+        @include make-col(12);
+
+        margin-bottom: map-get($spacing-vertical, small);
+        border-bottom-color: $gray-x-back;
+        padding-bottom: map-get($spacing-vertical, small);
+
+        &:last-child {
+          border-bottom: none;
+          padding-bottom: 0;
         }
 
-        .about-item {
-            margin-bottom: spacing-vertical(base);
+        @include media-breakpoint-up(md) {
+          @include make-col(4);
 
-            &:last-child {
-                margin-bottom: 0;
-            }
-
-            @include susy-breakpoint($bp-medium, $susy) {
-                @include gallery(6);
-                margin-bottom: 0;
-            }
+          border-bottom: none;
+          padding-bottom: 0;
         }
+      }
     }
+  }
+
+  .wrapper-accomplishment-related {
+    @extend %layout-wrapper;
+
+    .accomplishment-related {
+      @extend %layout;
+    }
+
+    .accomplishment-brief {
+      margin-bottom: map-get($spacing-vertical, small);
+
+      @include media-breakpoint-up(md) {
+        @include make-col(6);
+      }
+
+      .accomplishment-type-symbol {
+        @include size(rem(50));
+        @include margin-right(map-get($spacing-horizontal, base));
+      }
+    }
+  }
+
+  .wrapper-about {
+    @extend %layout-wrapper;
+
+    .about {
+      @extend %layout;
+    }
+
+    .about-item {
+      margin-bottom: map-get($spacing-vertical, base);
+
+      &:last-child {
+        margin-bottom: 0;
+      }
+
+      @include media-breakpoint-up(md) {
+        @include make-col(6);
+
+        margin-bottom: 0;
+      }
+
+      a {
+        @extend %link;
+      }
+
+      .about-edx-title,
+      .about-title {
+        font-weight: 400;
+        margin-top: 0;
+
+        @include margin(0, rem(8), rem(10), rem(8));
+      }
+
+      .about-copy,
+      .about-edx-copy {
+        @extend %copy-meta;
+
+        margin: 0 rem(8);
+
+        p {
+          margin-top: 0;
+        }
+      }
+    }
+  }
 }

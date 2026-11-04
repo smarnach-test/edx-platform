@@ -15,6 +15,7 @@
 
 %status-value-sub1 {
   @extend %t-title8;
+
   display: block;
 }
 
@@ -24,13 +25,11 @@
   @extend %two-col-1;
 
   .wrapper-mast {
-
     .mast {
       border-bottom: none;
       padding-bottom: 0;
 
       .page-header {
-
         .page-header-title {
           @extend %t-title4;
           @extend %t-strong;
@@ -41,8 +40,10 @@
           // TOOD: abstract this out into a Sass placeholder
           .incontext-editor-input {
             @include transition(box-shadow $tmg-f1 ease-in-out 0, color $tmg-f1 ease-in-out 0);
+
             @extend %t-title4;
             @extend %t-strong;
+
             width: 100%;
             background: none repeat scroll 0 0 $white;
             border: 0;
@@ -50,20 +51,28 @@
 
             // STATE: focus
             &:focus {
-              box-shadow: 0 0 2px 2px rgba($ui-action-primary-color-focus, 0.50) inset;
+              box-shadow: 0 0 2px 2px rgba($ui-action-primary-color-focus, 0.5) inset;
               color: $ui-action-primary-color-focus;
             }
           }
         }
+
+        .container-access {
+          @include font-size(14);
+
+          line-height: 1.5;
+          white-space: normal;
+          color: #707070;
+          font-weight: font-weight(semi-bold);
+        }
       }
 
       &.has-actions {
-
         .nav-actions {
-
           .button {
             @extend %t-action3;
             @extend %t-regular;
+
             padding: ($baseline/4) ($baseline*0.75);
           }
         }
@@ -72,9 +81,9 @@
   }
 
   .content-primary {
-
     .no-container-content {
       @extend %no-content;
+
       padding: ($baseline*1.5) ($baseline*2);
 
       // custom rules to reuse xblock validation styling in ui-well context
@@ -84,7 +93,6 @@
     }
 
     .container-message {
-
       .message {
         border-radius: 3px 3px 0 0;
       }
@@ -92,7 +100,6 @@
 
     // dragging bits
     .ui-sortable-helper {
-
       article {
         display: none;
       }
@@ -101,7 +108,7 @@
     // drop target
     .component-placeholder {
       height: ($baseline*2.5);
-      opacity: .5;
+      opacity: 0.5;
       margin: $baseline;
       background-color: $gray-l5;
       border-radius: ($baseline/2);
@@ -110,7 +117,6 @@
   }
 
   .content-supplementary {
-
     label {
       @extend %t-title8;
     }
@@ -149,6 +155,20 @@
         }
       }
 
+      // CASE: is hidden from TOC
+      &.is-hidden-from-toc{
+        @extend %bar-module-black;
+
+        &.is-scheduled .wrapper-release .copy {
+          text-decoration: line-through;
+        }
+      }
+
+      // CASE: content is gated
+      &.is-gated {
+        @extend %bar-module-black;
+      }
+
       .bar-mod-content {
         border: 0;
         padding: ($baseline/2) ($baseline*0.75) ($baseline/4) ($baseline*0.75);
@@ -159,7 +179,6 @@
       }
 
       .wrapper-last-draft {
-
         .date,
         .user {
           @extend %t-strong;
@@ -171,7 +190,6 @@
       }
 
       .wrapper-release {
-
         .release-date {
           @extend %status-value-base;
         }
@@ -182,9 +200,9 @@
       }
 
       .wrapper-visibility {
-
         .copy {
           @extend %status-value-base;
+
           margin-bottom: ($baseline/10);
         }
 
@@ -213,12 +231,14 @@
 
         .action-publish {
           @extend %btn-primary-blue;
+
           display: block;
           padding: ($baseline/4) ($baseline/2) ($baseline/3) ($baseline/2);
         }
 
         .action-discard {
           @extend %t-copy-sub1;
+
           display: block;
           margin-top: ($baseline/2);
           text-align: right;
@@ -228,12 +248,103 @@
             color: $gray-l1;
           }
         }
+
+        .action-copy {
+          width: 100%;
+          border-color: #0075b4;
+          padding-top: 10px;
+          padding-bottom: 10px;
+          line-height: 24px;
+          border-radius: 4px;
+
+          &:hover {
+            @extend %btn-primary-blue;
+          }
+        }
+      }
+    }
+
+    .unit-tags {
+      .wrapper-tags {
+        margin-bottom: $baseline;
+        padding: ($baseline*0.75);
+        background-color: $white;
+
+        .wrapper-tag-header {
+          display: flex;
+          justify-content: space-between;
+          border: 1px dotted transparent;
+
+          .tag-title {
+            font-weight: bold;
+          }
+
+          .count-badge {
+            background-color: $gray-l5;
+            border-radius: 50%;
+            display: inline-block;
+            padding: 0px 8px;
+          }
+        }
+
+        .wrapper-tag-header:focus-visible {
+          border-color: $gray;
+        }
+
+        .action-primary {
+          @extend %btn-primary-inverse;
+
+          width: 100%;
+          margin: 16px 2px 8px 2px;
+        }
+
+        .wrapper-tag-content {
+          background-color: $white;
+
+          .content-taxonomies {
+            display: flex;
+            flex-direction: column;
+            padding-top: 10px;
+
+            .tagging-label {
+              display: flex;
+              padding: 4px 0px;
+
+              .tagging-label-value {
+                display: inline-block;
+                overflow: hidden;
+                white-space: nowrap;
+                text-overflow: ellipsis;
+              }
+
+              .tagging-label-count {
+                display: inline-block;
+                margin: 0 0.5em;
+              }
+            }
+
+            .tagging-label-link {
+              border: 1px dotted transparent;
+            }
+
+            .tagging-label-link:hover {
+              color: $blue;
+            }
+
+            .tagging-label-link:focus-visible {
+              border-color: $gray;
+            }
+
+            .icon {
+              margin-left: 5px;
+            }
+          }
+        }
       }
     }
 
     // versioning widget
     .unit-publish-history {
-
       .wrapper-last-publish {
         margin-bottom: $baseline;
         padding: ($baseline*0.75);
@@ -241,7 +352,8 @@
 
         .copy {
           @extend %t-copy-sub2;
-          color: $gray;
+
+          color: $gray-d2;
         }
 
         .date,
@@ -256,33 +368,37 @@
     }
 
     // location widget
-    .unit-location, .library-location {
+    .unit-location,
+    .library-location {
       @extend %bar-module;
+
       border-top: none;
 
-      .wrapper-unit-id, .wrapper-library-id {
-
-        .unit-id-value, .library-id-value {
+      .wrapper-unit-id,
+      .wrapper-library-id {
+        .unit-id-value,
+        .library-id-value {
           @extend %status-value-base;
+
           display: inline-block;
           width: 100%;
         }
 
         .tip {
           @extend %t-copy-sub2;
+
           display: inline-block;
           margin: ($baseline/4) 0;
-          color: $gray-l2;
+          color: $gray-d1;
         }
       }
 
       .wrapper-unit-tree-location {
-
         .item-title {
           @extend %cont-text-wrap;
 
           a {
-            color: $blue;
+            color: theme-color("primary");
 
             &:hover {
               color: $orange-d1;
@@ -297,12 +413,14 @@
           .unit-title a {
             @extend %ui-disabled;
             @extend %t-strong;
+
             color: $color-heading-base;
           }
         }
 
         // typographical overrides (based off of outline-simple)
-        .section-header, .subsection-header {
+        .section-header,
+        .subsection-header {
           line-height: 0;
           margin-bottom: ($baseline/2);
         }
@@ -325,4 +443,193 @@
       }
     }
   }
+}
+
+
+.move-xblock-modal {
+  button {
+    background: transparent;
+    border-color: transparent;
+    padding: 0;
+    border: none;
+  }
+
+  .breadcrumb-container {
+    margin-bottom: ($baseline/4);
+    border: 1px solid $btn-lms-border;
+    padding: ($baseline/2);
+    background: $color-background-alternate;
+
+    .breadcrumbs {
+      .bc-container {
+        @include font-size(14);
+
+        display: inline-block;
+
+        .breadcrumb-fa-icon {
+          padding: 0 ($baseline/4);
+
+          @include rtl {
+            @include transform(rotate(180deg));
+          }
+        }
+
+        &.last {
+          .parent-displayname {
+            @include font-size(18);
+          }
+        }
+      }
+
+      .bc-container:not(.last) {
+        button,
+        .parent-displayname {
+          text-decoration: underline;
+          color: $ui-link-color;
+        }
+      }
+    }
+  }
+
+  .category-text {
+    @include margin-left($baseline/2);
+    @include font-size(14);
+
+    color: $black;
+  }
+
+  .xblock-items-container {
+    max-height: ($baseline*15);
+    overflow-y: auto;
+
+    .xblock-item {
+      & > * {
+        width: 100%;
+        color: $uxpl-blue-hover-active;
+      }
+
+      .component {
+        display: inline-block;
+        color: $black;
+        padding: ($baseline/4) ($baseline/2);
+      }
+
+      .xblock-displayname {
+        @include float(left);
+      }
+
+      .button-forward,
+      .component {
+        border: none;
+      }
+
+      .button-forward {
+        padding: ($baseline/2);
+
+        .forward-sr-icon {
+          @include float(right);
+
+          @include rtl {
+            @include transform(rotate(180deg));
+          }
+        }
+
+        &:hover,
+        &:focus {
+          background: $color-background-alternate;
+        }
+      }
+    }
+
+    .xblock-no-child-message {
+      @include text-align(center);
+
+      display: block;
+      padding: ($baseline*2);
+    }
+  }
+
+  .truncate {
+    max-width: 90%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .current-location {
+    @include float(left);
+    @include margin-left($baseline);
+  }
+}
+
+// Modal for previewing changes to a library-sourced block
+// cms/static/js/views/modals/preview_v2_library_changes.js
+.modal-lib-preview {
+  .modal-content {
+    padding: 0 !important;
+
+    & > iframe {
+      width: 100%;
+      min-height: 450px;
+      background: url('#{$static-path}/images/spinner.gif') center center no-repeat;
+    }
+  }
+}
+
+.ltiLaunchFrame{
+    width:100%;
+    height:100%
+}
+
+// Modal for adding components from libary using component picker
+// cms/static/js/views/components/add_library_content_with_picker.js
+.modal-add-component-picker {
+  top: 10%;
+  padding: 0px !important;
+  .modal-content {
+    padding: 0 !important;
+    border-radius: ($baseline/5);
+
+    & > iframe {
+      width: 100%;
+      min-height: 80vh;
+      background: url('#{$static-path}/images/spinner.gif') center center no-repeat;
+      border-radius: ($baseline/5);
+    }
+  }
+}
+
+.modal-alert {
+    display: flex;
+    align-items: center;
+    padding: $baseline;
+    margin-bottom: $baseline;
+
+    &.warning {
+        background-color: $state-warning-bg;
+
+        .fa-warning {
+            color: $orange;
+            margin-right: $baseline;
+        }
+    }
+
+    .action-btn {
+        text-wrap: nowrap;
+        background-color: $black;
+        color: $white;
+        margin-left: auto;
+        padding: ($baseline/2);
+
+        .fa {
+            margin-left: ($baseline/4);
+            color: $white
+        }
+
+        &:hover,
+        &:focus,
+        &:active {
+            background-color: lighten($black, 20%);
+        }
+    }
 }

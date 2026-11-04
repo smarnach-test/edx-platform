@@ -1,12 +1,17 @@
 """
 Tests for the lms_result_processor
 """
-from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
+import pytest
 
-from courseware.tests.factories import UserFactory
-
+from common.djangoapps.student.tests.factories import UserFactory
 from lms.lib.courseware_search.lms_result_processor import LmsSearchResultProcessor
+from xmodule.modulestore.tests.django_utils import (
+    ModuleStoreTestCase,  # pylint: disable=wrong-import-order
+)
+from xmodule.modulestore.tests.factories import (  # pylint: disable=wrong-import-order
+    BlockFactory,
+    CourseFactory,
+)
 
 
 class LmsSearchResultProcessorTestCase(ModuleStoreTestCase):
@@ -24,66 +29,64 @@ class LmsSearchResultProcessorTestCase(ModuleStoreTestCase):
             run='test_run',
             display_name='Elasticsearch test course',
         )
-        self.section = ItemFactory.create(
+        self.section = BlockFactory.create(
             parent=self.course,
             category='chapter',
             display_name='Test Section',
         )
-        self.subsection = ItemFactory.create(
+        self.subsection = BlockFactory.create(
             parent=self.section,
             category='sequential',
             display_name='Test Subsection',
         )
-        self.vertical = ItemFactory.create(
+        self.vertical = BlockFactory.create(
             parent=self.subsection,
             category='vertical',
             display_name='Test Unit',
         )
-        self.html = ItemFactory.create(
+        self.html = BlockFactory.create(
             parent=self.vertical,
             category='html',
             display_name='Test Html control',
         )
-        self.ghost_subsection = ItemFactory.create(
+        self.ghost_subsection = BlockFactory.create(
             parent=self.section,
             category='sequential',
             display_name=None,
         )
-        self.ghost_vertical = ItemFactory.create(
+        self.ghost_vertical = BlockFactory.create(
             parent=self.ghost_subsection,
             category='vertical',
             display_name=None,
         )
-        self.ghost_html = ItemFactory.create(
+        self.ghost_html = BlockFactory.create(
             parent=self.ghost_vertical,
             category='html',
             display_name='Ghost Html control',
         )
 
     def setUp(self):
-        # from nose.tools import set_trace
-        # set_trace()
-        super(LmsSearchResultProcessorTestCase, self).setUp()
+        super().setUp()
         self.build_course()
 
     def test_url_parameter(self):
         fake_url = ""
         srp = LmsSearchResultProcessor({}, "test")
-        with self.assertRaises(ValueError):
+        with pytest.raises(ValueError):  # noqa: PT011
             fake_url = srp.url
-        self.assertEqual(fake_url, "")
+        assert fake_url == ''
 
         srp = LmsSearchResultProcessor(
             {
-                "course": unicode(self.course.id),
-                "id": unicode(self.html.scope_ids.usage_id),
+                "course": str(self.course.id),
+                "id": str(self.html.scope_ids.usage_id),
                 "content": {"text": "This is the html text"}
             },
             "test"
         )
 
-        self.assertEqual(
-            srp.url, "/courses/{}/jump_to/{}".format(unicode(self.course.id), unicode(self.html.scope_ids.usage_id)))
+        assert srp.url == '/courses/{}/jump_to/{}'.format(str(self.course.id),  # noqa: UP032
+                                                          str(self.html.scope_ids.usage_id))
 
     def test_should_remove(self):
         """
@@ -91,11 +94,11 @@ class LmsSearchResultProcessorTestCase(ModuleStoreTestCase):
         """
         srp = LmsSearchResultProcessor(
             {
-                "course": unicode(self.course.id),
-                "id": unicode(self.html.scope_ids.usage_id),
+                "course": str(self.course.id),
+                "id": str(self.html.scope_ids.usage_id),
                 "content": {"text": "This is html test text"}
             },
             "test"
         )
 
-        self.assertEqual(srp.should_remove(self.global_staff), False)
+        assert srp.should_remove(self.global_staff) is False

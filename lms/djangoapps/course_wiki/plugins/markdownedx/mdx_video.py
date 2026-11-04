@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-
+# TODO: Is this file still used? If so it should be refactored and tests added.
+# pylint: disable=line-too-long, invalid-name
 """
 Embeds web videos using URLs.  For instance, if a URL to an youtube video is
 found in the text submitted to markdown and it isn't enclosed in parenthesis
@@ -126,21 +127,15 @@ Test Gametrailers
 >>> markdown.markdown(s, ['video'])
 u'<p><object data="http://www.gametrailers.com/remote_wrap.php?mid=58079" height="392" type="application/x-shockwave-flash" width="480"><param name="movie" value="http://www.gametrailers.com/remote_wrap.php?mid=58079" /><param name="allowFullScreen" value="true" /></object></p>'
 """
+from xml.etree import ElementTree
 
 import markdown
-try:
-    # Markdown 2.1.0 changed from 2.0.3. We try importing the new version first,
-    # but import the 2.0.3 version if it fails
-    from markdown.util import etree
-except:  # pylint: disable=bare-except
-    from markdown import etree
-
 
 version = "0.1.6"
 
 
-class VideoExtension(markdown.Extension):
-    def __init__(self, configs):
+class VideoExtension(markdown.Extension):  # pylint: disable=missing-class-docstring
+    def __init__(self, **kwargs):
         self.config = {
             'bliptv_width': ['480', 'Width for Blip.tv videos'],
             'bliptv_height': ['300', 'Height for Blip.tv videos'],
@@ -161,16 +156,16 @@ class VideoExtension(markdown.Extension):
         }
 
         # Override defaults with user settings
-        for key, value in configs:
-            self.setConfig(key, value)
+        super().__init__(**kwargs)
 
-    def add_inline(self, md, name, klass, re):
+    def add_inline(self, md, name, klass, re):  # pylint: disable=invalid-name
+        """Adds the inline link"""
         pattern = klass(re)
         pattern.md = md
         pattern.ext = self
-        md.inlinePatterns.add(name, pattern, "<reference")
+        md.inlinePatterns.register(pattern, name, 170)
 
-    def extendMarkdown(self, md, md_globals):
+    def extendMarkdown(self, md):  # pylint: disable=arguments-differ, unused-argument
         self.add_inline(md, 'bliptv', Bliptv,
                         r'([^(]|^)http://(\w+\.|)blip.tv/file/get/(?P<bliptvfile>\S+.flv)')
         self.add_inline(md, 'dailymotion', Dailymotion,
@@ -189,100 +184,104 @@ class VideoExtension(markdown.Extension):
                         r'([^(]|^)http://www\.youtube\.com/watch\?\S*v=(?P<youtubeargs>[A-Za-z0-9_&=-]+)\S*')
 
 
-class Bliptv(markdown.inlinepatterns.Pattern):
+class Bliptv(markdown.inlinepatterns.Pattern):  # pylint: disable=missing-class-docstring
     def handleMatch(self, m):
-        url = 'http://blip.tv/scripts/flash/showplayer.swf?file=http://blip.tv/file/get/%s' % m.group('bliptvfile')
+        url = 'http://blip.tv/scripts/flash/showplayer.swf?file=http://blip.tv/file/get/%s' % m.group('bliptvfile')  # noqa: UP031
+        # pylint: disable=no-member
         width = self.ext.config['bliptv_width'][0]
         height = self.ext.config['bliptv_height'][0]
         return flash_object(url, width, height)
 
 
-class Dailymotion(markdown.inlinepatterns.Pattern):
+class Dailymotion(markdown.inlinepatterns.Pattern):  # pylint: disable=missing-class-docstring
     def handleMatch(self, m):
-        url = 'http://www.dailymotion.com/swf/%s' % m.group('dailymotionid').split('/')[-1]
+        url = 'http://www.dailymotion.com/swf/%s' % m.group('dailymotionid').split('/')[-1]  # noqa: UP031
+        # pylint: disable=no-member
         width = self.ext.config['dailymotion_width'][0]
         height = self.ext.config['dailymotion_height'][0]
         return flash_object(url, width, height)
 
 
-class Gametrailers(markdown.inlinepatterns.Pattern):
+class Gametrailers(markdown.inlinepatterns.Pattern):  # pylint: disable=missing-class-docstring
     def handleMatch(self, m):
         url = 'http://www.gametrailers.com/remote_wrap.php?mid=%s' % \
-            m.group('gametrailersid').split('/')[-1]
+            m.group('gametrailersid').split('/')[-1]  # noqa: UP031
+        # pylint: disable=no-member
         width = self.ext.config['gametrailers_width'][0]
         height = self.ext.config['gametrailers_height'][0]
         return flash_object(url, width, height)
 
 
-class Metacafe(markdown.inlinepatterns.Pattern):
+class Metacafe(markdown.inlinepatterns.Pattern):  # pylint: disable=missing-class-docstring
     def handleMatch(self, m):
-        url = 'http://www.metacafe.com/fplayer/%s.swf' % m.group('metacafeid')
+        url = 'http://www.metacafe.com/fplayer/%s.swf' % m.group('metacafeid')  # noqa: UP031
+        # pylint: disable=no-member
         width = self.ext.config['metacafe_width'][0]
         height = self.ext.config['metacafe_height'][0]
         return flash_object(url, width, height)
 
 
-class Veoh(markdown.inlinepatterns.Pattern):
+class Veoh(markdown.inlinepatterns.Pattern):  # pylint: disable=missing-class-docstring
     def handleMatch(self, m):
-        url = 'http://www.veoh.com/videodetails2.swf?permalinkId=%s' % m.group('veohid')
+        url = 'http://www.veoh.com/videodetails2.swf?permalinkId=%s' % m.group('veohid')  # noqa: UP031
+        # pylint: disable=no-member
         width = self.ext.config['veoh_width'][0]
         height = self.ext.config['veoh_height'][0]
         return flash_object(url, width, height)
 
 
-class Vimeo(markdown.inlinepatterns.Pattern):
+class Vimeo(markdown.inlinepatterns.Pattern):  # pylint: disable=missing-class-docstring
     def handleMatch(self, m):
-        url = 'http://vimeo.com/moogaloop.swf?clip_id=%s&amp;server=vimeo.com' % m.group('vimeoid')
+        url = 'http://vimeo.com/moogaloop.swf?clip_id=%s&amp;server=vimeo.com' % m.group('vimeoid')  # noqa: UP031
+        # pylint: disable=no-member
         width = self.ext.config['vimeo_width'][0]
         height = self.ext.config['vimeo_height'][0]
         return flash_object(url, width, height)
 
 
-class Yahoo(markdown.inlinepatterns.Pattern):
+class Yahoo(markdown.inlinepatterns.Pattern):  # pylint: disable=missing-class-docstring
     def handleMatch(self, m):
         url = "http://d.yimg.com/static.video.yahoo.com/yep/YV_YEP.swf?ver=2.2.40"
+        # pylint: disable=no-member
         width = self.ext.config['yahoo_width'][0]
         height = self.ext.config['yahoo_height'][0]
         obj = flash_object(url, width, height)
-        param = etree.Element('param')
+        param = ElementTree.Element('param')
         param.set('name', 'flashVars')
-        param.set('value', "id=%s&vid=%s" % (m.group('yahooid'),
-                                             m.group('yahoovid')))
+        param.set('value', "id={}&vid={}".format(m.group('yahooid'), m.group('yahoovid')))
         obj.append(param)
         return obj
 
 
-class Youtube(markdown.inlinepatterns.Pattern):
+class Youtube(markdown.inlinepatterns.Pattern):  # pylint: disable=missing-class-docstring
     def handleMatch(self, m):
-        url = 'http://www.youtube.com/v/%s' % m.group('youtubeargs')
+        url = 'http://www.youtube.com/v/%s' % m.group('youtubeargs')  # noqa: UP031
+        # pylint: disable=no-member
         width = self.ext.config['youtube_width'][0]
         height = self.ext.config['youtube_height'][0]
         return flash_object(url, width, height)
 
 
-def flash_object(url, width, height):
-    obj = etree.Element('object')
+def flash_object(url, width, height):  # pylint: disable=missing-function-docstring
+    obj = ElementTree.Element('object')
     obj.set('type', 'application/x-shockwave-flash')
     obj.set('width', width)
     obj.set('height', height)
     obj.set('data', url)
-    param = etree.Element('param')
+    param = ElementTree.Element('param')
     param.set('name', 'movie')
     param.set('value', url)
     obj.append(param)
-    param = etree.Element('param')
+    param = ElementTree.Element('param')
     param.set('name', 'allowFullScreen')
     param.set('value', 'true')
     obj.append(param)
-    #param = etree.Element('param')
-    #param.set('name', 'allowScriptAccess')
-    #param.set('value', 'sameDomain')
-    #obj.append(param)
     return obj
 
 
-def makeExtension(configs=None):
-    return VideoExtension(configs=configs)
+def makeExtension(**kwargs):
+    return VideoExtension(**kwargs)
+
 
 if __name__ == "__main__":
     import doctest

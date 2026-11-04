@@ -1,19 +1,19 @@
 """
 Utilities for django models.
 """
-import unicodedata
-import re
 
-from eventtracking import tracker
+from typing import Any, Dict, Tuple  # noqa: UP035
 
 from django.conf import settings
-from django.utils.encoding import force_unicode
-from django.utils.safestring import mark_safe
-
+from django.dispatch import Signal
 from django_countries.fields import Country
+from eventtracking import tracker
 
 # The setting name used for events when "settings" (account settings, preferences, profile information) change.
-USER_SETTINGS_CHANGED_EVENT_NAME = u'edx.user.settings.changed'
+USER_SETTINGS_CHANGED_EVENT_NAME = 'edx.user.settings.changed'
+# Used to signal a field value change
+# providing_args=["user", "table", "changed_values"]
+USER_FIELDS_CHANGED = Signal()
 
 
 def get_changed_fields_dict(instance, model_class):
@@ -41,9 +41,9 @@ def get_changed_fields_dict(instance, model_class):
         # an empty dict as a default value.
         return {}
     else:
-        field_names = [
-            field[0].name for field in model_class._meta.get_fields_with_model()
-        ]
+        # We want to compare all of the scalar fields on the model, but none of
+        # the relations.
+        field_names = [f.name for f in model_class._meta.get_fields() if not f.is_relation]
         changed_fields = {
             field_name: getattr(old_model, field_name) for field_name in field_names
             if getattr(old_model, field_name) != getattr(instance, field_name)
@@ -89,11 +89,13 @@ def emit_field_changed_events(instance, user, db_table, excluded_fields=None, hi
     excluded_fields = excluded_fields or []
     hidden_fields = hidden_fields or []
     changed_fields = getattr(instance, '_changed_fields', {})
+    clean_changed_fields = {}
     for field_name in changed_fields:
         if field_name not in excluded_fields:
             old_value = clean_field(field_name, changed_fields[field_name])
             new_value = clean_field(field_name, getattr(instance, field_name))
-            emit_setting_changed_event(user, db_table, field_name, old_value, new_value)
+            clean_changed_fields[field_name] = (old_value, new_value)
+    emit_settings_changed_event(user, db_table, clean_changed_fields)
     # Remove the now inaccurate _changed_fields attribute.
     if hasattr(instance, '_changed_fields'):
         del instance._changed_fields
@@ -115,7 +117,7 @@ def truncate_fields(old_value, new_value):
     """
     # Compute the maximum value length so that two copies can fit into the maximum event size
     # in addition to all the other fields recorded.
-    max_value_length = settings.TRACK_MAX_EVENT / 4
+    max_value_length = settings.TRACK_MAX_EVENT // 4
 
     serialized_old_value, old_was_truncated = _get_truncated_setting_value(old_value, max_length=max_value_length)
     serialized_new_value, new_was_truncated = _get_truncated_setting_value(new_value, max_length=max_value_length)
@@ -128,29 +130,31 @@ def truncate_fields(old_value, new_value):
     return {'old': serialized_old_value, 'new': serialized_new_value, 'truncated': truncated_values}
 
 
-def emit_setting_changed_event(user, db_table, setting_name, old_value, new_value):
+def emit_settings_changed_event(user, db_table, changed_fields: Dict[str, Tuple[Any, Any]]):  # noqa: UP006
     """Emits an event for a change in a setting.
 
     Args:
         user (User): the user that this setting is associated with.
         db_table (str): the name of the table that we're modifying.
-        setting_name (str): the name of the setting being changed.
-        old_value (object): the value before the change.
-        new_value (object): the new value being saved.
+        changed_fields: all changed settings, with both their old and new values
 
     Returns:
         None
     """
-    truncated_fields = truncate_fields(old_value, new_value)
+    for (setting_name, (old_value, new_value)) in changed_fields.items():
+        truncated_fields = truncate_fields(old_value, new_value)
 
-    truncated_fields['setting'] = setting_name
-    truncated_fields['user_id'] = user.id
-    truncated_fields['table'] = db_table
+        truncated_fields['setting'] = setting_name
+        truncated_fields['user_id'] = user.id
+        truncated_fields['table'] = db_table
 
-    tracker.emit(
-        USER_SETTINGS_CHANGED_EVENT_NAME,
-        truncated_fields
-    )
+        tracker.emit(
+            USER_SETTINGS_CHANGED_EVENT_NAME,
+            truncated_fields
+        )
+
+    # Announce field change
+    USER_FIELDS_CHANGED.send(sender=None, user=user, table=db_table, changed_fields=changed_fields)
 
 
 def _get_truncated_setting_value(value, max_length=None):
@@ -161,24 +165,7 @@ def _get_truncated_setting_value(value, max_length=None):
         truncated_value (object): the possibly truncated version of the value.
         was_truncated (bool): returns true if the serialized value was truncated.
     """
-    if isinstance(value, basestring) and max_length is not None and len(value) > max_length:
+    if isinstance(value, str) and max_length is not None and len(value) > max_length:
         return value[0:max_length], True
     else:
         return value, False
-
-
-# Taken from Django 1.8 source code because it's not supported in 1.4
-def slugify(value):
-    """Converts value into a string suitable for readable URLs.
-
-    Converts to ASCII. Converts spaces to hyphens. Removes characters that
-    aren't alphanumerics, underscores, or hyphens. Converts to lowercase.
-    Also strips leading and trailing whitespace.
-
-    Args:
-        value (string): String to slugify.
-    """
-    value = force_unicode(value)
-    value = unicodedata.normalize('NFKD', value).encode('ascii', 'ignore').decode('ascii')
-    value = re.sub(r'[^\w\s-]', '', value).strip().lower()
-    return mark_safe(re.sub(r'[-\s]+', '-', value))

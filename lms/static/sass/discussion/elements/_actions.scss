@@ -1,4 +1,4 @@
-.discussion.container, .discussion-module {
+.discussion {
 
   // discussion - elements - actions
   // ====================
@@ -8,15 +8,38 @@
   .response-actions-list,
   .comment-actions-list {
     @extend %ui-no-list;
+
     @include text-align(right);
 
     .actions-item {
-      @include box-sizing(border-box);
+      box-sizing: border-box;
       display: block;
-      margin: ($baseline/4) 0;
+      margin: calc(var(--baseline) / 4) 0;
 
       &.is-hidden {
         display: none;
+      }
+
+      &.is-disabled {
+        a {
+          pointer-events: none;
+
+          .action-icon {
+            display: none;
+          }
+
+          .action-label {
+            @include padding-right(0);
+          }
+
+          &:hover {
+            border-color: transparent;
+
+            .action-label {
+              color: var(--forum-color-active-text);
+            }
+          }
+        }
       }
     }
 
@@ -31,12 +54,14 @@
   .actions-dropdown {
     @extend %ui-no-list;
     @extend %ui-depth1;
+
+    @include right(0);
+
     display: none;
     position: absolute;
     top: 100%;
-    right: 0;
     pointer-events: none;
-    min-width: ($baseline*6.5);
+    min-width: var(--actions-dropdown-width);
 
     &.is-expanded {
       display: block;
@@ -44,21 +69,22 @@
     }
 
     .actions-dropdown-list {
-      @include box-sizing(border-box);
-      box-shadow: 0 1px 1px $shadow-l1;
+      box-sizing: border-box;
+      box-shadow: 0 1px 1px var(--shadow-l1);
       position: relative;
       width: 100%;
-      border-radius: 3px;
-      margin: ($baseline/4) 0 0 0;
-      border: 1px solid $gray-l3;
-      padding: ($baseline/2) ($baseline*0.75);
-      background: $white;
+      border-radius: var(--forum-border-radius);
+      margin: calc(var(--baseline) / 4) 0 0 0;
+      border: 1px solid var(--forum-color-border);
+      padding: calc(var(--baseline) / 2) calc(var(--baseline) * 0.75);
+      background: var(--forum-color-background);
 
       // ui triangle/nub
-      &:after,
-      &:before {
+      &::after,
+      &::before {
+        @include right(6px);
+
         bottom: 100%;
-        right: 6px;
         border: solid transparent;
         content: " ";
         height: 0;
@@ -67,16 +93,17 @@
         pointer-events: none;
       }
 
-      &:after {
-        border-color: $transparent;
-        border-bottom-color: $white;
-        border-width: 6px;
+      &::after {
         @include margin-right(1px);
+
+        border-color: transparent;
+        border-bottom-color: var(--white);
+        border-width: 6px;
       }
 
-      &:before {
-        border-color: $transparent;
-        border-bottom-color: $gray-l3;
+      &::before {
+        border-color: transparent;
+        border-bottom-color: var(--forum-color-border);
         border-width: 7px;
       }
     }
@@ -95,132 +122,137 @@
 
   // UI: general action
   .action-button {
-    @include transition(border .5s linear 0s);
-    @include box-sizing(border-box);
+    @include transition(border 0.5s linear 0s);
+
+    box-sizing: border-box;
     display: inline-block;
     border: 1px solid transparent;
-    border-radius: ($baseline/4);
-    color: $gray-l1;
+    border-radius: var(--forum-border-radius);
+    color: theme-color("secondary");
 
     .action-icon {
-      @extend %t-icon7;
       display: inline-block;
-      height: $baseline;
-      width: $baseline;
-      border: 1px solid $gray-l3;
-      border-radius: 3px;
+      font-size: var(--forum-small-font-size);
+      height: var(--baseline);
+      width: var(--baseline);
+      border: 1px solid var(--forum-color-border);
+      border-radius: var(--forum-border-radius);
       text-align: center;
-      color: $gray-l1;
+      color: theme-color("secondary");
 
       .icon {
+        @include margin-right(0);
+
         vertical-align: middle;
       }
     }
 
     .action-label {
       @extend %t-copy-sub2;
-      display: inline-block;
+
+      display: none;
       vertical-align: middle;
       padding: 2px 8px;
-      color: $gray-l1;
-      opacity: 0;
     }
 
-
-    &:hover, &:focus {
-
+    &:hover,
+    &:focus {
       .action-label {
-        opacity: 1;
+        display: inline-block;
       }
 
       .action-icon {
-        border-radius: 0 3px 3px 0;
+        @include border-radius(0, var(--forum-border-radius), var(--forum-border-radius), 0);
       }
     }
 
     // specific button styles
     &.action-follow {
-
       .action-label {
-        color: $blue-d1;
+        color: theme-color("primary");
       }
 
-      &.is-checked, &:hover, &:focus {
-
+      &.is-checked,
+      &:hover,
+      &:focus {
         .action-icon {
-          background-color: $forum-color-following;
-          border: 1px solid $blue-d1;
-          color: $white;
+          background-color: var(--forum-color-following);
+          border: 1px solid theme-color("primary");
+          color: var(--white);
         }
       }
 
-      &:hover, &:focus {
-        border-color: $forum-color-following;
+      &:hover,
+      &:focus {
+        border-color: var(--forum-color-following);
       }
     }
 
     &.action-vote {
-
       .action-label {
         opacity: 1;
       }
 
-      &.is-checked, &:hover, &:focus {
-
+      &.is-checked,
+      &:hover,
+      &:focus {
         .action-icon {
-          background-color: $green-d1;
-          border: 1px solid $green-d2;
-          color: $white;
+          background-color: var(--green);
+          border: 1px solid var(--green);
+          color: var(--white);
         }
       }
 
-      &:hover, &:focus {
-        border-color: $green-d2;
+      &:hover,
+      &:focus {
+        border-color: var(--green);
 
         .action-label {
-          color: $green-d2;
+          color: var(--green);
         }
       }
     }
 
     &.action-endorse {
-
-      &.is-checked, &:hover, &:focus {
-
+      &.is-checked,
+      &:hover,
+      &:focus {
         .action-icon {
-          background-color: $blue-d1;
-          border: 1px solid $blue-d2;
-          color: $white;
+          background-color: theme-color("primary");
+          border: 1px solid theme-color("primary");
+          color: var(--white);
         }
       }
 
-      &:hover, &:focus {
-        border-color: $blue-d2;
-        background-color: $white;
+      &:hover,
+      &:focus {
+        border-color: theme-color("primary");
+        background-color: var(--forum-color-background);
 
         .action-label {
-          color: $blue-d2;
+          color: theme-color("primary");
         }
       }
     }
 
     &.action-answer {
-
-      &.is-checked, &:hover, &:focus {
-
+      &.is-checked,
+      &:hover,
+      &:focus {
         .action-icon {
-          border: 1px solid $green-d1;
-          background-color: $green-d1;
-          color: $white;
+          border: 1px solid var(--green);
+          background-color: var(--green);
+          color: var(--white);
         }
       }
 
-      &:hover, &:focus {
-        border-color: $green-d1;
-        background-color: $white;
+      &:hover,
+      &:focus {
+        border-color: var(--green);
+        background-color: var(--forum-color-background);
 
         .action-label {
-          color: $green-d2;
+          color: var(--green);
         }
       }
     }
@@ -229,19 +261,20 @@
     &.action-more {
       position: relative;
 
-      &:hover, &:focus {
-        border-color: $gray;
-        background-color: $white;
+      &:hover,
+      &:focus {
+        border-color: theme-color("dark");
+        background-color: var(--forum-color-background);
 
         .action-icon {
-          border: 1px solid $gray;
-          background-color: $gray;
-          color: $white;
+          border: 1px solid theme-color("dark");
+          background-color: theme-color("dark");
+          color: theme-color("inverse");
         }
 
         .action-label {
           opacity: 1;
-          color: $black;
+          color: var(--black);
         }
       }
     }
@@ -254,20 +287,25 @@
     // UI: secondary action
     .action-list-item {
       @extend %t-copy-sub2;
-      display: block;
-      padding: ($baseline/10) 0;
-      white-space: nowrap;
-      @include text-align(right);
-      color: $gray-l1;
 
-      &:hover, &:focus {
-        color: $link-color;
+      @include text-align(right);
+
+      display: block;
+      width: 100%;
+      padding: calc(var(--baseline) / 10) 0;
+      white-space: nowrap;
+      color: theme-color("secondary");
+
+      &:hover,
+      &:focus {
+        color: var(--link-color);
       }
 
       .action-icon {
+        @include margin-left(calc(var(--baseline) / 4));
+
         display: inline-block;
-        width: ($baseline/2);
-        margin-left: ($baseline/4);
+        width: calc(var(--baseline) / 2);
         color: inherit;
       }
 
@@ -280,25 +318,28 @@
       &.is-checked {
         // CASE: pin action
         &.action-pin {
-          color: $pink;
+          color: var(--pink);
         }
 
         // CASE: report action
         &.action-report {
-          color: $pink;
+          color: var(--pink);
         }
 
         // CASE: hover for any action
-        &:hover, &:focus {
-          color: $link-color;
+        &:hover,
+        &:focus {
+          color: var(--link-color);
         }
       }
     }
   }
 
-  .action-button, .action-list-item {
+  .action-button,
+  .action-list-item {
     .action-label {
       @include float(left);
+
       .label-checked {
         display: none;
       }
@@ -312,6 +353,13 @@
       .label-checked {
         display: inline;
       }
+    }
+  }
+
+  .btn-primary,
+  .btn-outline-primary {
+    &:focus {
+      box-shadow: 0 0 0 2px rgb(0, 120, 180);
     }
   }
 }

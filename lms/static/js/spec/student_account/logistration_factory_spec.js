@@ -1,44 +1,44 @@
-;(function (define) {
+(function(define) {
     'use strict';
-    define([
-            'jquery',
-            'underscore',
-            'backbone',
-            'common/js/spec_helpers/template_helpers',
-            'common/js/spec_helpers/ajax_helpers',
-            'js/student_account/logistration_factory'
-        ],
-        function($, _, Backbone, TemplateHelpers, AjaxHelpers, LogistrationFactory) {
 
+    define([
+        'jquery',
+        'underscore',
+        'backbone',
+        'common/js/spec_helpers/template_helpers',
+        'edx-ui-toolkit/js/utils/spec-helpers/ajax-helpers',
+        'js/student_account/logistration_factory'
+    ],
+    function($, _, Backbone, TemplateHelpers, AjaxHelpers, LogistrationFactory) {
         describe('Logistration Factory', function() {
             var FORM_DESCRIPTION = {
-                    method: 'post',
-                    submit_url: '/submit',
-                    fields: [
-                        {
-                            name: 'email',
-                            label: 'Email',
-                            defaultValue: '',
-                            type: 'text',
-                            required: true,
-                            placeholder: 'xsy@edx.org',
-                            instructions: 'Enter your email here.',
-                            restrictions: {}
-                        },
-                        {
-                            name: 'username',
-                            label: 'Username',
-                            defaultValue: '',
-                            type: 'text',
-                            required: true,
-                            placeholder: 'Xsy',
-                            instructions: 'Enter your username here.',
-                            restrictions: {
-                                max_length: 200
-                            }
+                method: 'post',
+                submit_url: '/submit',
+                fields: [
+                    {
+                        name: 'email',
+                        label: 'Email',
+                        defaultValue: '',
+                        type: 'text',
+                        required: true,
+                        placeholder: 'xsy@edx.org',
+                        instructions: 'Enter your email here.',
+                        restrictions: {}
+                    },
+                    {
+                        name: 'username',
+                        label: 'Username',
+                        defaultValue: '',
+                        type: 'text',
+                        required: true,
+                        placeholder: 'Xsy',
+                        instructions: 'Enter your username here.',
+                        restrictions: {
+                            max_length: 200
                         }
-                    ]
-                };
+                    }
+                ]
+            };
 
             var initializeLogistrationFactory = function(that, mode, nextUrl, finishAuthUrl) {
                 var options = {
@@ -63,7 +63,7 @@
             var assertForms = function(visibleForm, hiddenFormsList) {
                 expect($(visibleForm)).not.toHaveClass('hidden');
 
-                _.each(hiddenFormsList, function (hiddenForm) {
+                _.each(hiddenFormsList, function(hiddenForm) {
                     expect($(hiddenForm)).toHaveClass('hidden');
                 }, this);
             };
@@ -74,7 +74,7 @@
                 TemplateHelpers.installTemplate('templates/student_account/form_field');
                 TemplateHelpers.installTemplate('templates/student_account/login');
                 TemplateHelpers.installTemplate('templates/student_account/register');
-                TemplateHelpers.installTemplate('templates/student_account/password_reset')
+                TemplateHelpers.installTemplate('templates/student_account/password_reset');
             });
 
             afterEach(function() {

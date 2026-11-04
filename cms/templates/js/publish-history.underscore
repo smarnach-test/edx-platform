@@ -10,7 +10,3 @@ if (published_on && published_by) {
     copy = gettext("Previously published");
 }
 %>
-
-<div class="wrapper-last-publish">
-    <p class="copy"><%= copy %></p>
-</div>

@@ -1,18 +1,28 @@
 """
-Common utility methods and decorators for Mobile APIs.
+Common utility methods for Mobile APIs.
 """
-from openedx.core.lib.api.view_utils import view_course_access, view_auth_classes
+from organizations import api as organizations_api
+
+API_V05 = 'v0.5'
+API_V1 = 'v1'
+API_V2 = 'v2'
+API_V3 = 'v3'
+API_V4 = 'v4'
 
 
-def mobile_course_access(depth=0):
-    """
-    Method decorator for a mobile API endpoint that verifies the user has access to the course in a mobile context.
-    """
-    return view_course_access(depth=depth, access_action='load_mobile', check_for_milestones=True)
+def parsed_version(version):
+    """ Converts string X.X.X.Y to int tuple (X, X, X) """
+    return tuple(map(int, (version.split(".")[:3])))
 
 
-def mobile_view(is_user=False):
+def get_course_organization_logo(course_key):
     """
-    Function and class decorator that abstracts the authentication and permission checks for mobile api views.
+    Get organization logo of given course key.
     """
-    return view_auth_classes(is_user)
+    organization_logo = None
+    organizations = organizations_api.get_course_organizations(course_key=course_key)
+    if organizations:
+        organization = organizations[0]
+        organization_logo = organization.get('logo', None)
+
+    return str(organization_logo.url) if organization_logo else ''

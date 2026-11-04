@@ -2,14 +2,15 @@
 Fake Software Secure page for use in acceptance tests.
 """
 
+
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
-from django.core.urlresolvers import reverse
+from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.views.generic.base import View
 
-from edxmako.shortcuts import render_to_response
-from verify_student.models import SoftwareSecurePhotoVerification
+from common.djangoapps.edxmako.shortcuts import render_to_response
+from lms.djangoapps.verify_student.models import SoftwareSecurePhotoVerification
 
 
 class SoftwareSecureFakeView(View):
@@ -35,7 +36,7 @@ class SoftwareSecureFakeView(View):
         access_key = settings.VERIFY_STUDENT["SOFTWARE_SECURE"]["API_ACCESS_KEY"]
         context = {
             'receipt_id': None,
-            'authorization_code': 'SIS {}:0000'.format(access_key),
+            'authorization_code': f'SIS {access_key}:0000',
             'results_callback': reverse('verify_student_results_callback')
         }
 

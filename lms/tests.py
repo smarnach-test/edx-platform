@@ -1,15 +1,17 @@
 """Tests for the lms module itself."""
 
+
+import logging
 import mimetypes
-from mock import patch
 
-from django.test import TestCase
-from django.core.urlresolvers import reverse
+from django.conf import settings  # pylint: disable=unused-import  # noqa: F401
+from django.core.cache import cache
+from django.test import TestCase, override_settings
+from django.urls import path
 
-from edxmako import add_lookup, LOOKUP
-from lms import startup
-from xmodule.modulestore.tests.factories import CourseFactory
-from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
+from openedx.core.apidocs import cached_schema_view
+
+log = logging.getLogger(__name__)
 
 
 class LmsModuleTests(TestCase):
@@ -21,39 +23,67 @@ class LmsModuleTests(TestCase):
         extensions = ['eot', 'otf', 'ttf', 'woff']
         for extension in extensions:
             mimetype, _ = mimetypes.guess_type('test.' + extension)
-            self.assertIsNotNone(mimetype)
+            assert mimetype is not None
 
-
-class TemplateLookupTests(TestCase):
-    """
-    Tests for TemplateLookup.
-    """
-
-    def test_add_lookup_to_main(self):
-        """Test that any template directories added are not cleared when microsites are enabled."""
-
-        add_lookup('main', 'external_module', __name__)
-        directories = LOOKUP['main'].directories
-        self.assertEqual(len([dir for dir in directories if 'external_module' in dir]), 1)
-
-        # This should not clear the directories list
-        startup.enable_microsites()
-        directories = LOOKUP['main'].directories
-        self.assertEqual(len([dir for dir in directories if 'external_module' in dir]), 1)
-
-
-@patch.dict('django.conf.settings.FEATURES', {'ENABLE_FEEDBACK_SUBMISSION': True})
-class HelpModalTests(ModuleStoreTestCase):
-    """Tests for the help modal"""
-    def setUp(self):
-        super(HelpModalTests, self).setUp()
-        self.course = CourseFactory.create()
-
-    def test_simple_test(self):
+    def test_api_docs(self):
         """
-        Simple test to make sure that you don't get a 500 error when the modal
-        is enabled.
+        Tests that requests to the `/api-docs/` endpoint do not raise an exception.
         """
-        url = reverse('info', args=[self.course.id.to_deprecated_string()])
-        resp = self.client.get(url)
-        self.assertEqual(resp.status_code, 200)
+        response = self.client.get('/api-docs/')
+        assert response.status_code == 200
+
+    def test_api_docs_schema(self):
+        """
+        Tests that the OpenAPI schema generates without raising an exception.
+
+        The `/api-docs/` view above only renders the Swagger UI shell, so this
+        is what actually exercises schema generation across the whole service.
+        """
+        response = self.client.get('/api-docs/schema/')
+        assert response.status_code == 200
+
+    @override_settings(
+        OPENAPI_CACHE_TIMEOUT=60,
+        CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}},
+    )
+    def test_api_docs_schema_cache(self):
+        """
+        The schema cache is keyed on method and language, so neither an OPTIONS
+        response nor another language's document is served to a later GET.
+
+        The suite runs with OPENAPI_CACHE_TIMEOUT = 0 and a DummyCache, so the
+        cached branch is only reachable with both overridden.
+        """
+        cache.clear()
+        options = self.client.options('/api-docs/schema/')
+        spanish = self.client.get('/api-docs/schema/', HTTP_ACCEPT_LANGUAGE='es-419')
+        english = self.client.get('/api-docs/schema/', HTTP_ACCEPT_LANGUAGE='en')
+        cached = self.client.get('/api-docs/schema/', HTTP_ACCEPT_LANGUAGE='en')
+        assert options.status_code == 200
+        assert english.status_code == 200
+        assert english.content.startswith(b'openapi:')
+        assert english.content != spanish.content
+        assert english.content == cached.content
+
+    @override_settings(
+        OPENAPI_CACHE_TIMEOUT=60,
+        CACHES={'default': {'BACKEND': 'django.core.cache.backends.locmem.LocMemCache'}},
+    )
+    def test_api_docs_schema_cache_per_urlconf(self):
+        """
+        The key covers the URLconf: LMS and CMS serve this at the same path and
+        share one cache, so a document generated under one must not come back
+        under the other.
+        """
+        cache.clear()
+        full = self.client.get('/api-docs/schema/')
+        with override_settings(ROOT_URLCONF='lms.tests'):
+            other = self.client.get('/api-docs/schema/')
+        again = self.client.get('/api-docs/schema/')
+        assert full.status_code == 200
+        assert other.status_code == 200
+        assert full.content != other.content
+        assert again.content == full.content
+
+
+urlpatterns = [path('api-docs/schema/', cached_schema_view())]

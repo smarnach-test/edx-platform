@@ -1,14 +1,14 @@
-;(function (define) {
+(function(define) {
     'use strict';
-    define([
-            'jquery',
-            'underscore',
-            'common/js/spec_helpers/template_helpers',
-            'common/js/spec_helpers/ajax_helpers',
-            'js/student_account/views/HintedLoginView'
-        ],
-        function($, _, TemplateHelpers, AjaxHelpers, HintedLoginView) {
 
+    define([
+        'jquery',
+        'underscore',
+        'common/js/spec_helpers/template_helpers',
+        'edx-ui-toolkit/js/utils/spec-helpers/ajax-helpers',
+        'js/student_account/views/HintedLoginView'
+    ],
+    function($, _, TemplateHelpers, AjaxHelpers, HintedLoginView) {
         describe('edx.student.account.HintedLoginView', function() {
             var view = null,
                 requests = null,
@@ -51,7 +51,7 @@
                 });
 
                 // Mock the redirect call
-                spyOn( view, 'redirect' ).andCallFake( function() {} );
+                spyOn(view, 'redirect').and.callFake(function() {});
 
                 view.render();
             };
@@ -62,7 +62,7 @@
             });
 
             it('displays a choice as two buttons', function() {
-                createHintedLoginView("oa2-google-oauth2");
+                createHintedLoginView('oa2-google-oauth2');
 
                 expect($('.proceed-button.button-oa2-google-oauth2')).toBeVisible();
                 expect($('.form-toggle')).toBeVisible();
@@ -70,7 +70,7 @@
             });
 
             it('works with secondary providers as well', function() {
-                createHintedLoginView("saml-harvard");
+                createHintedLoginView('saml-harvard');
 
                 expect($('.proceed-button.button-saml-harvard')).toBeVisible();
                 expect($('.form-toggle')).toBeVisible();
@@ -83,7 +83,7 @@
                 // Click the "Yes, proceed" button
                 $('.proceed-button').click();
 
-                expect(view.redirect).toHaveBeenCalledWith( '/auth/login/google-oauth2/?auth_entry=account_login' );
+                expect(view.redirect).toHaveBeenCalledWith('/auth/login/google-oauth2/?auth_entry=account_login');
             });
         });
     });

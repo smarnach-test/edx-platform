@@ -2,14 +2,16 @@
 Tests for the LTI outcome service handlers, both in outcomes.py and in tasks.py
 """
 
+
+from unittest.mock import MagicMock, patch
+
 import ddt
 from django.test import TestCase
-from mock import patch, MagicMock
-from student.tests.factories import UserFactory
+from opaque_keys.edx.locator import BlockUsageLocator, CourseLocator
 
-from lti_provider.models import GradedAssignment, LtiConsumer, OutcomeService
-import lti_provider.tasks as tasks
-from opaque_keys.edx.locator import CourseLocator, BlockUsageLocator
+import lms.djangoapps.lti_provider.tasks as tasks
+from common.djangoapps.student.tests.factories import UserFactory
+from lms.djangoapps.lti_provider.models import GradedAssignment, LtiConsumer, OutcomeService
 
 
 class BaseOutcomeTest(TestCase):
@@ -17,7 +19,7 @@ class BaseOutcomeTest(TestCase):
     Super type for tests of both the leaf and composite outcome celery tasks.
     """
     def setUp(self):
-        super(BaseOutcomeTest, self).setUp()
+        super().setUp()
         self.course_key = CourseLocator(
             org='some_org',
             course='some_course',
@@ -52,7 +54,7 @@ class BaseOutcomeTest(TestCase):
         self.assignment.save()
 
         self.send_score_update_mock = self.setup_patch(
-            'lti_provider.outcomes.send_score_update', None
+            'lms.djangoapps.lti_provider.outcomes.send_score_update', None
         )
 
     def setup_patch(self, function_name, return_value):
@@ -71,6 +73,7 @@ class SendLeafOutcomeTest(BaseOutcomeTest):
     """
     Tests for the send_leaf_outcome method in tasks.py
     """
+
     @ddt.data(
         (2.0, 2.0, 1.0),
         (2.0, 0.0, 0.0),
@@ -79,7 +82,7 @@ class SendLeafOutcomeTest(BaseOutcomeTest):
     @ddt.unpack
     def test_outcome_with_score(self, earned, possible, expected):
         tasks.send_leaf_outcome(
-            self.assignment.id,   # pylint: disable=no-member
+            self.assignment.id,
             earned,
             possible
         )
@@ -91,22 +94,23 @@ class SendCompositeOutcomeTest(BaseOutcomeTest):
     """
     Tests for the send_composite_outcome method in tasks.py
     """
+
     def setUp(self):
-        super(SendCompositeOutcomeTest, self).setUp()
-        self.descriptor = MagicMock()
-        self.descriptor.location = BlockUsageLocator(
+        super().setUp()
+        self.block = MagicMock()
+        self.block.location = BlockUsageLocator(
             course_key=self.course_key,
             block_type='problem',
             block_id='problem',
         )
-        self.weighted_scores = MagicMock()
-        self.weighted_scores_mock = self.setup_patch(
-            'lti_provider.tasks.get_weighted_scores', self.weighted_scores
+        self.course_grade = MagicMock()
+        self.course_grade_mock = self.setup_patch(
+            'lms.djangoapps.lti_provider.tasks.CourseGradeFactory.read', self.course_grade
         )
         self.module_store = MagicMock()
-        self.module_store.get_item = MagicMock(return_value=self.descriptor)
+        self.module_store.get_item = MagicMock(return_value=self.block)
         self.check_result_mock = self.setup_patch(
-            'lti_provider.tasks.modulestore',
+            'lms.djangoapps.lti_provider.tasks.modulestore',
             self.module_store
         )
 
@@ -117,9 +121,9 @@ class SendCompositeOutcomeTest(BaseOutcomeTest):
     )
     @ddt.unpack
     def test_outcome_with_score_score(self, earned, possible, expected):
-        self.weighted_scores.score_for_module = MagicMock(return_value=(earned, possible))
+        self.course_grade.score_for_block = MagicMock(return_value=(earned, possible))
         tasks.send_composite_outcome(
-            self.user.id, unicode(self.course_key), self.assignment.id, 1  # pylint: disable=no-member
+            self.user.id, str(self.course_key), self.assignment.id, 1
         )
         self.send_score_update_mock.assert_called_once_with(self.assignment, expected)
 
@@ -127,6 +131,6 @@ class SendCompositeOutcomeTest(BaseOutcomeTest):
         self.assignment.version_number = 2
         self.assignment.save()
         tasks.send_composite_outcome(
-            self.user.id, unicode(self.course_key), self.assignment.id, 1  # pylint: disable=no-member
+            self.user.id, str(self.course_key), self.assignment.id, 1
         )
-        self.assertEqual(self.weighted_scores_mock.call_count, 0)
+        assert self.course_grade_mock.call_count == 0

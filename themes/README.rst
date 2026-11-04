@@ -52,35 +52,20 @@ image is overridden.
 Sass/CSS
 --------
 
-Most CSS styling in Open edX is done with Sass files compiled to CSS.  You can
-override individual settings by creating a new Sass file that uses the existing
-file, and overrides the few settings you want.
+Most CSS styling in Open edX is done with Sass files compiled to CSS. EdX is
+converting over to use `Bootstrap Theming`_, so you can follow the instructions
+defined here:
 
-For example, to change the fonts used throughout the site, you can create an
-``lms/static/sass/_overrides.scss`` file with the change you want::
+.. _Bootstrap Theming: https://getbootstrap.com/docs/4.0/getting-started/theming/
 
-    $sans-serif: 'Helvetica';
+There are two example themes provided within edx-platform's themes directory:
 
-The variables that can currently be overridden are defined in
-``lms/static/sass/base/_variables.scss``.
+* red-theme: switches Open edX's primary color to red instead of blue
+* dark-theme: uses a dark background and light foreground colors
 
-**Note:** We are currently in the middle of a re-engineering of the Sass
-variables.  They will change in the future.  If you are interested, you can see
-the new development in the `edX Pattern Library`_.
+For more details, see `Changing Themes for an Open edX Site`_.
 
-.. _edX Pattern Library: http://ux.edx.org/
-
-Then create ``lms/static/sass/lms-main.scss`` to use those overrides, and also
-the rest of the definitions from the original file::
-
-    // Our overrides for settings we want to change.
-    @import 'overrides';
-
-    // Import the original styles from edx-platform.
-    @import 'lms/static/sass/lms-main';
-
-Do this for each .scss file your site needs.
-
+.. _Changing Themes for an Open edX Site: https://docs.openedx.org/en/latest/site_ops/install_configure_run_guide/configuration/changing_appearance/index.html
 
 HTML Templates
 --------------
@@ -90,6 +75,14 @@ in the appropriate place, and making the changes you need.  Keep in mind that
 in the future if you upgrade the Open edX code, you may have to update the
 copied template in your theme also.
 
+Template Names
+==============
+
+Here are the list of template names that you *should* use in your comprehensive
+theme (so far):
+
+* ``header.html``
+* ``footer.html``
 
 Installing your theme
 ---------------------
@@ -101,21 +94,26 @@ directory. There are two ways to do this.
 
     #.  As the vagrant user, edit (or create)
         /edx/app/edx_ansible/server-vars.yml to add the
-        ``edxapp_comp_theme_dir`` value::
+        ``edxapp_comprehensive_theme_dir`` value::
 
-            edxapp_comp_theme_dir: '/full/path/to/my-theme'
+            edxapp_comprehensive_theme_dir: '/full/path/to/my-theme'
 
     #.  Run the update script::
 
             $ sudo /edx/bin/update configuration master
             $ sudo /edx/bin/update edx-platform HEAD
 
-#.  Otherwise, edit the /edx/app/edxapp/lms.env.json file to add the
-    ``COMP_THEME_DIR`` value::
+#.  Otherwise, edit the /edx/app/edxapp/lms.yml file to add the
+    ``COMPREHENSIVE_THEME_DIRS`` value::
 
-        "COMP_THEME_DIR": "/full/path/to/my-theme",
+        "COMPREHENSIVE_THEME_DIRS": ["/full/path/to/my-theme"],
 
 Restart your site.  Your changes should now be visible.
+
+
+Comprehensive Theming
+=====================
+* The ``PROFILE_IMAGE_DEFAULT_FILENAME`` Django setting is now ignored.
 
 
 "Stanford" theming
@@ -153,4 +151,61 @@ name in the ``@import`` line.
 
 Run the ``update_assets`` command to recompile the theme::
 
-    $ paver update_assets lms --settings=aws
+    $ paver update_assets lms --settings=production
+
+Microsites
+==========
+
+If you want to continue using the "Microsites" theming system, there are a few
+changes you'll need to make. A few templates have been renamed, or folded into
+other templates:
+
+* ``header_extra.html`` has been renamed to ``head-extra.html``. This file
+  was always inserted into the ``<head>`` element of the page, rather than
+  the header of the ``<body>`` element, so this change makes the name more
+  accurate.
+
+* ``google_analytics.html`` has been removed. The contents of this template
+  can and should be added to the ``head-extra.html`` template.
+
+* ``google_tag_manager.html`` has been renamed to ``body-initial.html``.
+
+In addition, there are some other changes you'll need to make:
+
+* The ``google_analytics_file`` config value is now ignored. If your Open edX
+  installation has a Google Analytics account ID set, the Google Analytics
+  JavaScript will be included automatically on your site using that account ID.
+  You can set this account ID either using the "GOOGLE_ANALYTICS_ACCOUNT" value
+  in the Django settings, or by setting the newly-added "GOOGLE_ANALYTICS_ACCOUNT"
+  config value in your site configuration.
+
+* You can set the google site verification ID in the GOOGLE_SITE_VERIFICATION_ID
+  in your site configuration. Otherwise, edit the /edx/app/edxapp/lms.yml
+  file to set the value for GOOGLE_SITE_VERIFICATION_ID. Setting the value for
+  GOOGLE_SITE_VERIFICATION_ID will add the meta tag for google site verification
+  in the lms/templates/main.html which is the main Mako template that all page
+  templates should include.
+
+* If you don't want the Google Analytics JavaScript to be output at all in your
+  site, set the "GOOGLE_ANALYTICS_ACCOUNT" config value to the empty string.
+  If you want to customize the way that Google Analytics is loaded, set the
+  "GOOGLE_ANALYTICS_ACCOUNT" config value to the empty string, and then load
+  Google Analytics yourself (with whatever customizations you want) in your
+  ``head-extra.html`` template.
+
+* The ``css_overrides_file`` config value is now ignored. To add a CSS override
+  file to your site configuration, create a ``head-extra.html`` template with the
+  following content:
+
+  .. code-block:: mako
+
+    <%namespace name='static' file='../../static_content.html'/>
+    <% style_overrides_file = static.get_value('css_overrides_file') %>
+
+    % if style_overrides_file:
+      <link rel="stylesheet" type="text/css" href="${static.url(style_overrides_file)}" />
+    % endif
+
+  If you already have a ``head-extra.html`` template, you can modify it to
+  output this ``<link rel="stylesheet">`` tag, in addition to whatever else you
+  already have in that template.

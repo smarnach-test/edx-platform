@@ -1,19 +1,21 @@
-;(function (define) {
+(function(define) {
     'use strict';
-    define([
-            'jquery',
-            'underscore',
-            'common/js/spec_helpers/template_helpers',
-            'common/js/spec_helpers/ajax_helpers',
-            'js/student_account/models/PasswordResetModel',
-            'js/student_account/views/PasswordResetView'
-        ],
-        function($, _, TemplateHelpers, AjaxHelpers, PasswordResetModel, PasswordResetView) {
 
+    define([
+        'jquery',
+        'underscore',
+        'sinon',
+        'common/js/spec_helpers/template_helpers',
+        'edx-ui-toolkit/js/utils/spec-helpers/ajax-helpers',
+        'js/student_account/models/PasswordResetModel',
+        'js/student_account/views/PasswordResetView'
+    ],
+    function($, _, sinon, TemplateHelpers, AjaxHelpers, PasswordResetModel, PasswordResetView) {
         describe('edx.student.account.PasswordResetView', function() {
             var model = null,
                 view = null,
                 requests = null,
+                xhrFactory = null,
                 EMAIL = 'xsy@edx.org',
                 FORM_DESCRIPTION = {
                     method: 'post',
@@ -43,8 +45,6 @@
                     model: model
                 });
 
-                // Spy on AJAX requests
-                requests = AjaxHelpers.requests(that);
             };
 
             var submitEmail = function(validationSuccess) {
@@ -56,9 +56,9 @@
 
                 // If validationSuccess isn't passed, we avoid
                 // spying on `view.validate` twice
-                if ( !_.isUndefined(validationSuccess) ) {
+                if (!_.isUndefined(validationSuccess)) {
                     // Force validation to return as expected
-                    spyOn(view, 'validate').andReturn({
+                    spyOn(view, 'validate').and.returnValue({
                         isValid: validationSuccess,
                         message: 'Submission was validated.'
                     });
@@ -72,10 +72,27 @@
                 setFixtures('<div id="password-reset-form" class="form-wrapper hidden"></div>');
                 TemplateHelpers.installTemplate('templates/student_account/password_reset');
                 TemplateHelpers.installTemplate('templates/student_account/form_field');
+                xhrFactory = sinon.useFakeXMLHttpRequest();
+                requests = [];
+                requests.currentIndex = 0;
+                requests.restore = function() { xhrFactory.restore(); };
+                xhrFactory.onCreate = function(req) { requests.push(req); };
+            });
+
+            afterEach(function() {
+                requests.restore();
             });
 
             it('allows the user to request a new password', function() {
+                var syncSpy, passwordEmailSentSpy;
+
                 createPasswordResetView(this);
+
+                // We expect these events to be triggered upon a successful password reset
+                syncSpy = jasmine.createSpy('syncEvent');
+                passwordEmailSentSpy = jasmine.createSpy('passwordEmailSentEvent');
+                view.listenTo(view.model, 'sync', syncSpy);
+                view.listenTo(view, 'password-email-sent', passwordEmailSentSpy);
 
                 // Submit the form, with successful validation
                 submitEmail(true);
@@ -84,20 +101,25 @@
                 AjaxHelpers.expectRequest(
                     requests, 'POST',
                     FORM_DESCRIPTION.submit_url,
-                    $.param({ email: EMAIL })
+                    $.param({email: EMAIL})
                 );
 
                 // Respond with status code 200
                 AjaxHelpers.respondWithJson(requests, {});
 
-                // Verify that the success message is visible
-                expect($('.js-reset-success')).not.toHaveClass('hidden');
-
-                // Verify that login form has loaded
-                expect($('#login-form')).not.toHaveClass('hidden');
+                // Verify that the events were triggered
+                expect(syncSpy).toHaveBeenCalled();
+                expect(passwordEmailSentSpy).toHaveBeenCalled();
 
                 // Verify that password reset view has been removed
-                expect($( view.el ).html().length).toEqual(0);
+                expect($(view.el).html().length).toEqual(0);
+            });
+
+            it('displays a link to the password reset help', function() {
+                createPasswordResetView(this);
+
+                // Verify that the password reset help link is displayed
+                expect($('.reset-help')).toBeVisible();
             });
 
             it('validates the email field', function() {
@@ -110,7 +132,7 @@
                 expect(view.validate).toHaveBeenCalledWith($('#password-reset-email')[0]);
 
                 // Verify that no submission errors are visible
-                expect(view.$errors).toHaveClass('hidden');
+                expect(view.$formFeedback.find('.' + view.formErrorsJsHook).length).toEqual(0);
             });
 
             it('displays password reset validation errors', function() {
@@ -120,7 +142,7 @@
                 submitEmail(false);
 
                 // Verify that submission errors are visible
-                expect(view.$errors).not.toHaveClass('hidden');
+                expect(view.$formFeedback.find('.' + view.formErrorsJsHook).length).toEqual(1);
             });
 
             it('displays an error if the server returns an error while sending a password reset email', function() {
@@ -131,7 +153,7 @@
                 AjaxHelpers.respondWithError(requests);
 
                 // Expect that an error is displayed
-                expect(view.$errors).not.toHaveClass('hidden');
+                expect(view.$formFeedback.find('.' + view.formErrorsJsHook).length).toEqual(1);
 
                 // If we try again and succeed, the error should go away
                 submitEmail();
@@ -140,7 +162,7 @@
                 AjaxHelpers.respondWithJson(requests, {});
 
                 // Expect that the error is hidden
-                expect(view.$errors).toHaveClass('hidden');
+                expect(view.$formFeedback.find('.' + view.formErrorsJsHook).length).toEqual(0);
             });
         });
     });

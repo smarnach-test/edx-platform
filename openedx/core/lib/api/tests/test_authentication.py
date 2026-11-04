@@ -1,28 +1,29 @@
 """
-Tests for OAuth2.  This module is copied from django-rest-framework-oauth (tests/test_authentication.py)
-and updated to use our subclass of OAuth2Authentication.
+Tests for OAuth2.  This module is copied from django-rest-framework-oauth
+(tests/test_authentication.py) and updated to use our subclass of BearerAuthentication.
 """
 
-from __future__ import unicode_literals
-import datetime
+import itertools
+import json
+from collections import namedtuple
+from datetime import timedelta
 
-from django.conf.urls import patterns, url, include
-from django.contrib.auth.models import User
+import ddt
 from django.http import HttpResponse
 from django.test import TestCase
-from django.utils import unittest
+from django.test.utils import override_settings
+from django.urls import path
 from django.utils.http import urlencode
-
+from django.utils.timezone import now
+from oauth2_provider import models as dot_models
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from rest_framework_oauth import permissions
-from rest_framework_oauth.compat import oauth2_provider, oauth2_provider_scope
-from rest_framework.test import APIRequestFactory, APIClient
+from rest_framework.test import APIClient, APIRequestFactory
 from rest_framework.views import APIView
 
-from provider import scope, constants
-
-from ..authentication import OAuth2AuthenticationAllowInactiveUser
+from common.djangoapps.student.tests.factories import UserFactory
+from openedx.core.djangoapps.oauth_dispatch import adapters
+from openedx.core.lib.api import authentication
 
 factory = APIRequestFactory()  # pylint: disable=invalid-name
 
@@ -30,72 +31,56 @@ factory = APIRequestFactory()  # pylint: disable=invalid-name
 class MockView(APIView):  # pylint: disable=missing-docstring
     permission_classes = (IsAuthenticated,)
 
-    def get(self, request):  # pylint: disable=missing-docstring,unused-argument
+    def get(self, _request):
         return HttpResponse({'a': 1, 'b': 2, 'c': 3})
 
-    def post(self, request):  # pylint: disable=missing-docstring,unused-argument
+    def post(self, _request):
         return HttpResponse({'a': 1, 'b': 2, 'c': 3})
 
-    def put(self, request):  # pylint: disable=missing-docstring,unused-argument
+    def put(self, _request):
         return HttpResponse({'a': 1, 'b': 2, 'c': 3})
 
 
-# This is the a change we've made from the django-rest-framework-oauth version
-# of these tests.  We're subclassing our custom OAuth2AuthenticationAllowInactiveUser
-# instead of OAuth2Authentication.
-class OAuth2AuthenticationDebug(OAuth2AuthenticationAllowInactiveUser):  # pylint: disable=missing-docstring
-    allow_query_params_token = True
+urlpatterns = [
+    path('oauth2-inactive-test/',
+         MockView.as_view(authentication_classes=[authentication.BearerAuthenticationAllowInactiveUser])
+         ),
+    path('oauth2-test/',
+         MockView.as_view(authentication_classes=[authentication.BearerAuthentication])
+         )
+]
 
 
-urlpatterns = patterns(
-    '',
-    url(r'^oauth2/', include('provider.oauth2.urls', namespace='oauth2')),
-    url(r'^oauth2-test/$', MockView.as_view(authentication_classes=[OAuth2AuthenticationAllowInactiveUser])),
-    url(r'^oauth2-test-debug/$', MockView.as_view(authentication_classes=[OAuth2AuthenticationDebug])),
-    url(
-        r'^oauth2-with-scope-test/$',
-        MockView.as_view(
-            authentication_classes=[OAuth2AuthenticationAllowInactiveUser],
-            permission_classes=[permissions.TokenHasReadWriteScope]
-        )
-    ),
-)
-
-
-class OAuth2Tests(TestCase):
-    """OAuth 2.0 authentication"""
-    urls = 'openedx.core.lib.api.tests.test_authentication'
+@ddt.ddt  # pylint: disable=missing-docstring
+@override_settings(ROOT_URLCONF=__name__)
+class OAuth2AllowInActiveUsersTests(TestCase):  # pylint: disable=missing-class-docstring
+    OAUTH2_BASE_TESTING_URL = '/oauth2-inactive-test/'
 
     def setUp(self):
+        super().setUp()
+        self.dot_adapter = adapters.DOTAdapter()
         self.csrf_client = APIClient(enforce_csrf_checks=True)
         self.username = 'john'
         self.email = 'lennon@thebeatles.com'
         self.password = 'password'
-        self.user = User.objects.create_user(self.username, self.email, self.password)
+        self.user = UserFactory.create(username=self.username, email=self.email, password=self.password)
 
-        self.CLIENT_ID = 'client_key'  # pylint: disable=invalid-name
-        self.CLIENT_SECRET = 'client_secret'  # pylint: disable=invalid-name
-        self.ACCESS_TOKEN = "access_token"  # pylint: disable=invalid-name
-        self.REFRESH_TOKEN = "refresh_token"  # pylint: disable=invalid-name
-
-        self.oauth2_client = oauth2_provider.oauth2.models.Client.objects.create(
-            client_id=self.CLIENT_ID,
-            client_secret=self.CLIENT_SECRET,
-            redirect_uri='',
-            client_type=0,
+        self.dot_oauth2_client = self.dot_adapter.create_public_client(
             name='example',
-            user=None,
-        )
-
-        self.access_token = oauth2_provider.oauth2.models.AccessToken.objects.create(
-            token=self.ACCESS_TOKEN,
-            client=self.oauth2_client,
             user=self.user,
+            client_id='dot-client-id',
+            redirect_uri='https://example.edx/redirect',
         )
-        self.refresh_token = oauth2_provider.oauth2.models.RefreshToken.objects.create(
+        self.dot_access_token = dot_models.AccessToken.objects.create(
             user=self.user,
-            access_token=self.access_token,
-            client=self.oauth2_client
+            token='dot-access-token',
+            application=self.dot_oauth2_client,
+            expires=now() + timedelta(days=30),
+        )
+        self.dot_refresh_token = dot_models.RefreshToken.objects.create(
+            user=self.user,
+            token='dot-refresh-token',
+            application=self.dot_oauth2_client,
         )
 
         # This is the a change we've made from the django-rest-framework-oauth version
@@ -103,133 +88,182 @@ class OAuth2Tests(TestCase):
         self.user.is_active = False
         self.user.save()
 
-        # This is the a change we've made from the django-rest-framework-oauth version
-        # of these tests.
-        # Override the SCOPE_NAME_DICT setting for tests for oauth2-with-scope-test.  This is
-        # needed to support READ and WRITE scopes as they currently aren't supported by the
-        # edx-auth2-provider, and their scope values collide with other scopes defined in the
-        # edx-auth2-provider.
-        scope.SCOPE_NAME_DICT = {'read': constants.READ, 'write': constants.WRITE}
+    def _create_authorization_header(self, token=None):
+        if token is None:
+            token = self.dot_access_token.token
+        return f"Bearer {token}"
 
-    def _create_authorization_header(self, token=None):  # pylint: disable=missing-docstring
-        return "Bearer {0}".format(token or self.access_token.token)
+    def get_with_bearer_token(self, target_url, params=None, token=None):
+        """
+        Make a GET request to the specified URL with an OAuth2 bearer token.  If
+        no token is provided, a valid token will be used.  Query parameters can
+        also be passed in if desired.
+        """
+        auth = self._create_authorization_header(token)
+        return self.csrf_client.get(target_url, params, HTTP_AUTHORIZATION=auth)
 
-    @unittest.skipUnless(oauth2_provider, 'django-oauth2-provider not installed')
-    def test_get_form_with_wrong_authorization_header_token_type_failing(self):
+    def post_with_bearer_token(self, target_url, token=None):
+        """
+        Make a POST request to the specified URL with an OAuth2 bearer token.  If
+        no token is provided, a valid token will be used.
+        """
+        auth = self._create_authorization_header(token)
+        return self.csrf_client.post(target_url, HTTP_AUTHORIZATION=auth)
+
+    def check_error_codes(self, response, status_code, error_code):
+        """
+        Ensure that the response has the appropriate HTTP status, and provides
+        the expected error_code in the JSON response body.
+        """
+        response_dict = json.loads(response.content.decode('utf-8'))
+        assert response.status_code == status_code
+        assert response_dict['error_code'] == error_code
+
+    @ddt.data(None, {})
+    def test_get_form_with_wrong_authorization_header_token_type_failing(self, params):
         """Ensure that a wrong token type lead to the correct HTTP error status code"""
-        auth = "Wrong token-type-obviously"
-        response = self.csrf_client.get('/oauth2-test/', {}, HTTP_AUTHORIZATION=auth)
-        self.assertEqual(response.status_code, 401)
-        response = self.csrf_client.get('/oauth2-test/', HTTP_AUTHORIZATION=auth)
-        self.assertEqual(response.status_code, 401)
-
-    @unittest.skipUnless(oauth2_provider, 'django-oauth2-provider not installed')
-    def test_get_form_with_wrong_authorization_header_token_format_failing(self):
-        """Ensure that a wrong token format lead to the correct HTTP error status code"""
-        auth = "Bearer wrong token format"
-        response = self.csrf_client.get('/oauth2-test/', {}, HTTP_AUTHORIZATION=auth)
-        self.assertEqual(response.status_code, 401)
-        response = self.csrf_client.get('/oauth2-test/', HTTP_AUTHORIZATION=auth)
-        self.assertEqual(response.status_code, 401)
-
-    @unittest.skipUnless(oauth2_provider, 'django-oauth2-provider not installed')
-    def test_get_form_with_wrong_authorization_header_token_failing(self):
-        """Ensure that a wrong token lead to the correct HTTP error status code"""
-        auth = "Bearer wrong-token"
-        response = self.csrf_client.get('/oauth2-test/', {}, HTTP_AUTHORIZATION=auth)
-        self.assertEqual(response.status_code, 401)
-        response = self.csrf_client.get('/oauth2-test/', HTTP_AUTHORIZATION=auth)
-        self.assertEqual(response.status_code, 401)
-
-    @unittest.skipUnless(oauth2_provider, 'django-oauth2-provider not installed')
-    def test_get_form_with_wrong_authorization_header_token_missing(self):
-        """Ensure that a missing token lead to the correct HTTP error status code"""
-        auth = "Bearer"
-        response = self.csrf_client.get('/oauth2-test/', {}, HTTP_AUTHORIZATION=auth)
-        self.assertEqual(response.status_code, 401)
-        response = self.csrf_client.get('/oauth2-test/', HTTP_AUTHORIZATION=auth)
-        self.assertEqual(response.status_code, 401)
-
-    @unittest.skipUnless(oauth2_provider, 'django-oauth2-provider not installed')
-    def test_get_form_passing_auth(self):
-        """Ensure GETing form over OAuth with correct client credentials succeed"""
-        auth = self._create_authorization_header()
-        response = self.csrf_client.get('/oauth2-test/', HTTP_AUTHORIZATION=auth)
-        self.assertEqual(response.status_code, 200)
-
-    @unittest.skipUnless(oauth2_provider, 'django-oauth2-provider not installed')
-    def test_post_form_passing_auth_url_transport(self):
-        """Ensure GETing form over OAuth with correct client credentials in form data succeed"""
-        response = self.csrf_client.post(
-            '/oauth2-test/',
-            data={'access_token': self.access_token.token}
+        response = self.csrf_client.get(
+            self.OAUTH2_BASE_TESTING_URL,
+            params,
+            HTTP_AUTHORIZATION='Wrong token-type-obviously'
         )
-        self.assertEqual(response.status_code, 200)
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    @unittest.skipUnless(oauth2_provider, 'django-oauth2-provider not installed')
-    def test_get_form_passing_auth_url_transport(self):
-        """Ensure GETing form over OAuth with correct client credentials in query succeed when DEBUG is True"""
-        query = urlencode({'access_token': self.access_token.token})
-        response = self.csrf_client.get('/oauth2-test-debug/?%s' % query)
-        self.assertEqual(response.status_code, 200)
+        # If no Authorization header is provided that contains a bearer token,
+        # authorization passes to the next registered authorization class, or
+        # (in this case) to standard DRF fallback code, so no error_code is
+        # provided (yet).
+        assert 'error_code' not in json.loads(response.content.decode('utf-8'))
 
-    @unittest.skipUnless(oauth2_provider, 'django-oauth2-provider not installed')
+    def test_get_form_passing_auth_with_dot(self):
+        response = self.get_with_bearer_token(self.OAUTH2_BASE_TESTING_URL, token=self.dot_access_token.token)
+        assert response.status_code == status.HTTP_200_OK
+
     def test_get_form_failing_auth_url_transport(self):
         """Ensure GETing form over OAuth with correct client credentials in query fails when DEBUG is False"""
-        query = urlencode({'access_token': self.access_token.token})
-        response = self.csrf_client.get('/oauth2-test/?%s' % query)
-        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+        query = urlencode({'access_token': self.dot_access_token.token})
+        response = self.csrf_client.get(self.OAUTH2_BASE_TESTING_URL + '?%s' % query)  # noqa: UP031
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    @unittest.skipUnless(oauth2_provider, 'django-oauth2-provider not installed')
+        # This case is handled directly by DRF so no error_code is provided (yet).
+        assert 'error_code' not in json.loads(response.content.decode('utf-8'))
+
     def test_post_form_passing_auth(self):
         """Ensure POSTing form over OAuth with correct credentials passes and does not require CSRF"""
-        auth = self._create_authorization_header()
-        response = self.csrf_client.post('/oauth2-test/', HTTP_AUTHORIZATION=auth)
-        self.assertEqual(response.status_code, 200)
+        response = self.post_with_bearer_token(self.OAUTH2_BASE_TESTING_URL)
+        assert response.status_code == status.HTTP_200_OK
 
-    @unittest.skipUnless(oauth2_provider, 'django-oauth2-provider not installed')
     def test_post_form_token_removed_failing_auth(self):
         """Ensure POSTing when there is no OAuth access token in db fails"""
-        self.access_token.delete()
-        auth = self._create_authorization_header()
-        response = self.csrf_client.post('/oauth2-test/', HTTP_AUTHORIZATION=auth)
-        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+        self.dot_access_token.delete()
+        response = self.post_with_bearer_token(self.OAUTH2_BASE_TESTING_URL)
+        self.check_error_codes(
+            response,
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            error_code=authentication.OAUTH2_TOKEN_ERROR_NONEXISTENT
+        )
 
-    @unittest.skipUnless(oauth2_provider, 'django-oauth2-provider not installed')
     def test_post_form_with_refresh_token_failing_auth(self):
         """Ensure POSTing with refresh token instead of access token fails"""
-        auth = self._create_authorization_header(token=self.refresh_token.token)
-        response = self.csrf_client.post('/oauth2-test/', HTTP_AUTHORIZATION=auth)
-        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+        response = self.post_with_bearer_token(self.OAUTH2_BASE_TESTING_URL, token=self.dot_refresh_token.token)
+        self.check_error_codes(
+            response,
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            error_code=authentication.OAUTH2_TOKEN_ERROR_NONEXISTENT
+        )
 
-    @unittest.skipUnless(oauth2_provider, 'django-oauth2-provider not installed')
     def test_post_form_with_expired_access_token_failing_auth(self):
-        """Ensure POSTing with expired access token fails with an 'Invalid token' error"""
-        self.access_token.expires = datetime.datetime.now() - datetime.timedelta(seconds=10)  # 10 seconds late
-        self.access_token.save()
-        auth = self._create_authorization_header()
-        response = self.csrf_client.post('/oauth2-test/', HTTP_AUTHORIZATION=auth)
-        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
-        self.assertIn('Invalid token', response.content)
+        """Ensure POSTing with expired access token fails with a 'token_expired' error"""
+        self.dot_access_token.expires = now() - timedelta(seconds=10)  # 10 seconds late
+        self.dot_access_token.save()
+        response = self.post_with_bearer_token(self.OAUTH2_BASE_TESTING_URL)
+        self.check_error_codes(
+            response,
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            error_code=authentication.OAUTH2_TOKEN_ERROR_EXPIRED
+        )
 
-    @unittest.skipUnless(oauth2_provider, 'django-oauth2-provider not installed')
-    def test_post_form_with_invalid_scope_failing_auth(self):
-        """Ensure POSTing with a readonly scope instead of a write scope fails"""
-        read_only_access_token = self.access_token
-        read_only_access_token.scope = oauth2_provider_scope.SCOPE_NAME_DICT['read']
-        read_only_access_token.save()
-        auth = self._create_authorization_header(token=read_only_access_token.token)
-        response = self.csrf_client.get('/oauth2-with-scope-test/', HTTP_AUTHORIZATION=auth)
-        self.assertEqual(response.status_code, 200)
-        response = self.csrf_client.post('/oauth2-with-scope-test/', HTTP_AUTHORIZATION=auth)
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+    TokenErrorDDT = namedtuple('TokenErrorDDT', ['token', 'error_code'])
 
-    @unittest.skipUnless(oauth2_provider, 'django-oauth2-provider not installed')
-    def test_post_form_with_valid_scope_passing_auth(self):
-        """Ensure POSTing with a write scope succeed"""
-        read_write_access_token = self.access_token
-        read_write_access_token.scope = oauth2_provider_scope.SCOPE_NAME_DICT['write']
-        read_write_access_token.save()
-        auth = self._create_authorization_header(token=read_write_access_token.token)
-        response = self.csrf_client.post('/oauth2-with-scope-test/', HTTP_AUTHORIZATION=auth)
-        self.assertEqual(response.status_code, 200)
+    @ddt.data(
+        *itertools.product(
+            [None, {}],
+            [
+                TokenErrorDDT('wrong format', authentication.OAUTH2_TOKEN_ERROR_MALFORMED),
+                TokenErrorDDT('wrong-token', authentication.OAUTH2_TOKEN_ERROR_NONEXISTENT),
+                TokenErrorDDT('', authentication.OAUTH2_TOKEN_ERROR_NOT_PROVIDED),
+            ]
+        )
+    )
+    @ddt.unpack
+    def test_response_for_get_request_with_bad_auth_token(self, http_params, token_error):
+        response = self.get_with_bearer_token(self.OAUTH2_BASE_TESTING_URL, http_params, token=token_error.token)
+        self.check_error_codes(
+            response,
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            error_code=token_error.error_code
+        )
+
+    @ddt.data(
+        TokenErrorDDT('notatoken', authentication.OAUTH2_TOKEN_ERROR_NONEXISTENT),
+        TokenErrorDDT('malformed token', authentication.OAUTH2_TOKEN_ERROR_MALFORMED),
+        TokenErrorDDT('', authentication.OAUTH2_TOKEN_ERROR_NOT_PROVIDED),
+    )
+    def test_response_for_post_request_with_bad_auth_token(self, token_error):
+        response = self.post_with_bearer_token(self.OAUTH2_BASE_TESTING_URL, token=token_error.token)
+        self.check_error_codes(response, status_code=status.HTTP_401_UNAUTHORIZED, error_code=token_error.error_code)
+
+
+class BearerAuthenticationTests(OAuth2AllowInActiveUsersTests):  # pylint: disable=missing-class-docstring, test-inherits-tests
+
+    OAUTH2_BASE_TESTING_URL = '/oauth2-test/'
+
+    def setUp(self):
+        super().setUp()
+        # Since this is testing back to previous version, user should be set to true
+        self.user.is_active = True
+        self.user.save()
+
+
+class OAuthDenyDisabledUsers(OAuth2AllowInActiveUsersTests):  # pylint: disable=test-inherits-tests
+    """
+     To test OAuth on disabled user.
+    """
+    OAUTH2_BASE_TESTING_URL = '/oauth2-test/'
+
+    def setUp(self):
+        super().setUp()
+        # User is active but has have disabled status
+        self.user.is_active = True
+        self.user.set_unusable_password()
+        self.user.save()
+
+    def test_get_form_passing_auth_with_dot(self):
+        """
+         Asserts response with disabled user with DOT App
+        """
+        response = self.get_with_bearer_token(self.OAUTH2_BASE_TESTING_URL, token=self.dot_access_token.token)
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_post_form_passing_auth(self):
+        """
+         Asserts response with disabled user with DOT App
+        """
+        response = self.post_with_bearer_token(self.OAUTH2_BASE_TESTING_URL)
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_get_form_without_oauth_app(self):
+        """
+         Asserts response with disabled user and without DOT APP
+        """
+        dot_models.Application.objects.filter(user_id=self.user.id).delete()
+        response = self.get_with_bearer_token(self.OAUTH2_BASE_TESTING_URL, token=self.dot_access_token.token)
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_post_form_without_oauth_app(self):
+        """
+         Asserts response with disabled user and without DOT APP
+        """
+        dot_models.Application.objects.filter(user_id=self.user.id).delete()
+        response = self.post_with_bearer_token(self.OAUTH2_BASE_TESTING_URL)
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
